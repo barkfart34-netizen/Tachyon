@@ -47,6 +47,9 @@ pub struct Launcher {
     insets: Option<[f32; 4]>,
     /// Set by Play: the arguments the game starts with.
     pub play: Option<Vec<String>>,
+    /// The emulator test's arguments (`smoke-args.txt` in the shared
+    /// folder): the game starts with them as soon as the resources are ready.
+    smoke: Option<Vec<String>>,
 }
 
 /// The display cutout's margins in pixels: left, top, right, bottom.
@@ -92,7 +95,11 @@ impl Launcher {
             crash,
             insets: None,
             play: None,
+            smoke: None,
         };
+        launcher.smoke = std::fs::read_to_string(launcher.paths.shared.join("smoke-args.txt"))
+            .ok()
+            .map(|text| text.split_whitespace().map(str::to_owned).collect());
         if !install::up_to_date(&launcher.app, &launcher.paths) {
             launcher.unpack();
         }
@@ -249,6 +256,15 @@ impl Launcher {
                 self.error = Some(e);
             }
             self.task = None;
+        }
+        if !self.busy()
+            && self.paths.prepared()
+            && let Some(extra) = self.smoke.take()
+        {
+            log::info!("Tachyon launcher: smoke test, playing with {extra:?}");
+            let mut args = install::game_args(&self.paths);
+            args.extend(extra);
+            self.play = Some(args);
         }
         if let Some(w) = &self.window {
             w.request_redraw();

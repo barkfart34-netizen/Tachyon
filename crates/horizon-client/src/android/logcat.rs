@@ -18,7 +18,7 @@ pub fn write(warn: bool, line: &str) {
     };
     let priority = if warn { WARN } else { INFO };
     // SAFETY: both strings are valid and NUL terminated.
-    unsafe { __android_log_write(priority, c"Horizon".as_ptr(), text.as_ptr()) };
+    unsafe { __android_log_write(priority, c"Tachyon".as_ptr(), text.as_ptr()) };
 }
 
 /// Point fds 1 and 2 at a pipe that a thread copies to logcat line by line.

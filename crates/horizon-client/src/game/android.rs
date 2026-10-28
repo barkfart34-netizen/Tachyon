@@ -144,6 +144,8 @@ pub(crate) struct AndroidGame {
     dp: f32,
     dark: bool,
     was_in_game: bool,
+    /// When the last status line was logged (`Tachyon status`).
+    last_status: Instant,
 }
 
 /// The control layout the player picked (`controlLayout` in horizon.txt,
@@ -307,6 +309,7 @@ impl AndroidGame {
             dp,
             dark,
             was_in_game: false,
+            last_status: Instant::now(),
         })
     }
 
@@ -534,6 +537,23 @@ impl AndroidGame {
         let now = Instant::now();
         let screen = self.screen();
         let in_game = self.in_game() && !self.editing();
+        if now.duration_since(self.last_status) >= std::time::Duration::from_secs(10) {
+            self.last_status = now;
+            match &self.app {
+                App::Ready(game) => {
+                    let state = if game.title.is_some() {
+                        "title"
+                    } else if game.player.is_some() {
+                        "world"
+                    } else {
+                        "joining"
+                    };
+                    let at = game.player.as_ref().map(|p| p.position);
+                    log::info!("Tachyon status: {state}, playing {in_game}, player at {at:?}");
+                }
+                App::Loading(_) => log::info!("Tachyon status: loading"),
+            }
+        }
         if in_game != self.was_in_game {
             self.was_in_game = in_game;
             if !in_game {

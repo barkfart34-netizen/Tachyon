@@ -26,23 +26,31 @@ commit=$(git -C "$repo" rev-parse --short=10 HEAD 2>/dev/null || echo unknown)
 code="${TACHYON_VERSION_CODE:-1}"
 export TACHYON_BUILD="${TACHYON_BUILD:-$version-$code+$commit}"
 
+# The phone's arm64, or x86_64 for the emulator test (TACHYON_TARGET).
+target="${TACHYON_TARGET:-aarch64-linux-android}"
+case "$target" in
+    aarch64-linux-android) abi=arm64-v8a ;;
+    x86_64-linux-android) abi=x86_64 ;;
+    *) echo "unknown target $target"; exit 1 ;;
+esac
 ndk="${ANDROID_NDK_HOME:?ANDROID_NDK_HOME}"
 llvm="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
 api=29
-export CC_aarch64_linux_android="$llvm/aarch64-linux-android$api-clang"
-export CXX_aarch64_linux_android="$llvm/aarch64-linux-android$api-clang++"
-export AR_aarch64_linux_android="$llvm/llvm-ar"
-export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$llvm/aarch64-linux-android$api-clang"
+env_target=$(echo "$target" | tr - _)
+export "CC_$env_target=$llvm/$target$api-clang"
+export "CXX_$env_target=$llvm/$target$api-clang++"
+export "AR_$env_target=$llvm/llvm-ar"
+export "CARGO_TARGET_$(echo "$env_target" | tr a-z A-Z)_LINKER=$llvm/$target$api-clang"
 
 rm -rf "$stage"
-mkdir -p "$stage/jniLibs/arm64-v8a" "$stage/assets"
+mkdir -p "$stage/jniLibs/$abi" "$stage/assets"
 
 echo "== The game ($TACHYON_BUILD, profile $profile)"
 cargo build --manifest-path "$repo/Cargo.toml" -p horizon-client --example tachyon \
-    --target aarch64-linux-android --profile "$profile" \
+    --target "$target" --profile "$profile" \
     --no-default-features --features audio,android
-"$llvm/llvm-strip" --strip-debug -o "$stage/jniLibs/arm64-v8a/libtachyon.so" \
-    "$repo/target/aarch64-linux-android/$profile/examples/libtachyon.so"
+"$llvm/llvm-strip" --strip-debug -o "$stage/jniLibs/$abi/libtachyon.so" \
+    "$repo/target/$target/$profile/examples/libtachyon.so"
 
 echo "== The resources"
 [ -f "$resources/horizon-client/26.3/horizon-resources.json" ] \
@@ -66,6 +74,7 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 # Gradle itself (setup-gradle in CI): the wrapper's jar is not in the repository.
 "${GRADLE:-gradle}" --no-daemon -q :app:assembleRelease \
     -PtachyonVersionName="$version" \
+    -PtachyonAbi="$abi" \
     -PtachyonVersionCode="$code"
 cp app/build/outputs/apk/release/app-release.apk "$build/Tachyon.apk"
 ls -la "$build/Tachyon.apk"
