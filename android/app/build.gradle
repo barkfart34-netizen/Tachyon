@@ -2,20 +2,20 @@ plugins {
     id 'com.android.application'
 }
 
-// android/build.sh fills these: the native libraries (the game, the java
-// launcher, libc++) and the assets (the Java runtime, the exporters).
+// android/build-apk.sh fills these: the game's library and the assets (the
+// prepared resources and their id).
 def staged = rootProject.file('build/stage')
 
 android {
-    namespace 'com.lukagejak.horizon'
-    compileSdk 37
+    namespace 'com.tachyon.game'
+    compileSdk 36
 
     defaultConfig {
-        applicationId 'com.lukagejak.horizon'
+        applicationId 'com.tachyon.game'
         minSdk 29
-        targetSdk 37
-        versionCode Integer.parseInt(project.findProperty('horizonVersionCode') ?: '1')
-        versionName project.findProperty('horizonVersionName') ?: '0.1.0'
+        targetSdk 36
+        versionCode Integer.parseInt(project.findProperty('tachyonVersionCode') ?: '1')
+        versionName project.findProperty('tachyonVersionName') ?: '0.1.0'
         ndk {
             abiFilters 'arm64-v8a'
         }
@@ -30,12 +30,12 @@ android {
 
     signingConfigs {
         release {
-            def keystore = System.getenv('HORIZON_ANDROID_KEYSTORE')
+            def keystore = System.getenv('TACHYON_KEYSTORE')
             if (keystore) {
                 storeFile file(keystore)
-                storePassword System.getenv('HORIZON_ANDROID_KEYSTORE_PASSWORD')
-                keyAlias System.getenv('HORIZON_ANDROID_KEY_ALIAS') ?: 'horizon'
-                keyPassword System.getenv('HORIZON_ANDROID_KEYSTORE_PASSWORD')
+                storePassword System.getenv('TACHYON_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('TACHYON_KEY_ALIAS') ?: 'tachyon'
+                keyPassword System.getenv('TACHYON_KEYSTORE_PASSWORD')
             }
         }
     }
@@ -44,22 +44,19 @@ android {
         release {
             minifyEnabled false
             shrinkResources false
-            signingConfig System.getenv('HORIZON_ANDROID_KEYSTORE') ? signingConfigs.release : signingConfigs.debug
+            signingConfig System.getenv('TACHYON_KEYSTORE') ? signingConfigs.release : signingConfigs.debug
         }
     }
 
     packaging {
         jniLibs {
-            // Extracted to the native library folder: the java launcher must be
-            // a real file there to start.
-            useLegacyPackaging = true
-            // Already stripped by build.sh; the NDK's strip is an x86_64 binary.
+            // Stripped by build-apk.sh already.
             keepDebugSymbols += '**/*.so'
         }
     }
 
     androidResources {
-        // The runtime and the exporters are zips already.
+        // The resources are a zip already, stored so the app reads it in place.
         noCompress += ['zip']
     }
 

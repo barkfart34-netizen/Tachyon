@@ -34,8 +34,8 @@
 
 # Release-only compiled original exporter bundle.
 /exporters/
-# The Android app's build (android/build.sh).
-/android/java-launcher/target/
+# Tachyon's Android build (android/build-apk.sh) and its prepared resources.
+/.tachyon/
 /android/build/
 /android/app/build/
 /android/.gradle/

@@ -159,7 +159,7 @@ impl Menu {
             13.0,
             Face::SemiBold,
             TEXT,
-            "H",
+            "T",
         );
         if self.open {
             let w = 560.0 * d;
@@ -237,7 +237,7 @@ impl Menu {
                 15.0,
                 Face::Medium,
                 TEXT,
-                "Horizon",
+                "Tachyon",
             );
             widgets::text(
                 &mut ui,

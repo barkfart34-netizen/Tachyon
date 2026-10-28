@@ -1,15 +1,13 @@
-//! The launcher, as the desktop one looks (`launcher/`, `docs/design-system.md`):
-//! the Play page with the account, the game files and Play, and Settings.
-//! Drawn in the game's window before the game takes it over.
+//! Tachyon's launcher: the wordmark, Play, the player's name and the touch
+//! controls, drawn in the game's window before the game takes it over. The
+//! first start unpacks the resources the APK carries.
+use super::brand::{self, P};
+use super::controls;
 use super::draw::{Face, Rect, Renderer, hex};
 use super::install::{self, Paths, Task};
 use super::jni;
-use super::controls;
 use super::ui::{CONTROL, GUTTER, Pointer, ROW, Ui};
-use super::update::{self, Release};
-use crate::account;
-use horizon_theme::DARK as P;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 use winit::event::{TouchPhase, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -22,7 +20,7 @@ enum Page {
     Settings,
 }
 
-/// A text field the soft keyboard types into: the client ID.
+/// The player's name, as the soft keyboard types it.
 struct Editing {
     text: String,
 }
@@ -36,25 +34,17 @@ pub struct Launcher {
     page: Page,
     scroll: f32,
     task: Option<Task>,
-    /// The last task's failure, until another starts.
+    /// The last task's failure or a message, until another starts.
     error: Option<String>,
-    sign_in: Option<account::SignIn>,
-    /// The sign-in's code was opened in the browser already.
-    opened_code: bool,
-    accounts: account::Accounts,
+    note: Option<String>,
     editing: Option<Editing>,
     /// The touch controls, kept in the game's horizon.txt.
     touch: bool,
     started: Instant,
-    /// The game's last crash, from its crash-reports folder.
+    /// The game's last crash.
     crash: Option<String>,
     /// The display cutout's margins in pixels, asked again when the window changes.
     insets: Option<[f32; 4]>,
-    /// Where Minecraft is, and when that was last looked at: finding it
-    /// hashes the client jar, too slow for every frame.
-    minecraft: Option<(Option<std::path::PathBuf>, Instant)>,
-    /// A newer release of the app, once the check at start found one.
-    update: Arc<Mutex<Option<Release>>>,
     /// Set by Play: the arguments the game starts with.
     pub play: Option<Vec<String>>,
 }
@@ -68,6 +58,17 @@ fn insets() -> [f32; 4] {
         }
     }
     insets
+}
+
+/// A colour between two, `t` from 0 to 1.
+fn mix(a: u32, b: u32, t: f32, alpha: f32) -> [f32; 4] {
+    let (a, b) = (hex(a, alpha), hex(b, alpha));
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+        alpha,
+    ]
 }
 
 impl Launcher {
@@ -84,31 +85,34 @@ impl Launcher {
             scroll: 0.0,
             task: None,
             error: None,
-            sign_in: None,
-            opened_code: false,
-            accounts: account::Accounts::load(),
+            note: None,
             editing: None,
             touch,
             started: Instant::now(),
             crash,
             insets: None,
-            minecraft: None,
-            update: update::check(),
             play: None,
         };
-        // The app's own files first, so the version folder is there to read.
-        launcher.run("Unpacking", |app, paths, log| install::unpack_app(app, paths, log));
+        if !install::up_to_date(&launcher.app, &launcher.paths) {
+            launcher.unpack();
+        }
         launcher
     }
 
-    fn run(
-        &mut self,
-        what: &'static str,
-        work: impl FnOnce(&AndroidApp, &Paths, &dyn Fn(String)) -> Result<(), String> + Send + 'static,
-    ) {
+    fn unpack(&mut self) {
         let (app, paths) = (self.app.clone(), self.paths.clone());
         self.error = None;
-        self.task = Some(Task::spawn(what, move |log| work(&app, &paths, log)));
+        self.task = Some(Task::spawn("Getting ready", move |report| {
+            install::install(&app, &paths, report).map_err(|e| {
+                match install::free_space(paths.root.parent().unwrap_or(&paths.root)) {
+                    Some(free) if free < 1 << 30 => format!(
+                        "{e}. Only {} MB are free on this phone: the resources need about 1 GB.",
+                        free >> 20
+                    ),
+                    _ => e,
+                }
+            })
+        }));
     }
 
     fn busy(&self) -> bool {
@@ -117,10 +121,10 @@ impl Launcher {
 
     pub fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
-            match event_loop.create_window(Window::default_attributes().with_title("Horizon")) {
+            match event_loop.create_window(Window::default_attributes().with_title(brand::NAME)) {
                 Ok(w) => self.window = Some(Arc::new(w)),
                 Err(e) => {
-                    log::error!("Horizon launcher: no window: {e}");
+                    log::error!("Tachyon launcher: no window: {e}");
                     return;
                 }
             }
@@ -130,7 +134,7 @@ impl Launcher {
         {
             match Renderer::new(window.clone()) {
                 Ok(r) => self.renderer = Some(r),
-                Err(e) => log::error!("Horizon launcher: no renderer: {e}"),
+                Err(e) => log::error!("Tachyon launcher: no renderer: {e}"),
             }
         }
         if let Some(w) = &self.window {
@@ -187,13 +191,11 @@ impl Launcher {
         self.error = Some(error);
     }
 
-    /// Keyboard text for the field being edited, and the back gesture.
+    /// Keyboard text for the name being edited, and the back gesture.
     fn typed(&mut self) {
         let typed = jni::take_typed();
         if typed.contains(&jni::Typed::Back) {
-            if let Some(s) = self.sign_in.take() {
-                s.cancel();
-            } else if self.editing.take().is_some() {
+            if self.editing.take().is_some() {
                 jni::show_keyboard(false);
             } else {
                 self.page = Page::Play;
@@ -201,37 +203,40 @@ impl Launcher {
             }
             return;
         }
-        let Some(editing) = &mut self.editing else {
+        if self.editing.is_none() {
             return;
-        };
+        }
         for t in typed {
+            let Some(editing) = &mut self.editing else {
+                return;
+            };
             match t {
                 jni::Typed::Back => {}
-                jni::Typed::Text(text) => editing.text.push_str(&text),
+                jni::Typed::Text(text) => {
+                    editing.text.extend(text.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_'));
+                    editing.text.truncate(16);
+                }
                 jni::Typed::Backspace => {
                     editing.text.pop();
                 }
-                jni::Typed::Enter => {
-                    let id = editing.text.trim().to_owned();
-                    self.save_client_id(&id);
-                    self.editing = None;
-                    jni::show_keyboard(false);
-                    return;
-                }
+                jni::Typed::Enter => self.save_name(),
             }
         }
     }
 
-    fn save_client_id(&mut self, id: &str) {
-        let path = crate::backend::data_dir().join("client-id.txt");
-        let _ = std::fs::create_dir_all(crate::backend::data_dir());
-        let result = if id.is_empty() {
-            std::fs::remove_file(&path).or(Ok(()))
-        } else {
-            std::fs::write(&path, id)
+    fn save_name(&mut self) {
+        let Some(editing) = self.editing.take() else {
+            return;
         };
-        if let Err(e) = result {
-            self.error = Some(format!("The client ID could not be saved: {e}"));
+        jni::show_keyboard(false);
+        let name = editing.text.trim().to_owned();
+        if !install::valid_name(&name) {
+            self.error = Some("A name is 3 to 16 letters, digits or _.".into());
+            return;
+        }
+        match install::set_player_name(&self.paths, &name) {
+            Ok(()) => self.error = None,
+            Err(e) => self.error = Some(format!("The name could not be saved: {e}")),
         }
     }
 
@@ -244,26 +249,6 @@ impl Launcher {
                 self.error = Some(e);
             }
             self.task = None;
-            self.minecraft = None;
-        }
-        if let Some(sign_in) = &self.sign_in {
-            match sign_in.state() {
-                account::SignInState::Code(code) if !self.opened_code => {
-                    self.opened_code = true;
-                    jni::open_url(&format!(
-                        "{}?otc={}",
-                        code.verification_uri, code.user_code
-                    ));
-                }
-                account::SignInState::Done(result) => {
-                    if let Err(e) = result {
-                        self.error = Some(e);
-                    }
-                    self.sign_in = None;
-                    self.accounts = account::Accounts::load();
-                }
-                _ => {}
-            }
         }
         if let Some(w) = &self.window {
             w.request_redraw();
@@ -280,12 +265,12 @@ impl Launcher {
         let insets = self.insets.unwrap_or_default();
         let inset = |i: usize| insets[i] / renderer.scale;
         let margins = (inset(0).max(GUTTER), inset(2).max(GUTTER));
-        let pointer = std::mem::take(&mut self.pointer.tap);
+        let tap = std::mem::take(&mut self.pointer.tap);
         let scroll = std::mem::take(&mut self.pointer.scroll);
         self.scroll = (self.scroll + scroll).min(0.0);
         let tap_pointer = Pointer {
             down: self.pointer.down,
-            tap: pointer,
+            tap,
             scroll: 0.0,
         };
         let result = renderer.frame(hex(P.page, 1.0), |c| {
@@ -293,24 +278,27 @@ impl Launcher {
             self.layout(&mut ui, margins);
         });
         if let Err(e) = result {
-            log::warn!("Horizon launcher: frame failed: {e}");
+            log::warn!("Tachyon launcher: frame failed: {e}");
         }
         self.renderer = Some(renderer);
     }
 
+    /// The streak behind the wordmark: thin bands from the accent to violet,
+    /// fading out to the right.
+    fn streak(&self, ui: &mut Ui, x: f32, y: f32, w: f32) {
+        let t = self.started.elapsed().as_secs_f32();
+        let bands = 48;
+        for i in 0..bands {
+            let f = i as f32 / bands as f32;
+            let alpha = (1.0 - f) * 0.55;
+            let shimmer = ((t * 1.6 - f * 6.0).sin() * 0.5 + 0.5) * 0.25;
+            let band = Rect::new(x + f * w, y, w / bands as f32 + 0.5, 3.0);
+            ui.c.rect(band, 0.0, mix(brand::STREAK[0], brand::STREAK[1], f, alpha + shimmer * (1.0 - f)));
+        }
+    }
+
     fn layout(&mut self, ui: &mut Ui, (left, right): (f32, f32)) {
         let (w, h) = (ui.c.width, ui.c.height);
-        // The signature: the wordmark, giant and faint, at the foot.
-        let size = (w * 0.24).min(220.0);
-        let mark_w = ui.c.measure("Horizon", Face::Medium, size);
-        ui.text(
-            (w - mark_w) / 2.0,
-            h - size * 0.82,
-            "Horizon",
-            Face::Medium,
-            size,
-            hex(P.plate, 1.0),
-        );
         let content = Rect::new(left, 0.0, w - left - right, h);
         let top = 64.0;
         let page_h = match self.page {
@@ -322,7 +310,7 @@ impl Launcher {
         self.scroll = self.scroll.max(-overflow);
         // The bar over the page.
         ui.c.rect(Rect::new(0.0, 0.0, w, 56.0), 0.0, hex(P.page, 1.0));
-        ui.text(left, 18.0, "Horizon", Face::Medium, 17.0, hex(P.ink, 1.0));
+        ui.text(left, 18.0, brand::NAME, Face::Medium, 17.0, hex(P.ink, 1.0));
         let mut x = content.right();
         for (page, label) in [(Page::Settings, "Settings"), (Page::Play, "Play")] {
             let tw = ui.c.measure(label, Face::Medium, horizon_theme::UI.px) + 28.0;
@@ -341,54 +329,43 @@ impl Launcher {
             if ui.tapped(r) && self.page != page {
                 self.page = page;
                 self.scroll = 0.0;
+                if self.editing.take().is_some() {
+                    jni::show_keyboard(false);
+                }
             }
             x -= 4.0;
         }
-        if let Some(sign_in) = &self.sign_in {
-            let state = sign_in.state();
-            self.sign_in_dialog(ui, state);
-        }
-    }
-
-    fn status(&self) -> &'static str {
-        if self.paths.prepared() {
-            "Ready"
-        } else {
-            "Needs preparing"
-        }
-    }
-
-    fn signed_in(&self) -> Option<&account::Account> {
-        self.accounts.selected()
     }
 
     /// Returns the page's height.
     fn play_page(&mut self, ui: &mut Ui, r: Rect, mut y: f32) -> f32 {
-        let caption = format!("Minecraft {} · {}", horizon_core::VANILLA_VERSION, self.status());
+        let status = if self.busy() {
+            "Getting ready"
+        } else if self.paths.prepared() {
+            "Ready"
+        } else {
+            "Not ready"
+        };
+        let caption = format!("Minecraft {} · {status}", horizon_core::VANILLA_VERSION);
         ui.text(r.x, y, &caption, Face::Regular, 12.0, hex(P.muted, 1.0));
         y += 20.0;
-        let display = 44.0;
-        ui.text(r.x, y, "Horizon", Face::Medium, display, hex(P.ink, 1.0));
+        let display = 52.0;
+        let wordmark = brand::NAME.to_uppercase();
+        let mark_w = ui.text(r.x, y, &wordmark, Face::Medium, display, hex(P.ink, 1.0));
+        let line = ui.c.line(Face::Medium, display);
+        self.streak(ui, r.x, y + line + 2.0, mark_w.max(120.0) * 1.6);
         // Play, the page's one main action.
-        let play = Rect::new(r.right() - 148.0, y + 4.0, 148.0, 44.0);
+        let play = Rect::new(r.right() - 160.0, y + 8.0, 160.0, 48.0);
         let ready = self.paths.prepared() && !self.busy();
         if ui.button(play, "Play", true, ready) {
-            match install::game_args(&self.paths) {
-                Ok(args) => self.play = Some(args),
-                Err(e) => self.error = Some(e),
-            }
+            self.play = Some(install::game_args(&self.paths));
         }
-        y += ui.c.line(Face::Medium, display) + 6.0;
-        let about = format!(
-            "{} for Android · Minecraft: Java Edition {}, rewritten in Rust and checked against the game itself.",
-            super::BUILD,
-            horizon_core::VANILLA_VERSION
-        );
-        for line in ui.c.wrap(&about, Face::Regular, 14.0, r.w.min(620.0)) {
+        y += line + 18.0;
+        for line in ui.c.wrap(brand::TAGLINE, Face::Regular, 14.0, r.w.min(620.0)) {
             ui.text(r.x, y, &line, Face::Regular, 14.0, hex(P.ink_soft, 1.0));
             y += 21.0;
         }
-        y += 18.0;
+        y += 14.0;
         ui.c.rule(r.x, y, r.w, hex(P.rule, 1.0));
         if let Some(crash) = self.crash.clone() {
             let row = Rect::new(r.x, y, r.w, ROW);
@@ -397,91 +374,57 @@ impl Launcher {
                 3.0,
                 hex(P.danger, 1.0),
             );
-            ui.row(row, 0, "The game crashed last time", &crash, 90.0);
+            ui.row(row, 0, "The game stopped with an error last time", &crash, 90.0);
             if ui.row_button(row, "Dismiss", false, true) {
                 self.crash = None;
             }
             y += ROW;
         }
-        let release = self.update.lock().unwrap().clone();
-        if let Some(release) = release {
-            let row = Rect::new(r.x, y, r.w, ROW);
-            let size = format!("{} MB", release.size >> 20);
-            ui.row(
-                row,
-                0,
-                &format!("{} is out", release.name),
-                &format!("A {size} download. Your worlds, settings and accounts stay."),
-                110.0,
-            );
-            if ui.row_button(row, "Update", true, !self.busy()) {
-                self.run("Updating", move |_, paths, log| update::install(&release, paths, log));
+        // 01 the player's name.
+        let row = Rect::new(r.x, y, r.w, ROW);
+        let (name, detail) = match (&self.editing, install::player_name(&self.paths)) {
+            (Some(e), _) => (format!("{}|", e.text), "Type a name, then Save.".to_owned()),
+            (None, Some(name)) => (format!("Playing as {name}"), "Offline: the name your worlds and LAN games know you by.".to_owned()),
+            (None, None) => ("No name yet".to_owned(), "Pick the name you play as (3 to 16 letters, digits or _).".to_owned()),
+        };
+        ui.row(row, 1, &name, &detail, 90.0);
+        if self.editing.is_some() {
+            if ui.row_button(row, "Save", true, true) {
+                self.save_name();
             }
-            y += ROW;
-        }
-        // 01 who plays.
-        let row = Rect::new(r.x, y, r.w, ROW);
-        let (name, detail) = match self.signed_in() {
-            Some(a) => (format!("Playing as {}", a.name), "Your Microsoft account. Online-mode servers know you by it.".to_owned()),
-            None => (
-                "Not signed in".to_owned(),
-                "Sign in with the Microsoft account that owns Minecraft: Java Edition. Horizon downloads the game files with it.".to_owned(),
-            ),
-        };
-        ui.row(row, 1, &name, &detail, 110.0);
-        if self.signed_in().is_none()
-            && ui.row_button(row, "Sign in", false, self.sign_in.is_none())
-        {
-            self.start_sign_in();
+        } else if ui.row_button(row, "Edit", false, true) {
+            self.editing = Some(Editing {
+                text: install::player_name(&self.paths).unwrap_or_default(),
+            });
+            jni::take_typed();
+            jni::show_keyboard(true);
         }
         y += ROW;
-        // 02 the game files.
+        // 02 the touch controls.
         let row = Rect::new(r.x, y, r.w, ROW);
-        let detail = match self.minecraft() {
-            Some(dir) if dir == self.paths.copied_minecraft() => "From the Minecraft folder you copied to this phone.".to_owned(),
-            Some(_) => "Downloaded from Mojang for your account.".to_owned(),
-            None => format!(
-                "Not on this phone yet. Signing in downloads it, or copy a Minecraft folder with {} to {}.",
-                horizon_core::VANILLA_VERSION,
-                self.paths.copied_minecraft().display()
-            ),
-        };
-        ui.row(row, 2, &format!("Minecraft {}", horizon_core::VANILLA_VERSION), &detail, 110.0);
+        ui.row(
+            row,
+            2,
+            "Touch controls",
+            "A joystick and buttons over the game. Off for a controller or a keyboard.",
+            48.0,
+        );
+        if let Some(on) = ui.switch(row, self.touch) {
+            self.touch = on;
+            set_preference(&self.paths.home, "touchControls", if on { "true" } else { "false" });
+        }
         y += ROW;
-        // 03 the resources, prepared from them.
+        // 03 the resources.
         let row = Rect::new(r.x, y, r.w, ROW);
-        let (detail, label) = if self.paths.prepared() {
-            ("Prepared. Horizon built them from your own Minecraft.", "Prepare again")
+        let detail = if self.paths.prepared() {
+            "Unpacked on this phone, from the resources this build of Tachyon carries."
         } else {
-            (
-                "Not prepared. Horizon builds them from the files of your own Minecraft, once.",
-                "Install",
-            )
+            "They unpack from the app on the first start: about a minute."
         };
-        let wide = ui.button_width(label);
-        ui.row(row, 3, "Resources", detail, wide);
-        if ui.row_button(row, label, !self.paths.prepared(), !self.busy()) {
-            self.prepare();
-        }
+        ui.row(row, 3, "Resources", detail, 0.0);
         y += ROW;
         y = self.task_and_error(ui, r, y + 12.0);
         y - self.scroll
-    }
-
-    /// The Minecraft folder, looked for again every few seconds and after a task.
-    fn minecraft(&mut self) -> Option<std::path::PathBuf> {
-        let stale = self.minecraft.as_ref().is_none_or(|(_, at)| {
-            at.elapsed() > std::time::Duration::from_secs(5)
-        });
-        if stale && !self.busy() {
-            self.minecraft = Some((install::minecraft(&self.paths), Instant::now()));
-        }
-        self.minecraft.as_ref().and_then(|(dir, _)| dir.clone())
-    }
-
-    fn prepare(&mut self) {
-        let _ = std::fs::remove_file(self.paths.root.join(".local").join("prepared-by-app"));
-        self.run("Installing", |app, paths, log| install::install(app, paths, log));
     }
 
     fn task_and_error(&mut self, ui: &mut Ui, r: Rect, mut y: f32) -> f32 {
@@ -493,12 +436,15 @@ impl Launcher {
             ui.text(r.x, y, &line, Face::Mono, 12.0, hex(P.muted, 1.0));
             y += 20.0;
             let t = self.started.elapsed().as_secs_f32();
-            ui.progress(Rect::new(r.x, y, r.w, 3.0), None, t);
+            ui.progress(Rect::new(r.x, y, r.w, 3.0), progress.fraction, t);
             y += 16.0;
         }
-        if let Some(error) = self.error.clone() {
-            for line in ui.c.wrap(&error, Face::Regular, 13.0, r.w) {
-                ui.text(r.x, y, &line, Face::Regular, 13.0, hex(P.danger, 1.0));
+        for (text, color) in [(self.note.clone(), P.ink_soft), (self.error.clone(), P.danger)] {
+            let Some(text) = text else {
+                continue;
+            };
+            for line in ui.c.wrap(&text, Face::Regular, 13.0, r.w) {
+                ui.text(r.x, y, &line, Face::Regular, 13.0, hex(color, 1.0));
                 y += 19.0;
             }
             y += 8.0;
@@ -506,74 +452,10 @@ impl Launcher {
         y
     }
 
-    fn start_sign_in(&mut self) {
-        if account::client_id().is_none() {
-            self.error = Some(format!(
-                "{} Set an Azure client ID in Settings to sign in.",
-                account::NOT_CONFIGURED
-            ));
-            return;
-        }
-        self.opened_code = false;
-        self.error = None;
-        self.sign_in = Some(account::SignIn::start());
-    }
-
-    fn sign_in_dialog(&mut self, ui: &mut Ui, state: account::SignInState) {
-        let (w, h) = (ui.c.width, ui.c.height);
-        ui.c.rect(Rect::new(0.0, 0.0, w, h), 0.0, hex(P.page, 0.85));
-        let d = Rect::new((w - 420.0) / 2.0, (h - 250.0) / 2.0, 420.0, 250.0);
-        ui.c.rect(d, horizon_theme::RADIUS_PLATE, hex(P.surface, 1.0));
-        let x = d.x + 24.0;
-        let mut y = d.y + 22.0;
-        ui.text(x, y, "Sign in with Microsoft", Face::Medium, 20.0, hex(P.ink, 1.0));
-        y += 34.0;
-        let code = match &state {
-            account::SignInState::Code(code) => Some(code.clone()),
-            _ => None,
-        };
-        match &code {
-            Some(code) => {
-                let text = format!("Enter this code at {}:", code.verification_uri);
-                ui.text(x, y, &text, Face::Regular, 13.0, hex(P.muted, 1.0));
-                y += 26.0;
-                ui.text(x, y, &code.user_code, Face::Mono, 30.0, hex(P.ink, 1.0));
-                y += 54.0;
-            }
-            None => {
-                ui.text(x, y, "Asking Microsoft for a code…", Face::Regular, 13.0, hex(P.muted, 1.0));
-                y += 80.0;
-            }
-        }
-        let mut bx = x;
-        if let Some(code) = &code {
-            let label = "Open the page";
-            let bw = ui.button_width(label);
-            if ui.button(Rect::new(bx, y, bw, CONTROL), label, true, true) {
-                jni::open_url(&format!("{}?otc={}", code.verification_uri, code.user_code));
-            }
-            bx += bw + 8.0;
-            let label = "Copy code";
-            let bw = ui.button_width(label);
-            if ui.button(Rect::new(bx, y, bw, CONTROL), label, false, true) {
-                jni::platform("clipboard_set", &code.user_code);
-            }
-            bx += bw + 8.0;
-        }
-        let label = "Cancel";
-        let bw = ui.button_width(label);
-        if ui.button(Rect::new(bx, y, bw, CONTROL), label, false, true) {
-            if let Some(s) = &self.sign_in {
-                s.cancel();
-            }
-            self.sign_in = None;
-        }
-    }
-
     fn settings_page(&mut self, ui: &mut Ui, r: Rect, mut y: f32) -> f32 {
         ui.text(r.x, y, "Settings", Face::Medium, 44.0, hex(P.ink, 1.0));
         y += ui.c.line(Face::Medium, 44.0) + 4.0;
-        ui.text(r.x, y, "Your account, the controls and the game's files.", Face::Regular, 14.0, hex(P.muted, 1.0));
+        ui.text(r.x, y, "The controls and the app's files. The game's own options are in game.", Face::Regular, 14.0, hex(P.muted, 1.0));
         y += 34.0;
         ui.c.rule(r.x, y, r.w, hex(P.rule, 1.0));
         let mut index = 0;
@@ -583,61 +465,6 @@ impl Launcher {
             *y += ROW;
             (row, index)
         };
-        // Microsoft account.
-        let (row, i) = next(&mut y);
-        match self.signed_in().cloned() {
-            Some(a) => {
-                ui.row(row, i, "Microsoft account", &format!("Signed in as {}.", a.name), 110.0);
-                if ui.row_button(row, "Sign out", false, true) {
-                    let mut accounts = account::Accounts::load();
-                    if let Err(e) = accounts.remove(account::store(), &a.uuid).and_then(|_| accounts.save()) {
-                        self.error = Some(e);
-                    }
-                    self.accounts = account::Accounts::load();
-                }
-            }
-            None => {
-                ui.row(row, i, "Microsoft account", "Not signed in: the game plays offline.", 110.0);
-                if ui.row_button(row, "Sign in", false, self.sign_in.is_none()) {
-                    self.start_sign_in();
-                }
-            }
-        }
-        // The Azure app the sign-in uses.
-        let (row, i) = next(&mut y);
-        let editing = self.editing.is_some();
-        let detail = match (&self.editing, account::client_id()) {
-            (Some(e), _) => format!("{}|", e.text),
-            (None, Some(id)) => id,
-            (None, None) => "Not set. Sign-in needs the client ID of an Azure app Mojang approved.".into(),
-        };
-        ui.row(row, i, "Azure client ID", &detail, 90.0);
-        if editing {
-            if ui.row_button(row, "Save", true, true) {
-                let id = self.editing.take().map(|e| e.text).unwrap_or_default();
-                self.save_client_id(id.trim());
-                jni::show_keyboard(false);
-            }
-        } else if ui.row_button(row, "Edit", false, true) {
-            self.editing = Some(Editing {
-                text: account::client_id().unwrap_or_default(),
-            });
-            jni::take_typed();
-            jni::show_keyboard(true);
-        }
-        // Touch controls.
-        let (row, i) = next(&mut y);
-        ui.row(
-            row,
-            i,
-            "Touch controls",
-            "Buttons and a joystick over the game, as in Zalith Launcher 2. Off with a controller or keyboard.",
-            48.0,
-        );
-        if let Some(on) = ui.switch(row, self.touch) {
-            self.touch = on;
-            set_preference(&self.paths.home, "touchControls", if on { "true" } else { "false" });
-        }
         // The control layout, and Zalith Launcher 2's layouts in and out.
         let (row, i) = next(&mut y);
         let layouts = controls::layouts(&self.paths.home);
@@ -667,39 +494,33 @@ impl Launcher {
             ),
             190.0,
         );
-        let export = ui.button_width("Export");
-        let import_rect = Rect::new(row.right() - export - 8.0 - ui.button_width("Import"), row.y + (row.h - CONTROL) / 2.0, ui.button_width("Import"), CONTROL);
+        let import_w = ui.button_width("Import");
+        let export_w = ui.button_width("Export");
+        let import_rect = Rect::new(
+            row.right() - export_w - 8.0 - import_w,
+            row.y + (row.h - CONTROL) / 2.0,
+            import_w,
+            CONTROL,
+        );
         if ui.button(import_rect, "Import", false, true) {
-            self.error = Some(match controls::import(&folder, &self.paths.home) {
-                Ok(0) => format!("No layouts to import in {}.", folder.display()),
-                Ok(n) => format!("Imported {n} control layouts."),
-                Err(e) => e,
-            });
+            match controls::import(&folder, &self.paths.home) {
+                Ok(0) => self.note = Some(format!("No layouts to import in {}.", folder.display())),
+                Ok(n) => self.note = Some(format!("Imported {n} control layouts.")),
+                Err(e) => self.error = Some(e),
+            }
         }
         if ui.row_button(row, "Export", false, true) {
-            self.error = Some(match controls::export(&self.paths.home, &folder) {
-                Ok(file) => format!("Exported to {}.", file.display()),
-                Err(e) => e,
-            });
+            match controls::export(&self.paths.home, &folder) {
+                Ok(file) => self.note = Some(format!("Exported to {}.", file.display())),
+                Err(e) => self.error = Some(e),
+            }
         }
-        // Where a Minecraft folder can be copied to.
+        // Unpacking again, for resources that went missing.
         let (row, i) = next(&mut y);
-        ui.row(
-            row,
-            i,
-            "Minecraft folder",
-            &format!(
-                "To play without signing in, copy a Minecraft folder with {} to {} over USB.",
-                horizon_core::VANILLA_VERSION,
-                self.paths.copied_minecraft().display()
-            ),
-            0.0,
-        );
-        // Preparing again.
-        let (row, i) = next(&mut y);
-        ui.row(row, i, "Resources", "Prepare them again from your Minecraft, for example after it changed.", 140.0);
-        if ui.row_button(row, "Prepare again", false, !self.busy()) {
-            self.prepare();
+        ui.row(row, i, "Resources", "Unpack them again from the app, if the game says some are missing.", 140.0);
+        if ui.row_button(row, "Unpack again", false, !self.busy()) {
+            let _ = std::fs::remove_file(self.paths.root.join(".unpacked"));
+            self.unpack();
             self.page = Page::Play;
             self.scroll = 0.0;
         }
@@ -708,8 +529,19 @@ impl Launcher {
         ui.row(
             row,
             i,
-            &format!("Horizon {}", super::BUILD),
-            "Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.",
+            &format!("{} {}", brand::NAME, super::BUILD),
+            &format!(
+                "Built on Horizon by Ludovic Marie (MIT) and its Android port by MocLG. Source: {}.",
+                brand::SOURCE
+            ),
+            0.0,
+        );
+        let (row, i) = next(&mut y);
+        ui.row(
+            row,
+            i,
+            "Not an official Minecraft product",
+            "Not approved by or associated with Mojang or Microsoft. For your own copy of Minecraft: Java Edition.",
             0.0,
         );
         y = self.task_and_error(ui, r, y + 12.0);

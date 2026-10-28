@@ -1,4 +1,4 @@
-//! The activity's Java side (`android/app/.../HorizonActivity.java`): one
+//! The activity's Java side (`android/app/.../TachyonActivity.java`): one
 //! `platform(op, arg)` method for everything the NDK has no API for, and the
 //! soft keyboard's text coming back through two native methods.
 #![allow(unsafe_code)]
@@ -37,7 +37,7 @@ fn push(typed: Typed) {
 }
 
 #[unsafe(no_mangle)]
-extern "system" fn Java_com_lukagejak_horizon_HorizonActivity_nativeText<'caller>(
+extern "system" fn Java_com_tachyon_game_TachyonActivity_nativeText<'caller>(
     mut env: EnvUnowned<'caller>,
     _class: JClass<'caller>,
     text: JString<'caller>,
@@ -50,7 +50,7 @@ extern "system" fn Java_com_lukagejak_horizon_HorizonActivity_nativeText<'caller
 }
 
 #[unsafe(no_mangle)]
-extern "system" fn Java_com_lukagejak_horizon_HorizonActivity_nativeKey<'caller>(
+extern "system" fn Java_com_tachyon_game_TachyonActivity_nativeKey<'caller>(
     _env: EnvUnowned<'caller>,
     _class: JClass<'caller>,
     key: jni::sys::jint,
@@ -71,7 +71,7 @@ pub fn take_keyboard() -> Option<bool> {
 }
 
 #[unsafe(no_mangle)]
-extern "system" fn Java_com_lukagejak_horizon_HorizonActivity_nativeKeyboard<'caller>(
+extern "system" fn Java_com_tachyon_game_TachyonActivity_nativeKeyboard<'caller>(
     _env: EnvUnowned<'caller>,
     _class: JClass<'caller>,
     shown: jni::sys::jboolean,
@@ -85,7 +85,7 @@ extern "system" fn Java_com_lukagejak_horizon_HorizonActivity_nativeKeyboard<'ca
 static GYRO: Mutex<(f32, f32)> = Mutex::new((0.0, 0.0));
 
 #[unsafe(no_mangle)]
-extern "system" fn Java_com_lukagejak_horizon_HorizonActivity_nativeGyro<'caller>(
+extern "system" fn Java_com_tachyon_game_TachyonActivity_nativeGyro<'caller>(
     _env: EnvUnowned<'caller>,
     _class: JClass<'caller>,
     x: jni::sys::jfloat,
@@ -112,7 +112,7 @@ pub fn set_activity(app: &winit::platform::android::activity::AndroidApp) {
     ACTIVITY.store(app.activity_as_ptr() as usize, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Calls `HorizonActivity.platform(op, arg)`; `None` when it returned null or failed.
+/// Calls `TachyonActivity.platform(op, arg)`; `None` when it returned null or failed.
 pub fn platform(op: &str, arg: &str) -> Option<String> {
     let context = ndk_context::android_context();
     // SAFETY: android-activity put the process's JavaVM in the context before
@@ -142,7 +142,7 @@ pub fn platform(op: &str, arg: &str) -> Option<String> {
         Ok(Some(out.try_to_string(env)?))
     });
     result.unwrap_or_else(|e| {
-        log::warn!("Horizon: Android {op} failed: {e}");
+        log::warn!("Tachyon: Android {op} failed: {e}");
         None
     })
 }

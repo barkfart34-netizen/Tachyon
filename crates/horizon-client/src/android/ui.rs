@@ -3,7 +3,7 @@
 //! Immediate mode: a frame lays out and draws every widget, and a widget that
 //! a finger tapped this frame says so.
 use super::draw::{Canvas, Face, Rect, hex};
-use horizon_theme::DARK as P;
+use super::brand::P;
 
 pub const GUTTER: f32 = 24.0;
 pub const ROW: f32 = 56.0;

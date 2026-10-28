@@ -531,7 +531,7 @@ impl Layout {
             .ok_or("The file has no \"editorVersion\": it is not a control layout")?;
         if version > i64::from(EDITOR_VERSION) {
             return Err(format!(
-                "This control layout is version {version}; Horizon reads up to {EDITOR_VERSION}"
+                "This control layout is version {version}; Tachyon reads up to {EDITOR_VERSION}"
             ));
         }
         let mut layout: Layout =
