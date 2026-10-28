@@ -45,10 +45,19 @@ pub fn main(app: AndroidApp) {
     // SAFETY: as above.
     unsafe { std::env::set_var("HORIZON_NO_HEARTBEAT", "1") };
     let _ = std::env::set_current_dir(&paths.home);
-    // A phone's first start: a nearer horizon than a desktop's default 12 chunks.
+    // A phone's first start: Tachyon's lighter defaults, Horizon's Performance
+    // preset (8 chunks, fast clouds and leaves, fewer particles) at 60 FPS and
+    // 75% resolution, instead of a desktop's.
     let options = paths.home.join("options.txt");
     if !options.exists() {
-        let _ = std::fs::write(options, "renderDistance:8\nsimulationDistance:6\n");
+        let mut settings = horizon_client::settings::Settings::load(&options);
+        horizon_client::graphics::apply_preset(
+            horizon_client::graphics::Preset::Performance,
+            &mut settings,
+        );
+        settings.max_fps = 60;
+        settings.horizon.resolution_scale = 75;
+        settings.save(&options);
     }
     horizon_client::telemetry::mark_start();
     horizon_client::logging::init(&paths.home, "Render thread");
