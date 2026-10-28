@@ -277,7 +277,8 @@ struct Logger {
 static LOGGER: std::sync::OnceLock<Logger> = std::sync::OnceLock::new();
 
 fn ours(target: &str) -> bool {
-    target.starts_with("horizon")
+    // Tachyon's Android library compiles the game as a crate named tachyon.
+    target.starts_with("horizon") || target.starts_with("tachyon")
 }
 
 impl log::Log for Logger {

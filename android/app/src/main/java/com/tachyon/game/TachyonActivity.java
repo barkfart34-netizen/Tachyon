@@ -186,6 +186,8 @@ public class TachyonActivity extends NativeActivity {
                 } catch (android.content.pm.PackageManager.NameNotFoundException e) {
                     return null;
                 }
+            case "intent_extra":
+                return getIntent() == null ? null : getIntent().getStringExtra(arg);
             case "model":
                 return Build.MANUFACTURER + " " + Build.MODEL + " (Android " + Build.VERSION.RELEASE + ")";
             default:
