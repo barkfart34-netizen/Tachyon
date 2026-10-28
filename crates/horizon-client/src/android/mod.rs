@@ -63,6 +63,7 @@ pub fn main(app: AndroidApp) {
     horizon_client::logging::init(&paths.home, "Render thread");
     horizon_client::crash::install(paths.home.clone(), "client");
     jni::install_clipboard();
+    horizon_client::brand::set(brand::NAME);
     log::info!(
         "{} {BUILD} on {}",
         brand::NAME,

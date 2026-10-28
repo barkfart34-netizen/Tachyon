@@ -58,7 +58,7 @@ jobs:
 
       - name: Cached resources
         id: resources
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .tachyon/resources
           key: resources-26.3-${{ hashFiles('research-lock.json', 'crates/horizon-prepare/**', 'mods/horizon/src/test/java/dev/horizonlab/parity/**') }}
@@ -66,6 +66,14 @@ jobs:
       - name: Prepare the resources from Minecraft 26.3
         if: steps.resources.outputs.cache-hit != 'true'
         run: bash .github/tachyon/prepare.sh "$PWD/.tachyon/resources"
+
+      # Saved at once, so a failed or cancelled build later keeps them.
+      - name: Save the resources
+        if: steps.resources.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .tachyon/resources
+          key: ${{ steps.resources.outputs.cache-primary-key }}
 
       - name: Android SDK platform
         run: |

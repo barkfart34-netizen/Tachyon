@@ -1187,9 +1187,9 @@ impl OptionsUi {
             Page::Graphics | Page::GraphicsAdvanced => "options.videoTitle",
             Page::Controller => "Controller Settings",
             Page::PadBinds => "Controller Binds",
-            Page::Extras => "Horizon Extras",
+            Page::Extras => crate::brand::titled("Extras"),
             Page::Credits => "credits_and_attribution.screen.title",
-            Page::Horizon => "Horizon Settings",
+            Page::Horizon => crate::brand::titled("Settings"),
             Page::Agent => "AI Agent",
         }
     }
@@ -1383,7 +1383,7 @@ impl OptionsUi {
                         0.0,
                         0.0,
                         150.0,
-                        Text::literal("Horizon Graphics..."),
+                        Text::literal(crate::brand::titled("Graphics...")),
                         Act::Push(Page::Graphics),
                     ),
                     Some(button(
@@ -1652,7 +1652,7 @@ impl OptionsUi {
                     // Vanilla's Telemetry Data and Credits slots: Horizon's
                     // settings and its mods, as a mod adds its button here.
                     // Credits & Attribution (WinScreen's credits) follows them.
-                    ("Horizon Settings...", Some(Page::Horizon)),
+                    (crate::brand::titled("Settings..."), Some(Page::Horizon)),
                     ("Mods...", Some(Page::Mods)),
                     ("options.credits_and_attribution", Some(Page::Credits)),
                 ];

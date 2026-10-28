@@ -40,6 +40,7 @@ pub mod confirm_screen;
 pub mod container_screen;
 pub mod containers;
 pub mod control;
+pub mod brand;
 pub mod controls;
 pub mod crafting;
 pub mod crash;
