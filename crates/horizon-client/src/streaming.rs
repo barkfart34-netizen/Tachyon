@@ -70,11 +70,16 @@ pub trait ChunkGenerator: Send + Sync + 'static {
         false
     }
     /// What to save of a proto chunk dropped before it became final.
-    fn saved_proto(&self, _proto: &Proto) -> Option<crate::save::SavedProto> {
+    /// A decorated proto chunk's blocks as a column, to light a finished
+    /// neighbour against (vanilla lights with neighbours at FEATURES).
+    fn light_view(&self, _proto: &Proto) -> Option<Chunk> {
+        None
+    }
+    fn saved_proto(&self, _proto: &Proto) -> Option<crate::chunk::SavedProto> {
         None
     }
     /// Put a saved proto chunk's state back onto `proto`, generated again.
-    fn restore_proto(&self, _proto: &mut Proto, _saved: crate::save::SavedProto) {}
+    fn restore_proto(&self, _proto: &mut Proto, _saved: crate::chunk::SavedProto) {}
     /// Save proto chunks decoration wrote to, so that they come back as they
     /// were: generating them again would lose those writes.
     fn save_protos(&self, _protos: &[&Proto]) {}
@@ -212,9 +217,14 @@ struct Shared {
 }
 pub struct Streaming {
     shared: Arc<Shared>,
+    light_view: Arc<dyn Fn(&Proto) -> Option<Chunk> + Send + Sync>,
     results: mpsc::Receiver<Done>,
     threads: Vec<thread::JoinHandle<()>>,
     order: u64,
+    /// Ticks since the columns and protos that fell out of range were swept.
+    scan_age: u8,
+    /// The centre and radius the sweep was last reset for.
+    scan_area: ((i32, i32), i32),
     generating: FxHashSet<(i32, i32)>,
     generation_scan: GenerationScan,
     /// Proto chunks: `None` while checked out to a decoration or save job.
@@ -539,11 +549,18 @@ impl Streaming {
                     .expect("spawn worker")
             })
             .collect();
+        let light_view = {
+            let generator = generator.clone();
+            Arc::new(move |p: &Proto| generator.light_view(p))
+        };
         Self {
             shared,
+            light_view,
             results,
             threads,
             order: 0,
+            scan_age: 0,
+            scan_area: ((i32::MIN, i32::MIN), i32::MIN),
             generating: Default::default(),
             generation_scan: GenerationScan::default(),
             protos: Default::default(),
@@ -779,6 +796,26 @@ impl Streaming {
     fn distance(&self, x: i32, z: i32) -> i64 {
         self.ranges().priority(x, z, self.loading)
     }
+    /// The 3x3 a light job reads: the finished columns, and for a neighbour
+    /// that will not finish (past the area), its decorated proto chunk, as
+    /// vanilla lights its last FULL ring against neighbours at FEATURES.
+    fn light_region(&self, world: &World, x: i32, z: i32) -> Option<Box<Region>> {
+        let mut region: Region = Default::default();
+        for dz in 0..3 {
+            for dx in 0..3 {
+                let n = (x + dx as i32 - 1, z + dz as i32 - 1);
+                region[dz][dx] = Some(match world.chunks.get(&n) {
+                    Some(chunk) => chunk.clone(),
+                    None if !self.in_range(n.0, n.1, 1) && self.decorated.contains(&n) => {
+                        let proto = self.protos.get(&n)?.as_ref()?;
+                        Arc::new((self.light_view)(proto)?)
+                    }
+                    None => return None,
+                });
+            }
+        }
+        Some(Box::new(region))
+    }
     fn region(world: &World, x: i32, z: i32) -> Option<Box<Region>> {
         let mut region: Region = Default::default();
         for dz in 0..3 {
@@ -862,6 +899,13 @@ impl Streaming {
             return (uploads, Vec::new());
         }
         ExtraCover::refresh(&mut self.cover, &self.extra);
+        // The sweeps below walk every loaded column and proto chunk. Run them
+        // at once when the view moves and every eighth tick otherwise: a
+        // column can stay a little past the edge without anyone noticing.
+        let area = (self.center, self.radius);
+        let sweep = area != self.scan_area || self.scan_age >= 8;
+        self.scan_area = area;
+        self.scan_age = if sweep { 0 } else { self.scan_age + 1 };
         self.requeue();
         self.relight_edits(world);
         let deferred = std::mem::take(&mut self.deferred);
@@ -900,6 +944,11 @@ impl Streaming {
                         } else {
                             apply_relighting(chunk, sections, &mut changed);
                         }
+                        // Saved unlit (at the edge of what was loaded), or its light
+                        // changed: saved again.
+                        if (first && !chunk.light_loaded) || !changed.is_empty() {
+                            world.modified.insert((x, z));
+                        }
                         chunk.lit = true;
                         if first {
                             for dz in -1..=1 {
@@ -931,66 +980,69 @@ impl Streaming {
                 }
             }
         }
-        // Unload far columns.
-        let far: Vec<_> = world
-            .chunks
-            .keys()
-            .copied()
-            .filter(|&(x, z)| !self.remote && self.ranges().unloaded(x, z, self.decorates))
-            .collect();
-        for key in &far {
-            self.decorated.remove(key);
-        }
-        let mut removed = Vec::with_capacity(far.len());
-        for key in &far {
-            if let Some(chunk) = world.chunks.remove(key) {
-                removed.push(chunk);
+        let mut removed = Vec::new();
+        if sweep {
+            // Unload far columns.
+            let far: Vec<_> = world
+                .chunks
+                .keys()
+                .copied()
+                .filter(|&(x, z)| !self.remote && self.ranges().unloaded(x, z, self.decorates))
+                .collect();
+            for key in &far {
+                self.decorated.remove(key);
             }
-            self.lit.remove(key);
-            self.meshed.remove(key);
-            self.lighting.remove(key);
-            self.light_snapshots.remove(key);
-        }
-        if !far.is_empty() {
-            let far: HashSet<(i32, i32)> = far.iter().copied().collect();
-            self.meshing.retain(|k, _| !far.contains(&(k.0, k.2)));
-            self.waiting.retain(|k| !far.contains(&(k.0, k.2)));
-            world
-                .dirty_sections
-                .retain_columns(|x, z| !far.contains(&(x, z)));
-        }
-        // Drop far proto chunks that are not checked out.
-        let (center, r4) = (self.center, i64::from(self.radius + 4));
-        let ranges = self.ranges();
-        let far: Vec<(i32, i32)> = self
-            .protos
-            .iter()
-            .filter(|&(&(x, z), p)| {
-                p.is_some()
-                    && i64::from(x - center.0).pow(2) + i64::from(z - center.1).pow(2) > r4 * r4
-                    && !ranges.in_extra(x, z, 4)
-                    && !ranges.in_band(x, z, 4)
-                    && !ranges
-                        .forced
-                        .iter()
-                        .any(|f| (x - f.0).abs() <= 3 && (z - f.1).abs() <= 3)
-            })
-            .map(|(k, _)| *k)
-            .collect();
-        if !far.is_empty() {
-            self.generation_scan.exhausted = false;
-        }
-        // Those decoration wrote to are saved first (see
-        // `ChunkGenerator::save_protos`), and dropped once back.
-        let mut written = Vec::new();
-        for key in far {
-            if self.written.remove(&key) {
-                written.push(key);
-            } else {
-                self.protos.remove(&key);
+            removed.reserve(far.len());
+            for key in &far {
+                if let Some(chunk) = world.chunks.remove(key) {
+                    removed.push(chunk);
+                }
+                self.lit.remove(key);
+                self.meshed.remove(key);
+                self.lighting.remove(key);
+                self.light_snapshots.remove(key);
             }
+            if !far.is_empty() {
+                let far: HashSet<(i32, i32)> = far.iter().copied().collect();
+                self.meshing.retain(|k, _| !far.contains(&(k.0, k.2)));
+                self.waiting.retain(|k| !far.contains(&(k.0, k.2)));
+                world
+                    .dirty_sections
+                    .retain_columns(|x, z| !far.contains(&(x, z)));
+            }
+            // Drop far proto chunks that are not checked out.
+            let (center, r4) = (self.center, i64::from(self.radius + 4));
+            let ranges = self.ranges();
+            let far: Vec<(i32, i32)> = self
+                .protos
+                .iter()
+                .filter(|&(&(x, z), p)| {
+                    p.is_some()
+                        && i64::from(x - center.0).pow(2) + i64::from(z - center.1).pow(2) > r4 * r4
+                        && !ranges.in_extra(x, z, 4)
+                        && !ranges.in_band(x, z, 4)
+                        && !ranges
+                            .forced
+                            .iter()
+                            .any(|f| (x - f.0).abs() <= 3 && (z - f.1).abs() <= 3)
+                })
+                .map(|(k, _)| *k)
+                .collect();
+            if !far.is_empty() {
+                self.generation_scan.exhausted = false;
+            }
+            // Those decoration wrote to are saved first (see
+            // `ChunkGenerator::save_protos`), and dropped once back.
+            let mut written = Vec::new();
+            for key in far {
+                if self.written.remove(&key) {
+                    written.push(key);
+                } else {
+                    self.protos.remove(&key);
+                }
+            }
+            self.save_checked_out(written);
         }
-        self.save_checked_out(written);
         let (protos, finishing) = (&self.protos, &self.finishing);
         self.decorated.retain(|k| {
             protos.contains_key(k) || finishing.contains(k) || world.chunks.contains_key(k)
@@ -1136,7 +1188,7 @@ impl Streaming {
                 world.dirty_light.remove(&(x, z));
                 continue;
             }
-            let Some(region) = Self::region(world, x, z) else {
+            let Some(region) = self.light_region(world, x, z) else {
                 continue;
             };
             world.dirty_light.remove(&(x, z));
@@ -1468,7 +1520,7 @@ impl Streaming {
                 counts[1] += 1;
             } else {
                 counts[2] += 1;
-                if Self::region(world, key.0, key.1).is_some() {
+                if self.light_region(world, key.0, key.1).is_some() {
                     world.dirty_light.insert(key);
                 }
             }

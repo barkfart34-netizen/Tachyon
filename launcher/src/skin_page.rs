@@ -38,6 +38,14 @@ impl Launcher {
             return Ok(());
         };
         let mut accounts = Accounts::load();
+        // The name may have been forgotten while a file dialog was open: keep nothing for it.
+        if !accounts
+            .offline
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case(&name))
+        {
+            return Ok(());
+        }
         let mut look = accounts.look(&name);
         change(&mut look);
         accounts.looks.insert(name.to_ascii_lowercase(), look);
@@ -75,15 +83,26 @@ impl Launcher {
         let Some(name) = self.skin.as_ref().map(|p| p.name.clone()) else {
             return;
         };
+        // The name may have been forgotten while the file dialog was open.
+        if !Accounts::load()
+            .offline
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case(&name))
+        {
+            return;
+        }
         let done = skins::keep(&skins::dir(), &name, &path, cape).and_then(|()| {
             self.save_look(|l| match cape {
                 false => l.skin = true,
                 true => l.cape = true,
             })
         });
-        let what = if cape { "cape" } else { "skin" };
         if let Some(p) = &mut self.skin {
-            p.note = Some(done.map(|()| format!("{name}'s {what} is kept.")));
+            let said = match cape {
+                false => trf("{name}'s skin is kept.", &[("name", &name)]),
+                true => trf("{name}'s cape is kept.", &[("name", &name)]),
+            };
+            p.note = Some(done.map(|()| said));
         }
     }
 
@@ -136,7 +155,7 @@ impl Launcher {
                     Some(i) => gpui::img(i).w(px(w)).h(px(h)).into_any_element(),
                     None => text(theme::CAPTION)
                         .text_color(t.muted)
-                        .child(empty)
+                        .child(tr(empty))
                         .into_any_element(),
                 })
         };
@@ -205,7 +224,7 @@ impl Launcher {
                         .flex_1()
                         .min_w_0()
                         .gap(px(12.))
-                        .child(caps(format!("{name}'s skin")).text_color(t.muted))
+                        .child(caps(trf("{name}'s skin", &[("name", &name)])).text_color(t.muted))
                         .child(skin_buttons)
                         .child(model)
                         .child(cape_buttons)
@@ -213,12 +232,12 @@ impl Launcher {
                             Ok(said) => text(theme::CAPTION).text_color(t.muted).child(said),
                             Err(e) => text(theme::CAPTION).text_color(t.danger).child(e),
                         }))
-                        .child(text(theme::CAPTION).text_color(t.muted).child(
+                        .child(text(theme::CAPTION).text_color(t.muted).child(tr(
                             "A 64×64 (or 64×32) skin PNG and a 64×32 cape PNG, kept by the \
                              launcher and given to the game when this name plays. The game \
                              draws the default skins for now; it uses these once it can. A \
                              Microsoft account's skin and cape: coming soon.",
-                        )),
+                        ))),
                 ),
         )
     }

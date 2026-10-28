@@ -318,7 +318,11 @@ pub fn work_sound(profession: u8) -> Option<&'static str> {
 pub fn crop(w: &MobWorld, p: [i32; 3]) -> bool {
     matches!(
         w.block_name(p[0], p[1], p[2]),
-        "minecraft:wheat" | "minecraft:carrots" | "minecraft:potatoes" | "minecraft:beetroots"
+        "minecraft:wheat"
+            | "minecraft:carrots"
+            | "minecraft:potatoes"
+            | "minecraft:beetroots"
+            | "minecraft:torchflower_crop"
     )
 }
 /// `CropBlock.isMaxAge` for the block at `p`.
@@ -326,6 +330,8 @@ pub fn ripe_crop(w: &MobWorld, p: [i32; 3]) -> bool {
     let max = match w.block_name(p[0], p[1], p[2]) {
         "minecraft:wheat" | "minecraft:carrots" | "minecraft:potatoes" => "7",
         "minecraft:beetroots" => "3",
+        // TorchflowerCropBlock.getMaxAge is 2, past its age property (0-1):
+        // the crop is never at max age (age 2 is the torchflower itself).
         _ => return false,
     };
     w.prop(p[0], p[1], p[2], "age") == Some(max)
@@ -353,18 +359,14 @@ pub fn food_points(item: &str) -> i32 {
         _ => 0,
     }
 }
-/// The farmer's `requestedItems`.
+/// The farmer's `requestedItems` (`VillagerProfession.FARMER`). Food is picked
+/// up and traded separately, through its villager food value.
 pub fn farmer_items() -> &'static [&'static str] {
     &[
-        "minecraft:bread",
-        "minecraft:potato",
-        "minecraft:carrot",
         "minecraft:wheat",
         "minecraft:wheat_seeds",
-        "minecraft:beetroot",
         "minecraft:beetroot_seeds",
-        "minecraft:torchflower_seeds",
-        "minecraft:pitcher_pod",
+        "minecraft:bone_meal",
     ]
 }
 /// A villager's `requestedItems` by profession.
@@ -904,6 +906,53 @@ mod tests {
         assert!(t.offers.is_empty());
         assert!(t.unset);
         assert_eq!(m.extra.variant2, 2);
+    }
+    /// The reported sequence: a villager works at a bench, the bench is
+    /// destroyed (its job site is gone, so `ResetProfession` makes it
+    /// unemployed) and it takes another bench's job. The new profession's
+    /// trades are offered again.
+    ///
+    /// `Villager.setVillagerData` drops the offers (`offers = null`) when the
+    /// profession changes, so `AbstractVillager.getOffers` rolls the new
+    /// profession's trade set the next time the offers are asked for. A
+    /// villager that keeps its old offers marked as made never trades again:
+    /// it shakes its head instead of opening the trading menu.
+    #[test]
+    fn a_villager_that_loses_its_job_site_offers_its_new_profession_trades() {
+        let mut m = villager();
+        // The composter's job: the villager is a farmer.
+        set_profession(&mut m, 5);
+        assert_eq!(m.extra.variant2, 5);
+        // Its trades were made, so the offers are there.
+        let trade = m.extra.trade.get_or_insert_default();
+        trade.unset = false;
+        trade.offers = vec![crate::merchant::MerchantOffer {
+            base_cost_a: crate::merchant::ItemCost {
+                stack: ItemStack::new("minecraft:wheat", 20),
+            },
+            cost_b: None,
+            result: ItemStack::new("minecraft:emerald", 1),
+            uses: 0,
+            max_uses: 16,
+            reward_exp: true,
+            special_price_diff: 0,
+            demand: 0,
+            price_multiplier: 0.0,
+            xp: 1,
+        }];
+        // The work bench is destroyed: the job site is gone, so the villager
+        // is unemployed and its offers are dropped (`offers = null`).
+        set_profession(&mut m, NONE);
+        let t = m.extra.trade.as_ref().unwrap();
+        assert!(t.offers.is_empty());
+        assert!(t.unset);
+        // It takes the smithing table's job. The new profession's trades are
+        // rolled by the next `getOffers` (ensure_offers).
+        set_profession(&mut m, 13);
+        let t = m.extra.trade.as_ref().unwrap();
+        assert!(t.offers.is_empty());
+        assert!(t.unset);
+        assert_eq!(m.extra.variant2, 13);
     }
 
     fn stack(item: &str, count: u32) -> ItemStack {

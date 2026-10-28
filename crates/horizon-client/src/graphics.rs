@@ -5,6 +5,9 @@
 use std::{fs, path::Path};
 
 pub const FILE: &str = "horizon-graphics.txt";
+/// Written beside it before HDR output is switched on and removed once the first HDR frame is
+/// presented. Found at the next start, it means HDR output took the game down, so HDR starts off.
+pub const HDR_MARKER: &str = "horizon-hdr-pending";
 
 /// Simple-level presets. `Custom` leaves every option as the player set it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -216,15 +219,19 @@ pub const INTEGRATED_LOD_DISTANCE: u32 = 128;
 pub fn lod_capped(info: &wgpu::AdapterInfo) -> bool {
     info.device_type == wgpu::DeviceType::IntegratedGpu && !info.name.starts_with("Apple")
 }
+/// A LOD distance as far terrain uses it on this adapter.
+pub fn lod_distance_capped(distance: u32, info: &wgpu::AdapterInfo) -> u32 {
+    let distance = distance.min(1024);
+    if lod_capped(info) {
+        distance.min(INTEGRATED_LOD_DISTANCE)
+    } else {
+        distance
+    }
+}
 impl Graphics {
     /// `lod_distance` as far terrain uses it on this adapter.
     pub fn lod_distance_on(&self, info: &wgpu::AdapterInfo) -> u32 {
-        let distance = self.lod_distance.min(1024);
-        if lod_capped(info) {
-            distance.min(INTEGRATED_LOD_DISTANCE)
-        } else {
-            distance
-        }
+        lod_distance_capped(self.lod_distance, info)
     }
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -255,7 +262,7 @@ pub struct Graphics {
     pub resolution_scale: u32,
     /// FXAA over the world.
     pub fxaa: bool,
-    /// HDR output (scRGB), where the display path offers it.
+    /// HDR output (HDR10, or scRGB), where the display path offers it.
     pub hdr: bool,
     /// HDR paper white (where SDR white sits), in nits.
     pub hdr_paper_white: u32,
@@ -306,9 +313,17 @@ fn bool_text(v: bool) -> &'static str {
 }
 impl Graphics {
     pub fn load(dir: &Path) -> Self {
-        fs::read_to_string(dir.join(FILE))
+        let mut g: Self = fs::read_to_string(dir.join(FILE))
             .map(|t| Self::parse(&t))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if fs::remove_file(dir.join(HDR_MARKER)).is_ok() && g.hdr {
+            g.hdr = false;
+            g.save(dir);
+            log::warn!(
+                "the last start ended before HDR output showed a frame; HDR is off now (graphics option hdr, in {FILE})"
+            );
+        }
+        g
     }
     pub fn parse(text: &str) -> Self {
         let mut g = Self::default();
@@ -581,6 +596,21 @@ mod tests {
             let mut s = crate::settings::Settings::default();
             apply_preset(preset, &mut s);
             assert_eq!(s.horizon.far_detail, FarDetail::Full, "{preset:?}");
+        }
+    }
+
+    #[test]
+    fn every_preset_keeps_the_animated_textures_on() {
+        // The Performance preset used to turn them off, which froze the fire,
+        // the water, the lava and the portals (#2064).
+        assert!(Graphics::default().animated_textures);
+        for preset in Preset::ALL {
+            let mut s = crate::settings::Settings::default();
+            apply_preset(preset, &mut s);
+            assert!(
+                s.horizon.animated_textures,
+                "{preset:?} turned the animated textures off"
+            );
         }
     }
 

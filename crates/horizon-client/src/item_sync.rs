@@ -28,6 +28,14 @@ pub fn from_network(s: &Stack, builtin: &Builtin, synced: &Dynamic) -> ItemStack
     out
 }
 
+/// `DyeColor.byId`: an unknown id is white (`OutOfBoundsStrategy.ZERO`).
+fn dye_name(id: i32) -> &'static str {
+    usize::try_from(id)
+        .ok()
+        .and_then(|i| crate::block_entity_render::DYES.get(i))
+        .map_or("white", |d| d.0)
+}
+
 fn item_name(builtin: &Builtin, id: i32) -> Arc<str> {
     Arc::from(
         builtin
@@ -61,6 +69,25 @@ fn components_tag(s: &Stack, builtin: &Builtin, synced: &Dynamic) -> Option<Tag>
                     ("pattern", Tag::String(pattern.into())),
                 ])
             }
+            // BannerPatternLayers: each layer's pattern is a synced registry entry.
+            Component::BannerPatterns(layers) => {
+                let layers: Option<Vec<Tag>> = layers
+                    .iter()
+                    .map(|(pattern, color)| {
+                        let pattern = synced.name("minecraft:banner_pattern", *pattern)?;
+                        Some(Tag::compound([
+                            ("pattern", Tag::String(pattern.into())),
+                            ("color", Tag::String(dye_name(*color).into())),
+                        ]))
+                    })
+                    .collect();
+                let Some(layers) = layers else {
+                    continue;
+                };
+                Tag::List(layers)
+            }
+            // A shield's `base_color`: the dye's id.
+            Component::Int(v) if *kind == component::BASE_COLOR => Tag::String(dye_name(*v).into()),
             Component::Int(v) if *kind == component::RARITY => {
                 let rarity = ["common", "uncommon", "rare", "epic"];
                 Tag::String(rarity.get(*v as usize).copied().unwrap_or("common").into())
@@ -95,6 +122,22 @@ fn components_tag(s: &Stack, builtin: &Builtin, synced: &Dynamic) -> Option<Tag>
                 ),
             ]),
             Component::FireworkExplosion(e) => fireworks_tag(e),
+            Component::LodestoneTracker { target, tracked } => {
+                let mut entries = Vec::new();
+                if let Some((dimension, pos)) = target {
+                    entries.push((
+                        "target",
+                        Tag::compound([
+                            ("dimension", Tag::String(dimension.as_str().into())),
+                            ("pos", Tag::IntArray(pos.to_vec())),
+                        ]),
+                    ));
+                }
+                if !tracked {
+                    entries.push(("tracked", Tag::Byte(0)));
+                }
+                Tag::compound(entries)
+            }
             Component::Enchantments(list) => {
                 // Enchantments are a synced (data-driven) registry: the
                 // ids index the server's RegistryData, not the builtin
@@ -228,6 +271,17 @@ fn profile_tag(p: &Profile) -> Tag {
     let mut entries: Vec<(&'static str, Tag)> = Vec::new();
     if let Some(name) = &p.name {
         entries.push(("name", Tag::String(name.as_str().into())));
+    }
+    if let Some(id) = p.id {
+        entries.push((
+            "id",
+            Tag::IntArray(vec![
+                (id >> 96) as i32,
+                (id >> 64) as i32,
+                (id >> 32) as i32,
+                id as i32,
+            ]),
+        ));
     }
     entries.push(("properties", Tag::List(properties)));
     Tag::compound(entries)
