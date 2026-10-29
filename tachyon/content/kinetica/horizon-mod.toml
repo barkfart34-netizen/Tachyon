@@ -1,7 +1,7 @@
 # Tachyon: Aether & Gears. Kinetica, the machines: written by tachyon/art/kinetica.py.
 id = "kinetica"
 name = "Kinetica"
-version = "0.2.0"
+version = "0.3.0"
 api = "0.2"
 side = "both"
 capabilities = ["registries"]

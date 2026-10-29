@@ -1,0 +1,10 @@
+{
+  "type": "minecraft:smelting",
+  "category": "food",
+  "ingredient": "kinetica:wheat_flour",
+  "result": {
+    "id": "minecraft:bread"
+  },
+  "experience": 0.35,
+  "cookingtime": 200
+}

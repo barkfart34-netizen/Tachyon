@@ -14,13 +14,17 @@
   "block.kinetica.raw_tin_block": "Block of Raw Tin",
   "block.kinetica.water_wheel": "Water Wheel",
   "block.kinetica.windmill": "Windmill",
+  "block.kinetica.millstone": "Millstone",
   "item.kinetica.ferrostone_alloy": "Ferrostone Alloy",
   "item.kinetica.raw_tin": "Raw Tin",
   "item.kinetica.tin_ingot": "Tin Ingot",
   "item.kinetica.tin_nugget": "Tin Nugget",
   "item.kinetica.bronze_ingot": "Bronze Ingot",
+  "item.kinetica.wheat_flour": "Wheat Flour",
   "item.kinetica.engineers_goggles": "Engineer's Goggles",
   "kinetica.hud.still": "still",
   "kinetica.hud.jammed": "jammed",
-  "kinetica.hud.rpm": "%s RPM"
+  "kinetica.hud.rpm": "%s RPM",
+  "kinetica.hud.overstressed": "overstressed",
+  "kinetica.hud.stress": "%s / %s SU"
 }

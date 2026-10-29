@@ -12,10 +12,17 @@
 //! is joined to. A network whose parts disagree (two motors at odds, a loop
 //! of gears that can't turn) or that would turn too fast stays still: it is
 //! jammed.
+//!
+//! Machines load a network: each takes stress for every RPM it turns at
+//! ([`Part::impact`]), and its sources can take so much ([`capacity`], in
+//! stress units). A network loaded past its capacity is overstressed and
+//! stays still too.
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// The fastest a part may turn.
 pub const MAX_SPEED: f32 = 256.0;
+/// A creative motor's capacity, whatever its speed (stress units).
+pub const CREATIVE_CAPACITY: f32 = 16384.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Axis {
@@ -141,6 +148,9 @@ pub enum Part {
     WaterWheel(Axis),
     /// Sails on a shaft along its axis, turned by the wind under open sky.
     Windmill(Axis),
+    /// A millstone: turned by a shaft from below, or by small cogwheels
+    /// beside it (it meshes as one, about Y).
+    Millstone,
 }
 
 impl Part {
@@ -156,6 +166,15 @@ impl Part {
             | Part::Windmill(a) => d.axis() == a,
             Part::Gearbox(a) => d.axis() != a,
             Part::Motor(out) | Part::Crank(out) => d == out,
+            Part::Millstone => d == Dir::Down,
+        }
+    }
+    /// The stress the part takes for each RPM it turns at (stress units):
+    /// a machine's; nothing for what only passes the turning on.
+    pub fn impact(self) -> f32 {
+        match self {
+            Part::Millstone => 4.0,
+            _ => 0.0,
         }
     }
     /// Whether the part is two halves (a clutch, a gearshift).
@@ -172,6 +191,7 @@ impl Part {
         match self {
             Part::Cog(a) => Some((a, false)),
             Part::LargeCog(a) => Some((a, true)),
+            Part::Millstone => Some((Axis::Y, false)),
             _ => None,
         }
     }
@@ -276,13 +296,42 @@ fn add(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
 /// Each half's speed, by position: both the same but for a split part.
 pub type Speeds = HashMap<[i32; 3], [f32; 2]>;
 
+/// What a source can take turning at `speed` (its own RPM), in stress
+/// units: a creative motor any load; the others more the faster they turn.
+pub fn capacity(part: Part, speed: f32) -> f32 {
+    match part {
+        Part::Motor(_) => CREATIVE_CAPACITY,
+        Part::Crank(_) => 8.0 * speed.abs(),
+        Part::WaterWheel(_) => 16.0 * speed.abs(),
+        Part::Windmill(_) => 32.0 * speed.abs(),
+        _ => 0.0,
+    }
+}
+
+/// A network's stress: what its machines take and what its sources can
+/// (stress units).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Stress {
+    pub load: f32,
+    pub capacity: f32,
+}
+
+impl Stress {
+    /// Loaded past its capacity: the network stands still.
+    pub fn over(self) -> bool {
+        self.load > self.capacity + 1e-3
+    }
+}
+
 /// The speeds of the parts joined to a source ([`Speeds`]: a gearbox's is
 /// that of its reference side; [`Part::side_factor`] gives the others).
-/// Parts not joined to a source, and the parts of a jammed network, are
-/// left out (they stand still); `jammed` gets the latter.
+/// Parts not joined to a source, and the parts of a jammed or an
+/// overstressed network, are left out (they stand still); `jammed` gets the
+/// jammed ones, `stress` every part's network's stress but a jammed one's.
 pub struct Solved {
     pub speeds: Speeds,
     pub jammed: HashSet<[i32; 3]>,
+    pub stress: HashMap<[i32; 3], Stress>,
 }
 
 /// Solves the speeds of `parts`, with `sources` (positions of motors and
@@ -295,6 +344,7 @@ pub fn solve(
 ) -> Solved {
     let mut halves: HashMap<Node, f32> = HashMap::new();
     let mut jammed: HashSet<[i32; 3]> = HashSet::new();
+    let mut stress: HashMap<[i32; 3], Stress> = HashMap::new();
     let mut done: HashSet<Node> = HashSet::new();
     let mut order: Vec<_> = sources.iter().collect();
     order.sort_by_key(|(p, _)| **p);
@@ -365,7 +415,19 @@ pub fn solve(
         done.extend(network.keys().copied());
         if bad {
             jammed.extend(network.keys().map(|n| n.0));
-        } else {
+            continue;
+        }
+        // The machines' load against what the sources in it can take.
+        let mut s = Stress::default();
+        for (&(pos, _), &speed) in &network {
+            let part = parts[&pos];
+            s.load += part.impact() * speed.abs();
+            if let Some(&own) = sources.get(&pos) {
+                s.capacity += capacity(part, own);
+            }
+        }
+        stress.extend(network.keys().map(|n| (n.0, s)));
+        if !s.over() {
             halves.extend(network.into_iter().filter(|(_, s)| *s != 0.0));
         }
     }
@@ -379,7 +441,11 @@ pub fn solve(
             *entry = [speed; 2];
         }
     }
-    Solved { speeds, jammed }
+    Solved {
+        speeds,
+        jammed,
+        stress,
+    }
 }
 
 /// A part's angle in degrees at `ticks` (game time with the partial tick),
@@ -531,6 +597,45 @@ mod tests {
         let reversed = solve(&shift, &sources, &on);
         assert_eq!(reversed.speeds[&[2, 0, 0]][0], -32.0);
         assert_eq!(reversed.speeds[&[1, 0, 0]], [32.0, -32.0]);
+    }
+
+    #[test]
+    fn a_millstone_turns_from_below_and_beside_and_loads_its_network() {
+        let p = parts(&[
+            ([0, 0, 0], Part::Crank(Dir::Up)),
+            ([0, 1, 0], Part::Millstone),
+            // A small cogwheel beside it meshes, reversed.
+            ([1, 1, 0], Part::Cog(Axis::Y)),
+        ]);
+        let s = solve1(&p, &[([0, 0, 0], 32.0)]);
+        assert_eq!(s.speeds[&[0, 1, 0]][0], 32.0);
+        assert_eq!(s.speeds[&[1, 1, 0]][0], -32.0);
+        // 4 for each RPM against the crank's 8.
+        let at = s.stress[&[1, 1, 0]];
+        assert_eq!((at.load, at.capacity), (128.0, 256.0));
+        assert!(!at.over());
+    }
+
+    #[test]
+    fn an_overstressed_network_stands_still() {
+        // A crank driving three millstones: 384 against 256.
+        let p = parts(&[
+            ([0, 0, 0], Part::Crank(Dir::Up)),
+            ([0, 1, 0], Part::Millstone),
+            ([1, 1, 0], Part::Cog(Axis::Y)),
+            ([2, 1, 0], Part::Millstone),
+            ([1, 1, 1], Part::Millstone),
+        ]);
+        let s = solve1(&p, &[([0, 0, 0], 32.0)]);
+        assert!(s.speeds.is_empty());
+        assert!(s.jammed.is_empty());
+        assert!(s.stress[&[2, 1, 0]].over());
+        // A creative motor takes it.
+        let mut p2 = p.clone();
+        p2.insert([0, 0, 0], Part::Motor(Dir::Up));
+        let s = solve1(&p2, &[([0, 0, 0], 32.0)]);
+        assert_eq!(s.speeds[&[2, 1, 0]][0], 32.0);
+        assert_eq!(s.stress[&[0, 0, 0]].capacity, CREATIVE_CAPACITY);
     }
 
     #[test]

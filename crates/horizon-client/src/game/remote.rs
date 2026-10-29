@@ -4918,6 +4918,10 @@ impl Game<'_> {
         if self.jukebox_takes(hit.pos, held) {
             return (true, DryUse::default());
         }
+        // Tachyon's blocks (a motor's speed, a millstone): the owner's use.
+        if self.tachyon_takes_use(hit.pos) {
+            return (true, DryUse::default());
+        }
         // BeehiveBlock.useItemOn: shears or a glass bottle on a full hive
         // (honey level 5) is SUCCESS, so the click ends after UseItemOn and
         // no UseItem follows (the server does the harvest, see `use_beehive`).

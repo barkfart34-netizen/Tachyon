@@ -268,3 +268,10 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
     struktur (`find`).
   - Ada 14 quest dalam tiga bab. Bab baru *Dunia yang Hilang* berisi quest menemukan bengkel dan
     menara; *Era Mesin* mendapat *Bergerak* (16 RPM) dan *Kecepatan Penuh* (128 RPM).
+- **30 Oktober 2026, Kinetica 0.3: stress dan batu gilingan.**
+  - Tahap 2 lengkap: setiap jaringan punya beban dan kapasitas (stress units), dan jaringan yang
+    kelebihan beban berhenti. Kacamata menampilkan "beban / kapasitas SU".
+  - Mesin pertama yang memakai tenaga: *Batu Gilingan*. Ia menggiling gandum jadi tepung (dipanggang
+    jadi roti), batu bulat jadi kerikil, kerikil jadi pasir, tulang jadi bubuk tulang, tebu jadi gula,
+    dan bunga jadi dua kali lipat pewarna. Ada 30 resep.
+  - Quest baru *Roti Harian* (pegang 4 tepung), sehingga total ada 15 quest.

@@ -9,6 +9,7 @@
     "kinetica:tin_ore",
     "kinetica:deepslate_tin_ore",
     "kinetica:tin_block",
-    "kinetica:raw_tin_block"
+    "kinetica:raw_tin_block",
+    "kinetica:millstone"
   ]
 }

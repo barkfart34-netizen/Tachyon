@@ -1,0 +1,20 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "kinetica:block/millstone",
+      "y": 180
+    },
+    "facing=east": {
+      "model": "kinetica:block/millstone",
+      "y": 270
+    },
+    "facing=south": {
+      "model": "kinetica:block/millstone",
+      "y": 0
+    },
+    "facing=west": {
+      "model": "kinetica:block/millstone",
+      "y": 90
+    }
+  }
+}

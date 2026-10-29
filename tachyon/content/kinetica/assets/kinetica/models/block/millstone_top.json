@@ -1,0 +1,80 @@
+{
+  "parent": "minecraft:block/block",
+  "textures": {
+    "casing": "kinetica:block/ferrostone_casing",
+    "hole": "kinetica:block/gearbox_side",
+    "stone": "kinetica:block/millstone_stone",
+    "top": "kinetica:block/millstone_top",
+    "particle": "kinetica:block/millstone_stone"
+  },
+  "elements": [
+    {
+      "from": [
+        2,
+        5,
+        2
+      ],
+      "to": [
+        14,
+        12,
+        14
+      ],
+      "faces": {
+        "north": {
+          "texture": "#stone",
+          "uv": [
+            2,
+            4,
+            14,
+            11
+          ]
+        },
+        "south": {
+          "texture": "#stone",
+          "uv": [
+            2,
+            4,
+            14,
+            11
+          ]
+        },
+        "east": {
+          "texture": "#stone",
+          "uv": [
+            2,
+            4,
+            14,
+            11
+          ]
+        },
+        "west": {
+          "texture": "#stone",
+          "uv": [
+            2,
+            4,
+            14,
+            11
+          ]
+        },
+        "up": {
+          "texture": "#top",
+          "uv": [
+            2,
+            2,
+            14,
+            14
+          ]
+        },
+        "down": {
+          "texture": "#stone",
+          "uv": [
+            2,
+            2,
+            14,
+            14
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -17,6 +17,7 @@
 //! block entities, [`Game::tachyon_engine_hud`] from the HUD hook.
 pub(super) mod chronicles;
 pub(crate) mod kinetic;
+mod millstone;
 
 use super::Game;
 use glam::{DVec3, Mat4, Vec3};
@@ -27,6 +28,8 @@ use horizon_client::{
     item_render::{ItemRenderState, LayerGeometry, LayerRender},
     mesher::Vertex,
 };
+use horizon_client::items::ItemStack;
+use horizon_core::random::RandomSource;
 use horizon_world::registry::{BlockRegistry, BlockStateId};
 use kinetic::{Axis, Dir, Part};
 use std::{
@@ -104,6 +107,7 @@ fn part_of<'a>(name: &str, property: impl Fn(&str) -> Option<&'a str>) -> Option
         "water_wheel" => Some(Part::WaterWheel(axis()?)),
         "windmill" => Some(Part::Windmill(axis()?)),
         "gearshift" => Some(Part::Gearshift(axis()?)),
+        "millstone" => Some(Part::Millstone),
         _ => None,
     }
 }
@@ -215,8 +219,7 @@ impl Index {
 #[derive(Default)]
 struct Owner {
     index: Index,
-    speeds: kinetic::Speeds,
-    jammed: HashSet<[i32; 3]>,
+    shown: Shown,
     ticks: u64,
     /// The creative motors' speeds the players set (RPM; the default is
     /// [`MOTOR_SPEED`]), kept in the world's folder.
@@ -231,10 +234,15 @@ struct Owner {
     powered: HashSet<[i32; 3]>,
     /// The water wheels and windmills turning, at their own speeds.
     natural: HashMap<[i32; 3], f32>,
+    /// What the millstones hold, kept with the motors' speeds.
+    mills: HashMap<[i32; 3], millstone::Mill>,
+    /// `mills` changed since the file was written.
+    mills_changed: bool,
 }
 
 impl Owner {
-    /// The motors' file in the world's folder, for this dimension.
+    /// The motors' and millstones' file in the world's folder, for this
+    /// dimension.
     fn file(root: &std::path::Path, dimension: &str) -> std::path::PathBuf {
         let name = dimension.replace([':', '/'], "_");
         root.join("tachyon").join(format!("kinetica-{name}.json"))
@@ -246,14 +254,15 @@ impl Owner {
         let Ok(text) = std::fs::read_to_string(Self::file(root, dimension)) else {
             return;
         };
-        let rows: Vec<[f64; 4]> = serde_json::from_str::<serde_json::Value>(&text)
-            .ok()
-            .and_then(|v| serde_json::from_value(v["motors"].clone()).ok())
-            .unwrap_or_default();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+        let rows: Vec<[f64; 4]> = serde_json::from_value(value["motors"].clone()).unwrap_or_default();
         self.motors = rows
             .into_iter()
             .map(|[x, y, z, s]| ([x as i32, y as i32, z as i32], s as f32))
             .collect();
+        let mills: Vec<([i32; 3], millstone::Mill)> =
+            serde_json::from_value(value["mills"].clone()).unwrap_or_default();
+        self.mills = mills.into_iter().collect();
         self.dirty = true;
     }
     fn save(&self, root: &std::path::Path, dimension: &str) {
@@ -270,8 +279,11 @@ impl Owner {
             })
             .collect();
         rows.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let mut mills: Vec<(&[i32; 3], &millstone::Mill)> =
+            self.mills.iter().filter(|(_, m)| !m.is_empty()).collect();
+        mills.sort_by_key(|(p, _)| **p);
         let file = Self::file(root, dimension);
-        let text = serde_json::json!({ "motors": rows }).to_string();
+        let text = serde_json::json!({ "motors": rows, "mills": mills }).to_string();
         let written = file
             .parent()
             .map_or(Ok(()), std::fs::create_dir_all)
@@ -301,8 +313,7 @@ fn next_motor_speed(speed: f32, sneaking: bool) -> f32 {
 #[derive(Default)]
 struct Client {
     index: Index,
-    speeds: kinetic::Speeds,
-    jammed: HashSet<[i32; 3]>,
+    shown: Shown,
     dimension: &'static str,
     /// Baked models, for the item renderer at `renderer` (a resource
     /// reload makes another).
@@ -316,33 +327,64 @@ thread_local! {
     static CLIENT: RefCell<Client> = RefCell::new(Client::default());
 }
 
-/// The speeds as a payload: the turning parts (each half's speed), then
-/// the jammed ones.
-fn encode(speeds: &kinetic::Speeds, jammed: &HashSet<[i32; 3]>) -> Vec<u8> {
-    let mut out = Vec::with_capacity(9 + speeds.len() * 20 + jammed.len() * 12);
-    out.push(VERSION);
-    out.extend_from_slice(&(speeds.len() as u32).to_le_bytes());
-    for (p, s) in speeds {
+/// What a game shows of the parts: their speeds, the jammed ones, their
+/// networks' stress, and the millstones at work (on what).
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Shown {
+    speeds: kinetic::Speeds,
+    jammed: HashSet<[i32; 3]>,
+    stress: HashMap<[i32; 3], kinetic::Stress>,
+    work: HashMap<[i32; 3], String>,
+}
+
+/// What the parts show as a payload: the turning parts (each half's
+/// speed), the jammed ones, the stress of each part's network, the
+/// millstones at work.
+fn encode(shown: &Shown) -> Vec<u8> {
+    let Shown {
+        speeds,
+        jammed,
+        stress,
+        work,
+    } = shown;
+    let mut out = Vec::with_capacity(17 + speeds.len() * 20 + jammed.len() * 12 + stress.len() * 20);
+    let pos = |out: &mut Vec<u8>, p: &[i32; 3]| {
         for v in p {
             out.extend_from_slice(&v.to_le_bytes());
         }
+    };
+    out.push(VERSION);
+    out.extend_from_slice(&(speeds.len() as u32).to_le_bytes());
+    for (p, s) in speeds {
+        pos(&mut out, p);
         for v in s {
             out.extend_from_slice(&v.to_le_bytes());
         }
     }
     out.extend_from_slice(&(jammed.len() as u32).to_le_bytes());
     for p in jammed {
-        for v in p {
-            out.extend_from_slice(&v.to_le_bytes());
-        }
+        pos(&mut out, p);
+    }
+    out.extend_from_slice(&(stress.len() as u32).to_le_bytes());
+    for (p, s) in stress {
+        pos(&mut out, p);
+        out.extend_from_slice(&s.load.to_le_bytes());
+        out.extend_from_slice(&s.capacity.to_le_bytes());
+    }
+    out.extend_from_slice(&(work.len() as u32).to_le_bytes());
+    for (p, item) in work {
+        pos(&mut out, p);
+        let name = &item.as_bytes()[..item.len().min(255)];
+        out.push(name.len() as u8);
+        out.extend_from_slice(name);
     }
     out
 }
 
 /// The payload's form.
-const VERSION: u8 = 2;
+const VERSION: u8 = 3;
 
-fn decode(data: &[u8]) -> Option<(kinetic::Speeds, HashSet<[i32; 3]>)> {
+fn decode(data: &[u8]) -> Option<Shown> {
     let mut at = 0usize;
     let mut next = |n: usize| {
         let s = data.get(at..at + n)?;
@@ -350,6 +392,13 @@ fn decode(data: &[u8]) -> Option<(kinetic::Speeds, HashSet<[i32; 3]>)> {
         Some(s)
     };
     let word = |b: &[u8]| -> [u8; 4] { [b[0], b[1], b[2], b[3]] };
+    let pos = |b: &[u8]| {
+        [
+            i32::from_le_bytes(word(&b[0..4])),
+            i32::from_le_bytes(word(&b[4..8])),
+            i32::from_le_bytes(word(&b[8..12])),
+        ]
+    };
     if next(1)? != [VERSION] {
         return None;
     }
@@ -371,14 +420,32 @@ fn decode(data: &[u8]) -> Option<(kinetic::Speeds, HashSet<[i32; 3]>)> {
     let count = u32::from_le_bytes(word(next(4)?)) as usize;
     let mut jammed = HashSet::with_capacity(count.min(1 << 16));
     for _ in 0..count {
-        let b = next(12)?;
-        jammed.insert([
-            i32::from_le_bytes(word(&b[0..4])),
-            i32::from_le_bytes(word(&b[4..8])),
-            i32::from_le_bytes(word(&b[8..12])),
-        ]);
+        jammed.insert(pos(next(12)?));
     }
-    Some((speeds, jammed))
+    let count = u32::from_le_bytes(word(next(4)?)) as usize;
+    let mut stress = HashMap::with_capacity(count.min(1 << 16));
+    for _ in 0..count {
+        let b = next(20)?;
+        let s = kinetic::Stress {
+            load: f32::from_le_bytes(word(&b[12..16])),
+            capacity: f32::from_le_bytes(word(&b[16..20])),
+        };
+        stress.insert(pos(b), s);
+    }
+    let count = u32::from_le_bytes(word(next(4)?)) as usize;
+    let mut work = HashMap::with_capacity(count.min(1 << 10));
+    for _ in 0..count {
+        let p = pos(next(12)?);
+        let len = usize::from(next(1)?[0]);
+        let item = std::str::from_utf8(next(len)?).ok()?;
+        work.insert(p, item.to_owned());
+    }
+    Some(Shown {
+        speeds,
+        jammed,
+        stress,
+        work,
+    })
 }
 
 /// A turning piece of a part: its model, where its shaft points (+Y in
@@ -403,6 +470,7 @@ fn pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
             let [neg, pos] = a.dirs();
             vec![(HALF, neg, 1.0, 0), (HALF, pos, 1.0, 1)]
         }
+        Part::Millstone => vec![("kinetica:block/millstone_top", Dir::Up, 1.0, 0)],
     }
 }
 
@@ -464,7 +532,7 @@ impl Game<'_> {
         };
         let dimension = self.dim.id();
         let root = self.save.root.clone();
-        let (split, nature, mut changed) = OWNERS.with_borrow_mut(|owners| {
+        let (split, nature, mut changed, drops) = OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
             owner.load(&root, dimension);
             owner.ticks += 1;
@@ -478,6 +546,14 @@ impl Game<'_> {
             owner.motors.retain(|p, _| !removed.contains(p));
             if owner.motors.len() != before {
                 owner.save(&root, dimension);
+            }
+            // A millstone broken drops what it held.
+            let mut drops: Vec<([i32; 3], millstone::Held)> = Vec::new();
+            for p in &removed {
+                if let Some(mut mill) = owner.mills.remove(p) {
+                    drops.extend(mill.take_all().into_iter().map(|h| (*p, h)));
+                    owner.save(&root, dimension);
+                }
             }
             let split: Vec<[i32; 3]> = owner
                 .index
@@ -496,8 +572,11 @@ impl Game<'_> {
                         .map(|(p, part)| (*p, *part))
                         .collect()
                 });
-            (split, nature, changed)
+            (split, nature, changed, drops)
         });
+        for (p, h) in drops {
+            self.pop_resource(p, ItemStack::new(&h.item, h.count));
+        }
         let natural = nature.map(|parts| self.tachyon_natural(&parts));
         // Redstone at the clutches and gearshifts.
         let powered: HashSet<[i32; 3]> = if split.is_empty() {
@@ -513,6 +592,7 @@ impl Game<'_> {
                     .collect()
             })
         };
+        let random = &mut self.world.random;
         let send = OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
             if powered != owner.powered {
@@ -557,13 +637,41 @@ impl Game<'_> {
                     })
                     .collect();
                 let solved = kinetic::solve(&owner.index.parts, &sources, &owner.powered);
-                if solved.speeds != owner.speeds || solved.jammed != owner.jammed {
-                    owner.speeds = solved.speeds;
-                    owner.jammed = solved.jammed;
+                let shown = &mut owner.shown;
+                if solved.speeds != shown.speeds
+                    || solved.jammed != shown.jammed
+                    || solved.stress != shown.stress
+                {
+                    shown.speeds = solved.speeds;
+                    shown.jammed = solved.jammed;
+                    shown.stress = solved.stress;
                     send = true;
                 }
             }
-            send.then(|| encode(&owner.speeds, &owner.jammed))
+            // The millstones turning grind.
+            let mut work = HashMap::new();
+            for (p, mill) in &mut owner.mills {
+                let Some(item) = mill.input.as_ref().map(|h| h.item.clone()) else {
+                    continue;
+                };
+                let speed = owner.shown.speeds.get(p).map_or(0.0, |s| s[0]);
+                if speed == 0.0 || owner.index.parts.get(p) != Some(&Part::Millstone) {
+                    continue;
+                }
+                if mill.grind(speed, millstone::recipe(&item), &mut || random.next_float()) {
+                    owner.mills_changed = true;
+                    work.insert(*p, item);
+                }
+            }
+            if work != owner.shown.work {
+                owner.shown.work = work;
+                send = true;
+            }
+            if owner.mills_changed && owner.ticks % RESEND == 0 {
+                owner.mills_changed = false;
+                owner.save(&root, dimension);
+            }
+            send.then(|| encode(&owner.shown))
         });
         if let Some(data) = send
             && let Some(host) = self.lan.as_ref()
@@ -585,6 +693,7 @@ impl Game<'_> {
                 return 0.0;
             };
             owner
+                .shown
                 .speeds
                 .iter()
                 .filter(|(p, _)| {
@@ -674,8 +783,8 @@ impl Game<'_> {
 
     /// The player used the block at `pos` (the world's owner, before the
     /// block's own use): a creative motor's speed changes, a hand crank
-    /// turns a moment (sneaking, the other way). Whether it was Tachyon's to
-    /// use.
+    /// turns a moment (sneaking, the other way), a millstone takes the held
+    /// stack or gives what it ground. Whether it was Tachyon's to use.
     pub(super) fn tachyon_use(&mut self, pos: [i32; 3]) -> bool {
         if self.remote.is_some() {
             return false;
@@ -685,12 +794,30 @@ impl Game<'_> {
         };
         let state = self.world.block(pos[0], pos[1], pos[2]).0;
         let part = kinds.part(state);
-        if !matches!(part, Some(Part::Motor(_) | Part::Crank(_))) {
+        if !matches!(part, Some(Part::Motor(_) | Part::Crank(_) | Part::Millstone)) {
             return false;
         }
         let sneaking = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft);
         let dimension = self.dim.id();
         let root = self.save.root.clone();
+        if part == Some(Part::Millstone) {
+            let mut mill = OWNERS.with_borrow_mut(|owners| {
+                let owner = owners.entry(dimension).or_default();
+                owner.load(&root, dimension);
+                owner.mills.remove(&pos).unwrap_or_default()
+            });
+            let moved = self.tachyon_use_millstone(&mut mill);
+            OWNERS.with_borrow_mut(|owners| {
+                let owner = owners.entry(dimension).or_default();
+                if !mill.is_empty() {
+                    owner.mills.insert(pos, mill);
+                }
+                if moved {
+                    owner.save(&root, dimension);
+                }
+            });
+            return true;
+        }
         OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
             owner.load(&root, dimension);
@@ -709,6 +836,20 @@ impl Game<'_> {
         true
     }
 
+    /// Whether the block at `pos` is one of Tachyon's a use goes to: a
+    /// player's window sends the use and places nothing (the owner does the
+    /// rest, `tachyon_use`).
+    pub(super) fn tachyon_takes_use(&self, pos: [i32; 3]) -> bool {
+        let Some(kinds) = self.tachyon_kinds() else {
+            return false;
+        };
+        let state = self.world.block(pos[0], pos[1], pos[2]).0;
+        matches!(
+            kinds.part(state),
+            Some(Part::Motor(_) | Part::Crank(_) | Part::Millstone)
+        )
+    }
+
     /// Each tick of every game: a client's index follows its world.
     pub(super) fn tachyon_tick(&mut self) {
         self.tachyon_quests_tick();
@@ -722,8 +863,7 @@ impl Game<'_> {
         CLIENT.with_borrow_mut(|client| {
             if client.dimension != dimension {
                 client.index = Index::default();
-                client.speeds.clear();
-                client.jammed.clear();
+                client.shown = Shown::default();
                 client.dimension = dimension;
             }
             client
@@ -742,27 +882,21 @@ impl Game<'_> {
             return;
         }
         match decode(data) {
-            Some((speeds, jammed)) => CLIENT.with_borrow_mut(|client| {
-                client.speeds = speeds;
-                client.jammed = jammed;
-            }),
+            Some(shown) => CLIENT.with_borrow_mut(|client| client.shown = shown),
             None => log::warn!("Tachyon: a {KINETIC} payload that doesn't read"),
         }
     }
 
     /// The parts this game shows and their speeds: a client's, or the
     /// owner's when the world runs in the window's frame.
-    fn tachyon_view<R>(
-        &self,
-        f: impl FnOnce(&Index, &kinetic::Speeds, &HashSet<[i32; 3]>) -> R,
-    ) -> R {
+    fn tachyon_view<R>(&self, f: impl FnOnce(&Index, &Shown) -> R) -> R {
         if self.remote.is_some() {
-            CLIENT.with_borrow(|c| f(&c.index, &c.speeds, &c.jammed))
+            CLIENT.with_borrow(|c| f(&c.index, &c.shown))
         } else {
             let dimension = self.dim.id();
             OWNERS.with_borrow(|owners| match owners.get(dimension) {
-                Some(o) => f(&o.index, &o.speeds, &o.jammed),
-                None => f(&Index::default(), &kinetic::Speeds::new(), &HashSet::new()),
+                Some(o) => f(&o.index, &o.shown),
+                None => f(&Index::default(), &Shown::default()),
             })
         }
     }
@@ -775,7 +909,7 @@ impl Game<'_> {
         let ticks = self.world.game_time as f64 + alpha;
         let view = self.view_frustum;
         let mut draws: Vec<([i32; 3], Part, [f32; 2])> = Vec::new();
-        self.tachyon_view(|index, speeds, _| {
+        self.tachyon_view(|index, shown| {
             for (pos, part) in &index.parts {
                 let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
                 if (at + DVec3::splat(0.5)).distance_squared(camera) > VIEW * VIEW {
@@ -786,7 +920,7 @@ impl Game<'_> {
                 if view.is_some_and(|v| !v.intersects(o - Vec3::splat(1.5), o + Vec3::splat(2.5))) {
                     continue;
                 }
-                draws.push((*pos, *part, speeds.get(pos).copied().unwrap_or([0.0; 2])));
+                draws.push((*pos, *part, shown.speeds.get(pos).copied().unwrap_or([0.0; 2])));
             }
         });
         for (pos, part, speed) in draws {
@@ -852,13 +986,19 @@ impl Game<'_> {
         let Some(hit) = self.pick() else {
             return;
         };
-        let seen = self.tachyon_view(|index, speeds, jammed| {
+        let seen = self.tachyon_view(|index, shown| {
             let part = *index.parts.get(&hit.pos)?;
-            let [a, b] = speeds.get(&hit.pos).copied().unwrap_or([0.0; 2]);
+            let [a, b] = shown.speeds.get(&hit.pos).copied().unwrap_or([0.0; 2]);
             let speed = if a.abs() >= b.abs() { a } else { b };
-            Some((part, speed, jammed.contains(&hit.pos)))
+            Some((
+                part,
+                speed,
+                shown.jammed.contains(&hit.pos),
+                shown.stress.get(&hit.pos).copied(),
+                shown.work.get(&hit.pos).cloned(),
+            ))
         });
-        let Some((part, speed, jammed)) = seen else {
+        let Some((part, speed, jammed, stress, work)) = seen else {
             return;
         };
         let (block, english) = match part {
@@ -872,21 +1012,47 @@ impl Game<'_> {
             Part::Gearshift(_) => ("gearshift", "Gearshift"),
             Part::WaterWheel(_) => ("water_wheel", "Water Wheel"),
             Part::Windmill(_) => ("windmill", "Windmill"),
+            Part::Millstone => ("millstone", "Millstone"),
         };
         let what = self.translate(&format!("block.kinetica.{block}"), english);
-        let state = if jammed {
+        let mut state = if jammed {
             self.translate("kinetica.hud.jammed", "jammed")
+        } else if stress.is_some_and(kinetic::Stress::over) {
+            self.translate("kinetica.hud.overstressed", "overstressed")
         } else if speed == 0.0 {
             self.translate("kinetica.hud.still", "still")
         } else {
             self.translate("kinetica.hud.rpm", "%s RPM")
                 .replace("%s", &speed.abs().round().to_string())
         };
+        // The network's load against its capacity, and what a millstone
+        // grinds.
+        if let Some(s) = stress {
+            let su = self
+                .translate("kinetica.hud.stress", "%s / %s SU")
+                .replacen("%s", &(s.load.round() as i64).to_string(), 1)
+                .replacen("%s", &(s.capacity.round() as i64).to_string(), 1);
+            state = format!("{state} | {su}");
+        }
+        if let Some(item) = work {
+            state = format!("{state} | {}", self.tachyon_item_name(&item));
+        }
         let line = format!("{what}: {state}");
         let w = self.native_text_width(&line) + 4.0;
         let (x, y) = corners.place(Corner::TopLeft, w, 12.0);
         self.native_fill(batch, [x, y, w, 12.0], 0x7800_0000);
         self.native_text(batch, &line, [x + 2.0, y + 2.0], 0xFFD27A, true);
+    }
+
+    /// An item's name in the player's language: its item key's, else its
+    /// block key's.
+    fn tachyon_item_name(&self, item: &str) -> String {
+        let key = item.replacen(':', ".", 1);
+        let name = self.translate(&format!("item.{key}"), "");
+        if !name.is_empty() {
+            return name;
+        }
+        self.translate(&format!("block.{key}"), item)
     }
 }
 
@@ -896,12 +1062,21 @@ mod tests {
 
     #[test]
     fn speeds_go_and_come_back() {
-        let speeds = HashMap::from([([1, -64, 3], [32.0; 2]), ([-5, 70, 9], [-16.0, 16.0])]);
-        let jammed = HashSet::from([[0, 0, 0]]);
-        let (s, j) = decode(&encode(&speeds, &jammed)).unwrap();
-        assert_eq!((s, j), (speeds.clone(), jammed.clone()));
+        let shown = Shown {
+            speeds: HashMap::from([([1, -64, 3], [32.0; 2]), ([-5, 70, 9], [-16.0, 16.0])]),
+            jammed: HashSet::from([[0, 0, 0]]),
+            stress: HashMap::from([(
+                [1, -64, 3],
+                kinetic::Stress {
+                    load: 128.0,
+                    capacity: 256.0,
+                },
+            )]),
+            work: HashMap::from([([2, 64, 2], "minecraft:cobblestone".to_owned())]),
+        };
+        assert_eq!(decode(&encode(&shown)), Some(shown.clone()));
         assert!(decode(&[1]).is_none());
-        assert!(decode(&encode(&speeds, &jammed)[..10]).is_none());
+        assert!(decode(&encode(&shown)[..10]).is_none());
     }
 
     #[test]
@@ -941,6 +1116,7 @@ mod tests {
             part_of("kinetica:windmill", props("z")),
             Some(Part::Windmill(Axis::Z))
         );
+        assert_eq!(part_of("kinetica:millstone", facing), Some(Part::Millstone));
     }
 
     #[test]

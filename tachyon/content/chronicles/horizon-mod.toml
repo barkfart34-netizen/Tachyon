@@ -1,7 +1,7 @@
 # Tachyon: Aether & Gears. Chronicles, the quests: written by tachyon/art/chronicles.py.
 id = "chronicles"
 name = "Chronicles"
-version = "0.2.0"
+version = "0.3.0"
 api = "0.2"
 side = "both"
 capabilities = ["registries"]

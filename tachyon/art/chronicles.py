@@ -64,6 +64,16 @@ CHAPTERS = [
               ("Build a machine and set it turning: any part near you at 16 RPM or more will do.",
                "Bangun mesin dan buat ia berputar: bagian mana pun di dekatmu, 16 RPM atau lebih."),
               turning=16, rewards=[stack("kinetica:ferrostone_casing", 4)], after=["hand_power"]),
+        quest("millstone", "kinetica:millstone",
+              ("Daily Bread", "Roti Harian"),
+              ("A millstone grinds what is put in it while it turns; use it with an empty hand to take out what "
+               "it ground. Grind wheat into flour, and bake the flour into bread. Mind the stress: a hand crank "
+               "drives only two.",
+               "Batu gilingan menggiling isinya selama berputar; pakai dengan tangan kosong untuk mengambil "
+               "hasilnya. Giling gandum jadi tepung, lalu panggang tepungnya jadi roti. Perhatikan beban: satu "
+               "engkol tangan hanya kuat memutar dua."),
+              tasks=[stack("kinetica:wheat_flour", 4)],
+              rewards=[stack("minecraft:wheat", 16), stack("kinetica:large_cogwheel", 2)], after=["in_motion"]),
         quest("goggles", "kinetica:engineers_goggles",
               ("Seeing Speed", "Melihat Kecepatan"),
               ("Engineer's Goggles show how fast a part turns when you look at it.",
@@ -133,7 +143,7 @@ def main():
     ROOT.mkdir(parents=True)
     (ROOT / "horizon-mod.toml").write_text(
         "# Tachyon: Aether & Gears. Chronicles, the quests: written by tachyon/art/chronicles.py.\n"
-        'id = "chronicles"\nname = "Chronicles"\nversion = "0.2.0"\napi = "0.2"\nside = "both"\n'
+        'id = "chronicles"\nname = "Chronicles"\nversion = "0.3.0"\napi = "0.2"\nside = "both"\n'
         'capabilities = ["registries"]\n', encoding="utf-8")
     en = {"chronicles.title": "Chronicles", "chronicles.claim": "Claim", "chronicles.claimed": "Claimed",
           "chronicles.locked": "Finish the quests before it first", "chronicles.tasks": "Hold at once:",

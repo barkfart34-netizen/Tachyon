@@ -101,6 +101,29 @@
           "turning": 16
         },
         {
+          "id": "millstone",
+          "icon": "kinetica:millstone",
+          "after": [
+            "in_motion"
+          ],
+          "tasks": [
+            {
+              "item": "kinetica:wheat_flour",
+              "count": 4
+            }
+          ],
+          "rewards": [
+            {
+              "item": "minecraft:wheat",
+              "count": 16
+            },
+            {
+              "item": "kinetica:large_cogwheel",
+              "count": 2
+            }
+          ]
+        },
+        {
           "id": "goggles",
           "icon": "kinetica:engineers_goggles",
           "after": [

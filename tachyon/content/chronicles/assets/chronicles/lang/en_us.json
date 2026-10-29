@@ -19,6 +19,8 @@
   "chronicles.quest.hand_power.text": "A hand crank turns what it sits on while you use it. Sneak to turn it the other way.",
   "chronicles.quest.in_motion": "In Motion",
   "chronicles.quest.in_motion.text": "Build a machine and set it turning: any part near you at 16 RPM or more will do.",
+  "chronicles.quest.millstone": "Daily Bread",
+  "chronicles.quest.millstone.text": "A millstone grinds what is put in it while it turns; use it with an empty hand to take out what it ground. Grind wheat into flour, and bake the flour into bread. Mind the stress: a hand crank drives only two.",
   "chronicles.quest.goggles": "Seeing Speed",
   "chronicles.quest.goggles.text": "Engineer's Goggles show how fast a part turns when you look at it.",
   "chronicles.quest.water_power": "Running Water",

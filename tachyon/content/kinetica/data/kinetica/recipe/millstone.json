@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    " P ",
+    "ACA",
+    " S "
+  ],
+  "key": {
+    "P": "#minecraft:planks",
+    "A": "kinetica:ferrostone_alloy",
+    "C": "kinetica:cogwheel",
+    "S": "minecraft:stone"
+  },
+  "result": {
+    "id": "kinetica:millstone",
+    "count": 1
+  }
+}

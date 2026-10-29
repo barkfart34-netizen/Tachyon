@@ -360,6 +360,69 @@ def nugget(palette):
     return draw
 
 
+def millstone_stone():
+    """A millstone's side: rough grey stone, a groove round its middle."""
+    rng = random.Random(41)
+    img = image()
+    noise(img, STONE, rng, 2, 4)
+    for x in range(16):
+        img.putpixel((x, 7), STONE[1] + (255,))
+        img.putpixel((x, 8), STONE[0] + (255,))
+    return img
+
+
+def millstone_top():
+    """A millstone's top: stone with eight grooves out from the eye."""
+    rng = random.Random(42)
+    img = image()
+    noise(img, STONE, rng, 2, 4)
+    for y in range(16):
+        for x in range(16):
+            dx, dy = x - 7.5, y - 7.5
+            d = math.hypot(dx, dy)
+            a = math.degrees(math.atan2(dy, dx)) % 45
+            if d < 1.8:
+                img.putpixel((x, y), STONE[0] + (255,))
+            elif d < 2.6:
+                img.putpixel((x, y), STONE[1] + (255,))
+            elif d < 7.6 and (a < 10 or a > 41):
+                img.putpixel((x, y), STONE[0] + (255,))
+            elif 7.0 <= d < 8.0:
+                img.putpixel((x, y), STONE[1] + (255,))
+    return img
+
+
+def flour():
+    """A sack of flour, open at the top."""
+    img = image()
+    rows = [
+        "................",
+        "................",
+        "................",
+        "......aaaa......",
+        ".....awwwwa.....",
+        "....awwvwwwa....",
+        ".....arrrra.....",
+        "....abbbbbba....",
+        "...abbcbbbbba...",
+        "...abccbbbbda...",
+        "..abbcbbbbbdda..",
+        "..abbbbbbbbdda..",
+        "..abbbbbbbddda..",
+        "...addddddddda..",
+        "....aaaaaaaaa...",
+        "................",
+    ]
+    colors = {"a": WOOD[0], "w": (244, 240, 228), "v": (210, 202, 184), "r": WOOD[1],
+              "b": (196, 170, 120), "c": (224, 204, 160), "d": (158, 132, 90)}
+    for y, row in enumerate(rows):
+        assert len(row) == 16, row
+        for x, ch in enumerate(row):
+            if ch in colors:
+                img.putpixel((x, y), colors[ch] + (255,))
+    return img
+
+
 TEXTURES = {
     "block/ferrostone_casing": casing,
     "block/gearbox_side": casing_hole,
@@ -384,6 +447,9 @@ TEXTURES = {
     "item/tin_nugget": nugget(TIN),
     "item/bronze_ingot": lambda: ingot({"a": BRONZE[0], "b": BRONZE[4], "c": BRONZE[3], "d": BRONZE[2],
                                         "e": BRONZE[1]}),
+    "block/millstone_stone": millstone_stone,
+    "block/millstone_top": millstone_top,
+    "item/wheat_flour": flour,
 }
 
 
@@ -522,6 +588,23 @@ def windmill():
     return elements
 
 
+MILL_TEX = {"casing": t("block/ferrostone_casing"), "hole": t("block/gearbox_side"),
+            "stone": t("block/millstone_stone"), "top": t("block/millstone_top"),
+            "particle": t("block/millstone_stone")}
+# The millstone: a casing base, still; the stone on it turns (the content
+# engine's `pieces`), its shaft below.
+MILL_BASE = box([0, 0, 0], [16, 5, 16], {
+    "north": ("#casing", [0, 11, 16, 16]), "south": ("#casing", [0, 11, 16, 16]),
+    "east": ("#casing", [0, 11, 16, 16]), "west": ("#casing", [0, 11, 16, 16]),
+    "up": ("#casing", [0, 0, 16, 16]), "down": ("#hole", [0, 0, 16, 16]),
+})
+MILL_STONE = box([2, 5, 2], [14, 12, 14], {
+    "north": ("#stone", [2, 4, 14, 11]), "south": ("#stone", [2, 4, 14, 11]),
+    "east": ("#stone", [2, 4, 14, 11]), "west": ("#stone", [2, 4, 14, 11]),
+    "up": ("#top", [2, 2, 14, 14]), "down": ("#stone", [2, 2, 14, 14]),
+})
+
+
 def big_item(block):
     """An item for a part wider than its block: the block's model, smaller."""
     return {"parent": t(block), "display": {
@@ -587,6 +670,10 @@ MODELS = {
     "block/windmill": model(textures=SAIL_TEX, elements=windmill()),
     "block/windmill_still": still("block/sail"),
     "item/windmill": big_item("block/windmill"),
+    "block/millstone": model(textures=MILL_TEX, elements=[MILL_BASE]),
+    "block/millstone_top": model(textures=MILL_TEX, elements=[MILL_STONE]),
+    "block/millstone_item": model(textures=MILL_TEX, elements=[MILL_BASE, MILL_STONE]),
+    "item/wheat_flour": model("minecraft:item/generated", {"layer0": t("item/wheat_flour")}),
 }
 
 AXIS = {
@@ -670,6 +757,10 @@ BLOCKS = {
     # Sails on a shaft: the wind turns them under open sky, faster higher up.
     "windmill": ("minecraft:iron_chain", {"hardness": 1.5, "sounds": "minecraft:white_wool", "map_color": 3},
                  axis_and_water("block/windmill_still"), "item/windmill", ("Windmill", "Kincir Angin")),
+    # A stonecutter's shape (9 high) and states (four facings); a use goes to
+    # the content engine first, which puts items in or takes them out.
+    "millstone": ("minecraft:stonecutter", {"hardness": 2.0, "sounds": "minecraft:stone", "map_color": 11},
+                  states(FACING, "block/millstone"), "block/millstone_item", ("Millstone", "Batu Gilingan")),
 }
 
 ITEMS = {
@@ -678,6 +769,7 @@ ITEMS = {
     "tin_ingot": ("minecraft:iron_ingot", "item/tin_ingot", ("Tin Ingot", "Batangan Timah")),
     "tin_nugget": ("minecraft:iron_nugget", "item/tin_nugget", ("Tin Nugget", "Butiran Timah")),
     "bronze_ingot": ("minecraft:copper_ingot", "item/bronze_ingot", ("Bronze Ingot", "Batangan Perunggu")),
+    "wheat_flour": ("minecraft:brick", "item/wheat_flour", ("Wheat Flour", "Tepung Terigu")),
     # Worn on the head (a leather cap's slot), or held: a part's speed shows
     # when looked at.
     "engineers_goggles": ("minecraft:leather_helmet", "item/engineers_goggles",
@@ -689,6 +781,8 @@ HUD = {
     "kinetica.hud.still": ("still", "diam"),
     "kinetica.hud.jammed": ("jammed", "macet"),
     "kinetica.hud.rpm": ("%s RPM", "%s RPM"),
+    "kinetica.hud.overstressed": ("overstressed", "kelebihan beban"),
+    "kinetica.hud.stress": ("%s / %s SU", "%s / %s SU"),
 }
 
 
@@ -746,7 +840,43 @@ RECIPES = {
     "bronze_ingot": recipe_shapeless(["minecraft:copper_ingot"] * 3 + [t("tin_ingot")], "bronze_ingot", 4),
     "engineers_goggles": recipe_shaped([" L ", "GAG"], {"L": "minecraft:leather", "G": "minecraft:glass",
                                                          "A": t("ferrostone_alloy")}, "engineers_goggles"),
+    "millstone": recipe_shaped([" P ", "ACA", " S "], {"P": "#minecraft:planks", "A": t("ferrostone_alloy"),
+                                                       "C": t("cogwheel"), "S": "minecraft:stone"}, "millstone"),
+    # Flour bakes into bread.
+    **{f"bread_from_{kind}_flour": {"type": f"minecraft:{kind}", "category": "food",
+                                    "ingredient": t("wheat_flour"), "result": {"id": "minecraft:bread"},
+                                    "experience": 0.35, "cookingtime": ticks}
+       for kind, ticks in [("smelting", 200), ("smoking", 100)]},
 }
+
+
+def mill(item, outputs, time=100):
+    """A milling recipe: `outputs` (item, count, chance) for one `item`, in
+    `time` work (1/16 for each RPM a tick)."""
+    return {"input": item, "time": time,
+            "outputs": [{"item": i, "count": c, "chance": p} for i, c, p in outputs]}
+
+
+# The millstone's recipes (read by the content engine's millstone.rs).
+DYES = [("dandelion", "yellow", 2), ("poppy", "red", 2), ("blue_orchid", "light_blue", 2),
+        ("allium", "magenta", 2), ("azure_bluet", "light_gray", 2), ("red_tulip", "red", 2),
+        ("orange_tulip", "orange", 2), ("white_tulip", "light_gray", 2), ("pink_tulip", "pink", 2),
+        ("oxeye_daisy", "light_gray", 2), ("cornflower", "blue", 2), ("lily_of_the_valley", "white", 2),
+        ("torchflower", "orange", 2), ("sunflower", "yellow", 4), ("lilac", "magenta", 4),
+        ("rose_bush", "red", 4), ("peony", "pink", 4), ("pitcher_plant", "cyan", 4), ("cactus", "green", 2),
+        ("cocoa_beans", "brown", 2), ("ink_sac", "black", 2), ("wither_rose", "black", 3)]
+MILLING = [
+    mill("minecraft:wheat", [(t("wheat_flour"), 1, 1.0), (t("wheat_flour"), 1, 0.25),
+                             ("minecraft:wheat_seeds", 1, 0.25)], 150),
+    mill("minecraft:cobblestone", [("minecraft:gravel", 1, 1.0)], 250),
+    mill("minecraft:gravel", [("minecraft:sand", 1, 1.0), ("minecraft:flint", 1, 0.1)], 250),
+    mill("minecraft:terracotta", [("minecraft:red_sand", 1, 1.0)], 250),
+    mill("minecraft:bone", [("minecraft:bone_meal", 3, 1.0), ("minecraft:bone_meal", 1, 0.25)]),
+    mill("minecraft:sugar_cane", [("minecraft:sugar", 2, 1.0)], 50),
+    mill("minecraft:clay", [("minecraft:clay_ball", 3, 1.0), ("minecraft:clay_ball", 1, 0.5)]),
+    mill("minecraft:white_wool", [("minecraft:string", 3, 1.0)], 150),
+    *[mill(f"minecraft:{flower}", [(f"minecraft:{dye}_dye", n, 1.0)], 50) for flower, dye, n in DYES],
+]
 
 
 def ore_loot(block, drop):
@@ -822,7 +952,7 @@ def main():
     (ROOT).mkdir(parents=True)
     (ROOT / "horizon-mod.toml").write_text(
         "# Tachyon: Aether & Gears. Kinetica, the machines: written by tachyon/art/kinetica.py.\n"
-        'id = "kinetica"\nname = "Kinetica"\nversion = "0.2.0"\napi = "0.2"\nside = "both"\n'
+        'id = "kinetica"\nname = "Kinetica"\nversion = "0.3.0"\napi = "0.2"\nside = "both"\n'
         'capabilities = ["registries"]\n', encoding="utf-8")
     for name, draw in TEXTURES.items():
         write(assets / "textures" / f"{name}.png", draw())
@@ -846,6 +976,9 @@ def main():
         en[key], idn[key] = name_en, name_id
     for name, r in RECIPES.items():
         write(data / NS / "recipe" / f"{name}.json", r)
+    inputs = [m["input"] for m in MILLING]
+    assert len(inputs) == len(set(inputs)), "one milling recipe an item"
+    write(data / NS / "tachyon" / "milling.json", {"recipes": MILLING})
     wooden = ("cogwheel", "large_cogwheel", "hand_crank", "water_wheel", "windmill")
     pickaxe = [t(b) for b in BLOCKS if b not in wooden]
     axe = [t(b) for b in wooden]

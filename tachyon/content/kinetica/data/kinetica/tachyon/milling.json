@@ -1,0 +1,359 @@
+{
+  "recipes": [
+    {
+      "input": "minecraft:wheat",
+      "time": 150,
+      "outputs": [
+        {
+          "item": "kinetica:wheat_flour",
+          "count": 1,
+          "chance": 1.0
+        },
+        {
+          "item": "kinetica:wheat_flour",
+          "count": 1,
+          "chance": 0.25
+        },
+        {
+          "item": "minecraft:wheat_seeds",
+          "count": 1,
+          "chance": 0.25
+        }
+      ]
+    },
+    {
+      "input": "minecraft:cobblestone",
+      "time": 250,
+      "outputs": [
+        {
+          "item": "minecraft:gravel",
+          "count": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:gravel",
+      "time": 250,
+      "outputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 1,
+          "chance": 1.0
+        },
+        {
+          "item": "minecraft:flint",
+          "count": 1,
+          "chance": 0.1
+        }
+      ]
+    },
+    {
+      "input": "minecraft:terracotta",
+      "time": 250,
+      "outputs": [
+        {
+          "item": "minecraft:red_sand",
+          "count": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:bone",
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:bone_meal",
+          "count": 3,
+          "chance": 1.0
+        },
+        {
+          "item": "minecraft:bone_meal",
+          "count": 1,
+          "chance": 0.25
+        }
+      ]
+    },
+    {
+      "input": "minecraft:sugar_cane",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:sugar",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:clay",
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:clay_ball",
+          "count": 3,
+          "chance": 1.0
+        },
+        {
+          "item": "minecraft:clay_ball",
+          "count": 1,
+          "chance": 0.5
+        }
+      ]
+    },
+    {
+      "input": "minecraft:white_wool",
+      "time": 150,
+      "outputs": [
+        {
+          "item": "minecraft:string",
+          "count": 3,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:dandelion",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:yellow_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:poppy",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:red_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:blue_orchid",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:light_blue_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:allium",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:magenta_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:azure_bluet",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:light_gray_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:red_tulip",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:red_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:orange_tulip",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:orange_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:white_tulip",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:light_gray_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:pink_tulip",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:pink_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:oxeye_daisy",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:light_gray_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:cornflower",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:blue_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:lily_of_the_valley",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:white_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:torchflower",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:orange_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:sunflower",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:yellow_dye",
+          "count": 4,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:lilac",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:magenta_dye",
+          "count": 4,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:rose_bush",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:red_dye",
+          "count": 4,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:peony",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:pink_dye",
+          "count": 4,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:pitcher_plant",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:cyan_dye",
+          "count": 4,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:cactus",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:green_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:cocoa_beans",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:brown_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:ink_sac",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:black_dye",
+          "count": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:wither_rose",
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:black_dye",
+          "count": 3,
+          "chance": 1.0
+        }
+      ]
+    }
+  ]
+}

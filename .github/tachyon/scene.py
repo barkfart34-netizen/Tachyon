@@ -90,12 +90,16 @@ SHOWCASE = [
     # A windmill in the open, along z, on a shaft behind it.
     ("setblock", (-6, 2, 2), "kinetica:windmill[axis=z]"),
     ("setblock", (-6, 2, 1), "kinetica:shaft[axis=z]"),
+    # A millstone on a gearbox a motor drives.
+    ("setblock", (2, 0, 12), "kinetica:creative_motor[facing=west]"),
+    ("setblock", (3, 0, 12), "kinetica:gearbox[axis=z]"),
+    ("setblock", (3, 1, 12), "kinetica:millstone[facing=north]"),
 ]
 # Given to the player: with the goggles on and the motor at 128 RPM, enough
 # for Chronicles' machine quests (the counts some ask to hold).
 ITEMS = ["shaft 8", "cogwheel 2", "large_cogwheel", "gearbox", "hand_crank", "clutch", "gearshift",
          "water_wheel", "windmill", "creative_motor", "ferrostone_alloy 4", "raw_tin", "tin_ingot",
-         "bronze_ingot"]
+         "bronze_ingot", "millstone", "wheat_flour"]
 
 
 def look_at(control, eye, target):
@@ -193,6 +197,29 @@ def kinetica(control, out):
     visit((-3, 0, 10), (-7, 7, 18))
     time.sleep(1)
     control.send("screenshot " + os.path.join(out, "watchtower.png"))
+    # The millstone: its motor up to 128 RPM, wheat put in with a use, the
+    # flour taken out with an empty hand and counted.
+    visit((1, 0, 13), (2, 0, 12))
+    for _ in range(2):
+        control.send("mouse right click")
+        time.sleep(0.5)
+    control.send("chat /item replace entity @s weapon.mainhand with minecraft:wheat 16")
+    visit((3, 0, 10), (3, 0.7, 12))
+    control.send("mouse right click")
+    time.sleep(8)
+    control.send("screenshot " + os.path.join(out, "kinetica-millstone.png"))
+    control.send("chat /item replace entity @s weapon.mainhand with minecraft:air")
+    time.sleep(0.5)
+    control.send("mouse right click")
+    time.sleep(1)
+    control.send("chat /clear @s kinetica:wheat_flour 0")
+    time.sleep(1)
+    lines = " ".join(str(line) for line in control.send("chat-log 2").get("chat", []))
+    print("flour:", lines)
+    flour = re.search(r"Found (\d+)", lines)
+    # The one given with the items, and what was ground.
+    if not flour or int(flour.group(1)) < 5:
+        good = False
     return good
 
 
@@ -316,7 +343,7 @@ def main():
         failed.append("quest claimed")
     # Done by the motor turning near the player, and by standing in the
     # structures the world made.
-    for quest in ["in_motion", "full_speed", "lost_workshop", "watchtower"]:
+    for quest in ["in_motion", "full_speed", "millstone", "lost_workshop", "watchtower"]:
         if not any(quest in p.get("done", []) for p in progress):
             failed.append("quest " + quest)
     if failed:
