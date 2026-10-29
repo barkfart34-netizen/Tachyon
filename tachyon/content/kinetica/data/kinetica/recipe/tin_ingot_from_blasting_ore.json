@@ -1,0 +1,13 @@
+{
+  "type": "minecraft:blasting",
+  "category": "misc",
+  "ingredient": [
+    "kinetica:tin_ore",
+    "kinetica:deepslate_tin_ore"
+  ],
+  "result": {
+    "id": "kinetica:tin_ingot"
+  },
+  "experience": 0.7,
+  "cookingtime": 100
+}

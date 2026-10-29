@@ -1,0 +1,7 @@
+{
+  "template": "minecraft:iron_block",
+  "properties": {
+    "map_color": 6
+  },
+  "item": true
+}

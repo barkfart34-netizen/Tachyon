@@ -47,6 +47,16 @@ Lapisan yang memberi blok modpack perilaku di luar template vanilla-nya. Rencana
 - **State** disimpan per thread (`thread_local`). Jendela game dan thread server masing-masing
   berjalan di thread sendiri.
 
+## Bijih di dunia
+
+- Content mod boleh menambah `configured_feature` dan `placed_feature`, tetapi tidak boleh mengubah
+  bioma. Karena itu Tachyon menambah kunci `"horizon:beside": "<fitur vanilla>"` pada placed feature
+  (`mod_content.rs`).
+- Fitur yang memakai kunci itu ditaruh tepat setelah fitur vanilla yang disebut, pada langkah yang
+  sama, di setiap bioma yang memuat fitur vanilla tersebut. Cara ini mirip *biome modifier* di
+  NeoForge.
+- Contoh: bijih timah Kinetica (`kinetica:ore_tin`) ditaruh di samping `minecraft:ore_copper`.
+
 ## Titik kait di kode Horizon
 
 Satu baris per titik, supaya merge dari upstream tetap mudah:
@@ -57,6 +67,7 @@ Satu baris per titik, supaya merge dari upstream tetap mudah:
 | `game/native_hooks.rs` | Isi setiap hook memanggil `tachyon_*` (mod resmi dan TCE) |
 | `game/remote.rs` | Payload `tachyon:*` menuju `tachyon_payload` |
 | `game/mods.rs` | `content_root` memasang konten bawaan |
+| `mod_content.rs` | `horizon:beside`: placed feature dari mod ikut masuk ke bioma |
 
 ## Belum ada
 

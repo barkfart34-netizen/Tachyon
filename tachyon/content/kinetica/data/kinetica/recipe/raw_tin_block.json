@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "RRR",
+    "RRR",
+    "RRR"
+  ],
+  "key": {
+    "R": "kinetica:raw_tin"
+  },
+  "result": {
+    "id": "kinetica:raw_tin_block",
+    "count": 1
+  }
+}

@@ -26,6 +26,10 @@ STONE = [(52, 54, 58), (74, 77, 82), (96, 99, 104), (117, 120, 124), (138, 141, 
 WOOD = [(58, 38, 22), (86, 58, 33), (114, 79, 45), (139, 99, 58), (165, 122, 74)]
 BRONZE = [(70, 42, 20), (112, 70, 30), (156, 104, 44), (196, 142, 66), (230, 186, 104)]
 CORE = [(10, 40, 70), (20, 90, 140), (40, 160, 210), (110, 220, 255), (210, 248, 255)]
+TIN = [(58, 66, 74), (98, 110, 120), (140, 154, 162), (178, 192, 198), (210, 222, 226), (236, 244, 246)]
+# The ground the ores are in: a stone's greys, a deepslate's darker blue-greys.
+ROCK = [(96, 96, 96), (108, 108, 108), (119, 119, 119), (129, 129, 129), (140, 140, 140)]
+DEEP = [(48, 48, 54), (58, 58, 64), (69, 69, 75), (80, 80, 86), (92, 92, 98)]
 
 
 def image():
@@ -227,6 +231,11 @@ def goggles():
 
 def alloy():
     """An ingot: ferrostone grey, an iron sheen."""
+    return ingot({"a": STONE[0], "b": IRON[5], "c": IRON[3], "d": STONE[3], "e": STONE[1]})
+
+
+def ingot(colors):
+    """An ingot: `a` its outline, `b` the sheen, `c` the top, `d` and `e` the shaded sides."""
     img = image()
     rows = [
         "................",
@@ -246,12 +255,109 @@ def alloy():
         "................",
         "................",
     ]
-    colors = {"a": STONE[0], "b": IRON[5], "c": IRON[3], "d": STONE[3], "e": STONE[1]}
     for y, row in enumerate(rows):
         for x, ch in enumerate(row):
             if ch in colors:
                 img.putpixel((x, y), colors[ch] + (255,))
     return img
+
+
+def ground(palette, seed, streaks=False):
+    """Rock: clumps of its greys, in streaks across for deepslate."""
+    rng = random.Random(seed)
+    img = image()
+    for y in range(16):
+        for x in range(16):
+            i = rng.choice([1, 2, 2, 3])
+            if streaks and (y + rng.randint(0, 1)) % 5 == 0:
+                i = 0
+            img.putpixel((x, y), palette[i] + (255,))
+    for _ in range(10):
+        x, y = rng.randrange(15), rng.randrange(15)
+        img.putpixel((x, y), palette[4] + (255,))
+        img.putpixel((x + 1, y + 1), palette[0] + (255,))
+    return img
+
+
+def ore(palette, seed, metal, streaks=False):
+    """Rock with veins of a metal: clumps of two to four pixels, outlined dark."""
+    def draw():
+        rng = random.Random(seed + 100)
+        img = ground(palette, seed, streaks)
+        for cx, cy in [(3, 3), (10, 2), (6, 8), (12, 10), (2, 12), (9, 13)]:
+            cells = [(cx, cy), (cx + 1, cy), (cx, cy + 1), (cx + 1, cy + 1)][:rng.randint(2, 4)]
+            for x, y in cells:
+                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    n = (x + dx, y + dy)
+                    if 0 <= n[0] < 16 and 0 <= n[1] < 16 and n not in cells:
+                        img.putpixel(n, metal[0] + (255,))
+            for i, (x, y) in enumerate(cells):
+                img.putpixel((x, y), metal[[4, 3, 2, 3][i]] + (255,))
+            img.putpixel(cells[0], metal[5] + (255,))
+        return img
+    return draw
+
+
+def metal_block(palette, seed):
+    """A block of a metal: plates in a frame."""
+    def draw():
+        rng = random.Random(seed)
+        img = image()
+        noise(img, palette, rng, 2, 4)
+        frame(img, palette)
+        for i in range(2, 14):
+            img.putpixel((i, 8), palette[1] + (255,))
+            img.putpixel((8, i), palette[1] + (255,))
+        return img
+    return draw
+
+
+def raw(palette, seed, block=False):
+    """Raw metal: lumps, light on top and dark beneath; a block of them."""
+    def draw():
+        rng = random.Random(seed)
+        img = image()
+        if block:
+            noise(img, palette, rng, 1, 3)
+            spots = [(x, y) for x in range(0, 16, 4) for y in range(0, 16, 4)]
+        else:
+            spots = [(4, 5), (8, 4), (6, 8), (10, 8), (7, 11)]
+        for x, y in spots:
+            for dx in range(3):
+                for dy in range(3):
+                    if 0 <= x + dx < 16 and 0 <= y + dy < 16:
+                        shade = [4, 3, 2][dy] if dx < 2 else 1
+                        img.putpixel((x + dx, y + dy), palette[shade] + (255,))
+            if not block:
+                img.putpixel((x, y), palette[5] + (255,))
+        if not block:
+            # The outline round the lumps.
+            outline = []
+            for y in range(16):
+                for x in range(16):
+                    if img.getpixel((x, y))[3]:
+                        continue
+                    near = [(x + dx, y + dy) for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]]
+                    if any(0 <= a < 16 and 0 <= b < 16 and img.getpixel((a, b))[3] and
+                           img.getpixel((a, b))[:3] != palette[0] for a, b in near):
+                        outline.append((x, y))
+            for xy in outline:
+                img.putpixel(xy, palette[0] + (255,))
+        return img
+    return draw
+
+
+def nugget(palette):
+    def draw():
+        img = image()
+        rows = ["......", "..aa..", ".abba.", "abccda", ".adda.", "..aa.."]
+        colors = {"a": palette[0], "b": palette[5], "c": palette[3], "d": palette[2]}
+        for y, row in enumerate(rows):
+            for x, ch in enumerate(row):
+                if ch in colors:
+                    img.putpixel((x + 5, y + 5), colors[ch] + (255,))
+        return img
+    return draw
 
 
 TEXTURES = {
@@ -269,6 +375,15 @@ TEXTURES = {
     "block/hand_crank": crank_wood,
     "block/sail": canvas,
     "item/engineers_goggles": goggles,
+    "block/tin_ore": ore(ROCK, 31, TIN),
+    "block/deepslate_tin_ore": ore(DEEP, 32, TIN, streaks=True),
+    "block/tin_block": metal_block(TIN, 33),
+    "block/raw_tin_block": raw(TIN, 34, block=True),
+    "item/raw_tin": raw(TIN, 35),
+    "item/tin_ingot": lambda: ingot({"a": TIN[0], "b": TIN[5], "c": TIN[3], "d": TIN[2], "e": TIN[1]}),
+    "item/tin_nugget": nugget(TIN),
+    "item/bronze_ingot": lambda: ingot({"a": BRONZE[0], "b": BRONZE[4], "c": BRONZE[3], "d": BRONZE[2],
+                                        "e": BRONZE[1]}),
 }
 
 
@@ -462,6 +577,10 @@ MODELS = {
         all_faces("#wood", [2, 7, 7], [14, 9, 9]),
         all_faces("#wood", [2, 9, 7], [4, 14, 9]),
     ]),
+    **{f"block/{b}": model("minecraft:block/cube_all", {"all": t(f"block/{b}")})
+       for b in ["tin_ore", "deepslate_tin_ore", "tin_block", "raw_tin_block"]},
+    **{f"item/{i}": model("minecraft:item/generated", {"layer0": t(f"item/{i}")})
+       for i in ["raw_tin", "tin_ingot", "tin_nugget", "bronze_ingot"]},
     "block/water_wheel": model(textures=WHEEL_TEX, elements=water_wheel()),
     "block/water_wheel_still": still("block/cogwheel"),
     "item/water_wheel": big_item("block/water_wheel"),
@@ -534,6 +653,17 @@ BLOCKS = {
                states(AXIS, "block/clutch"), "block/clutch", ("Clutch", "Kopling")),
     "gearshift": ("minecraft:quartz_pillar", {"hardness": 2.0, "sounds": "minecraft:copper_block", "map_color": 11},
                   states(AXIS, "block/gearshift"), "block/gearshift", ("Gearshift", "Pemindah Gigi")),
+    # Tin: in the ground where copper is (worldgen/placed_feature/ore_tin).
+    "tin_ore": ("minecraft:iron_ore", {}, {"variants": {"": {"model": t("block/tin_ore")}}}, "block/tin_ore",
+                ("Tin Ore", "Bijih Timah")),
+    "deepslate_tin_ore": ("minecraft:deepslate_iron_ore", {},
+                          {"variants": {"": {"model": t("block/deepslate_tin_ore")}}},
+                          "block/deepslate_tin_ore", ("Deepslate Tin Ore", "Bijih Timah Batu Dalam")),
+    "tin_block": ("minecraft:iron_block", {"map_color": 6}, {"variants": {"": {"model": t("block/tin_block")}}},
+                  "block/tin_block", ("Block of Tin", "Balok Timah")),
+    "raw_tin_block": ("minecraft:raw_iron_block", {"map_color": 6},
+                      {"variants": {"": {"model": t("block/raw_tin_block")}}}, "block/raw_tin_block",
+                      ("Block of Raw Tin", "Balok Timah Mentah")),
     # A wheel on a shaft: water flowing past its sides turns it.
     "water_wheel": ("minecraft:iron_chain", {"hardness": 1.5, "sounds": "minecraft:oak_planks", "map_color": 13},
                     axis_and_water("block/water_wheel_still"), "item/water_wheel", ("Water Wheel", "Kincir Air")),
@@ -544,6 +674,10 @@ BLOCKS = {
 
 ITEMS = {
     "ferrostone_alloy": ("minecraft:brick", "item/ferrostone_alloy", ("Ferrostone Alloy", "Paduan Ferrostone")),
+    "raw_tin": ("minecraft:raw_iron", "item/raw_tin", ("Raw Tin", "Timah Mentah")),
+    "tin_ingot": ("minecraft:iron_ingot", "item/tin_ingot", ("Tin Ingot", "Batangan Timah")),
+    "tin_nugget": ("minecraft:iron_nugget", "item/tin_nugget", ("Tin Nugget", "Butiran Timah")),
+    "bronze_ingot": ("minecraft:copper_ingot", "item/bronze_ingot", ("Bronze Ingot", "Batangan Perunggu")),
     # Worn on the head (a leather cap's slot), or held: a part's speed shows
     # when looked at.
     "engineers_goggles": ("minecraft:leather_helmet", "item/engineers_goggles",
@@ -568,6 +702,29 @@ def recipe_shapeless(ingredients, result, count=1):
             "result": {"id": t(result), "count": count}}
 
 
+def cooking(kind, ingredient, result, xp, ticks):
+    return {"type": f"minecraft:{kind}", "category": "misc", "ingredient": ingredient,
+            "result": {"id": t(result)}, "experience": xp, "cookingtime": ticks}
+
+
+def metal_recipes(metal):
+    """A metal's ingots, nuggets, blocks and raw blocks into each other, and smelted."""
+    raw_item, ingot_item, nugget_item = f"raw_{metal}", f"{metal}_ingot", f"{metal}_nugget"
+    out = {
+        f"{metal}_block": recipe_shaped(["III", "III", "III"], {"I": t(ingot_item)}, f"{metal}_block"),
+        f"{ingot_item}_from_{metal}_block": recipe_shapeless([t(f"{metal}_block")], ingot_item, 9),
+        f"{ingot_item}_from_nuggets": recipe_shaped(["NNN", "NNN", "NNN"], {"N": t(nugget_item)}, ingot_item),
+        nugget_item: recipe_shapeless([t(ingot_item)], nugget_item, 9),
+        f"raw_{metal}_block": recipe_shaped(["RRR", "RRR", "RRR"], {"R": t(raw_item)}, f"raw_{metal}_block"),
+        f"{raw_item}_from_raw_{metal}_block": recipe_shapeless([t(f"raw_{metal}_block")], raw_item, 9),
+    }
+    for kind, ticks in [("smelting", 200), ("blasting", 100)]:
+        out[f"{ingot_item}_from_{kind}_raw"] = cooking(kind, t(raw_item), ingot_item, 0.7, ticks)
+        out[f"{ingot_item}_from_{kind}_ore"] = cooking(
+            kind, [t(f"{metal}_ore"), t(f"deepslate_{metal}_ore")], ingot_item, 0.7, ticks)
+    return out
+
+
 RECIPES = {
     "ferrostone_alloy": recipe_shaped(["SN", "NS"], {"S": "minecraft:andesite", "N": "minecraft:iron_nugget"},
                                       "ferrostone_alloy"),
@@ -585,8 +742,58 @@ RECIPES = {
     "gearshift": recipe_shapeless([t("ferrostone_casing"), t("cogwheel"), "minecraft:redstone"], "gearshift"),
     "water_wheel": recipe_shaped(["PPP", "PSP", "PPP"], {"P": "#minecraft:planks", "S": t("shaft")}, "water_wheel"),
     "windmill": recipe_shaped(["W W", " S ", "W W"], {"W": "#minecraft:wool", "S": t("shaft")}, "windmill"),
+    **metal_recipes("tin"),
+    "bronze_ingot": recipe_shapeless(["minecraft:copper_ingot"] * 3 + [t("tin_ingot")], "bronze_ingot", 4),
     "engineers_goggles": recipe_shaped([" L ", "GAG"], {"L": "minecraft:leather", "G": "minecraft:glass",
                                                          "A": t("ferrostone_alloy")}, "engineers_goggles"),
+}
+
+
+def ore_loot(block, drop):
+    """An ore's drops: itself with silk touch, else its raw metal (more with fortune)."""
+    return {"type": "minecraft:block", "pools": [{
+        "rolls": 1, "bonus_rolls": 0,
+        "entries": [{"type": "minecraft:alternatives", "children": [
+            {"type": "minecraft:item", "name": t(block), "conditions": [{
+                "condition": "minecraft:match_tool",
+                "predicate": {"predicates": {"minecraft:enchantments": [{
+                    "enchantments": "minecraft:silk_touch", "levels": {"min": 1}}]}}}]},
+            {"type": "minecraft:item", "name": t(drop), "functions": [
+                {"function": "minecraft:apply_bonus", "enchantment": "minecraft:fortune",
+                 "formula": "minecraft:ore_drops"},
+                {"function": "minecraft:explosion_decay"}]},
+        ]}],
+    }], "random_sequence": f"{NS}:blocks/{block}"}
+
+
+# Tin in the ground: a vein of up to 9 in stone or deepslate, 10 tries a
+# chunk between y -32 and 80 (most near 24), wherever vanilla puts copper.
+WORLDGEN = {
+    "configured_feature/ore_tin": {"type": "minecraft:ore", "config": {
+        "size": 9, "discard_chance_on_air_exposure": 0.0, "targets": [
+            {"target": {"predicate_type": "minecraft:tag_match", "tag": "minecraft:stone_ore_replaceables"},
+             "state": {"Name": t("tin_ore")}},
+            {"target": {"predicate_type": "minecraft:tag_match", "tag": "minecraft:deepslate_ore_replaceables"},
+             "state": {"Name": t("deepslate_tin_ore")}},
+        ]}},
+    "placed_feature/ore_tin": {"feature": t("ore_tin"), "placement": [
+        {"type": "minecraft:count", "count": 10},
+        {"type": "minecraft:in_square"},
+        {"type": "minecraft:height_range", "height": {
+            "type": "minecraft:trapezoid", "min_inclusive": {"absolute": -32}, "max_inclusive": {"absolute": 80}}},
+        {"type": "minecraft:biome"},
+    ], "horizon:beside": "minecraft:ore_copper"},
+}
+
+# Convention tags (c:) other mods' recipes use.
+C_TAGS = {
+    "block/ores/tin": [t("tin_ore"), t("deepslate_tin_ore")],
+    "item/ores/tin": [t("tin_ore"), t("deepslate_tin_ore")],
+    "block/storage_blocks/tin": [t("tin_block")],
+    "item/ingots/tin": [t("tin_ingot")],
+    "item/ingots/bronze": [t("bronze_ingot")],
+    "item/nuggets/tin": [t("tin_nugget")],
+    "item/raw_materials/tin": [t("raw_tin")],
 }
 
 
@@ -625,7 +832,9 @@ def main():
               {"template": template, "properties": props, "item": True})
         write(assets / "blockstates" / f"{block}.json", blockstate)
         write(assets / "items" / f"{block}.json", {"model": {"type": "minecraft:model", "model": t(item_model)}})
-        write(data / NS / "loot_table" / "blocks" / f"{block}.json", loot(block))
+        drops = {"tin_ore": "raw_tin", "deepslate_tin_ore": "raw_tin"}
+        write(data / NS / "loot_table" / "blocks" / f"{block}.json",
+              ore_loot(block, drops[block]) if block in drops else loot(block))
         en[f"block.{NS}.{block}"], idn[f"block.{NS}.{block}"] = name_en, name_id
     for item, (template, item_model, (name_en, name_id)) in ITEMS.items():
         write(data / NS / "horizon" / "item" / f"{item}.json", {"template": template})
@@ -640,6 +849,12 @@ def main():
     axe = [t(b) for b in wooden]
     write(data / "minecraft" / "tags" / "block" / "mineable" / "pickaxe.json", {"values": pickaxe})
     write(data / "minecraft" / "tags" / "block" / "mineable" / "axe.json", {"values": axe})
+    stone_tool = [t(b) for b in ["tin_ore", "deepslate_tin_ore", "tin_block", "raw_tin_block"]]
+    write(data / "minecraft" / "tags" / "block" / "needs_stone_tool.json", {"values": stone_tool})
+    for name, values in C_TAGS.items():
+        write(data / "c" / "tags" / f"{name}.json", {"values": values})
+    for name, value in WORLDGEN.items():
+        write(data / NS / "worldgen" / f"{name}.json", value)
     write(assets / "lang" / "en_us.json", en)
     write(assets / "lang" / "id_id.json", idn)
     files = sum(1 for p in ROOT.rglob("*") if p.is_file())

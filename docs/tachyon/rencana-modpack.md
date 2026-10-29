@@ -248,4 +248,6 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
     - kopling dan pemindah gigi (dikendalikan redstone);
     - kincir air (digerakkan aliran air);
     - kincir angin (butuh langit terbuka, lebih cepat di tempat tinggi);
-    - Kacamata Insinyur (RPM hanya tampil saat kacamata dipakai atau dipegang).
+    - Kacamata Insinyur (RPM hanya tampil saat kacamata dipakai atau dipegang);
+    - timah (bijih, mentah, batangan, butiran, balok) yang muncul di dunia di tempat yang sama dengan
+      tembaga, dan perunggu dari 3 tembaga + 1 timah.

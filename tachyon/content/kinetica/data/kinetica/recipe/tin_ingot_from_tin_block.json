@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    "kinetica:tin_block"
+  ],
+  "result": {
+    "id": "kinetica:tin_ingot",
+    "count": 9
+  }
+}

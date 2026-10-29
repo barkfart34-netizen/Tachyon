@@ -5,6 +5,10 @@
     "kinetica:gearbox",
     "kinetica:creative_motor",
     "kinetica:clutch",
-    "kinetica:gearshift"
+    "kinetica:gearshift",
+    "kinetica:tin_ore",
+    "kinetica:deepslate_tin_ore",
+    "kinetica:tin_block",
+    "kinetica:raw_tin_block"
   ]
 }

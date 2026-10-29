@@ -81,12 +81,18 @@ SHOWCASE = [
     ("setblock", (6, -2, 11), "minecraft:stone"),
     ("setblock", (6, -1, 11), "minecraft:air"),
     ("setblock", (6, 2, 9), "minecraft:water"),
+    # Tin: its ores and blocks in a row.
+    ("setblock", (-8, 0, 12), "kinetica:tin_ore"),
+    ("setblock", (-7, 0, 12), "kinetica:deepslate_tin_ore"),
+    ("setblock", (-6, 0, 12), "kinetica:tin_block"),
+    ("setblock", (-5, 0, 12), "kinetica:raw_tin_block"),
     # A windmill in the open, along z, on a shaft behind it.
     ("setblock", (-6, 2, 2), "kinetica:windmill[axis=z]"),
     ("setblock", (-6, 2, 1), "kinetica:shaft[axis=z]"),
 ]
 ITEMS = ["shaft", "cogwheel", "large_cogwheel", "gearbox", "hand_crank", "clutch", "gearshift",
-         "water_wheel", "windmill", "creative_motor", "ferrostone_alloy"]
+         "water_wheel", "windmill", "creative_motor", "ferrostone_alloy", "raw_tin", "tin_ingot",
+         "bronze_ingot"]
 
 
 def look_at(control, eye, target):

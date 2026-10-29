@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "NNN",
+    "NNN",
+    "NNN"
+  ],
+  "key": {
+    "N": "kinetica:tin_nugget"
+  },
+  "result": {
+    "id": "kinetica:tin_ingot",
+    "count": 1
+  }
+}

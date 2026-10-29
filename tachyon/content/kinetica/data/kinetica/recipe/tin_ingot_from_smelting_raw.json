@@ -1,0 +1,10 @@
+{
+  "type": "minecraft:smelting",
+  "category": "misc",
+  "ingredient": "kinetica:raw_tin",
+  "result": {
+    "id": "kinetica:tin_ingot"
+  },
+  "experience": 0.7,
+  "cookingtime": 200
+}

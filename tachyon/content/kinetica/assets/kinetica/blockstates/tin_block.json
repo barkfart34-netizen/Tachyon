@@ -1,0 +1,7 @@
+{
+  "variants": {
+    "": {
+      "model": "kinetica:block/tin_block"
+    }
+  }
+}
