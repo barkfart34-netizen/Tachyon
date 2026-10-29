@@ -17,7 +17,7 @@ Lapisan yang memberi blok modpack perilaku di luar template vanilla-nya. Rencana
 ## Blok yang berputar (Kinetica)
 
 - Logika murni ada di `game/tachyon_engine/kinetic.rs`. `Part` adalah poros, roda gigi kecil/besar,
-  gearbox, atau motor. `link` memuat aturan sambungan, dan `solve` menghitung kecepatan tiap jaringan
+  gearbox, motor, engkol tangan, kopling, pemindah gigi, kincir air, atau kincir angin. `link` memuat aturan sambungan, dan `solve` menghitung kecepatan tiap jaringan
   dari motornya. Aturannya mengikuti Create (MIT), tetapi kodenya milik kita.
 - **Pemilik dunia** menjalankan `Game::tachyon_tick_blocks` pada fase block entity, sebelum sculk.
   Pemilik dunia adalah thread server, host LAN, atau jendela game saat mode in-frame.
@@ -32,8 +32,18 @@ Lapisan yang memberi blok modpack perilaku di luar template vanilla-nya. Rencana
     item, lalu diputar `kinetic::angle`.
   - Model blok bawaan untuk bagian yang berputar sengaja kosong (`*_still`), hanya berisi tekstur
     partikel.
-- **HUD:** saat pemain melihat bagian kinetik, kecepatannya tampil di pojok kiri atas, seperti
-  kacamata insinyur di Create.
+- **Sumber putaran:**
+  - Motor kreatif: klik kanan menggandakan kecepatannya (sampai 256, lalu kembali ke 8); sambil
+    jongkok, arahnya berbalik. Kecepatannya disimpan di `<dunia>/tachyon/kinetica-<dimensi>.json`.
+  - Engkol tangan: setiap klik kanan memutarnya 10 tick (32 RPM, jongkok untuk arah sebaliknya).
+  - Kincir air: setiap detik, aliran air di keempat sisinya dihitung, lalu diambil putarannya
+    terhadap sumbu kincir, 8 RPM per sisi dan paling cepat 32 RPM.
+  - Kincir angin: berputar bila langit di atasnya terbuka. Kecepatannya 8 RPM di ketinggian 64 dan
+    naik 4 RPM tiap 16 blok, paling cepat 24 RPM.
+- **Redstone:** kopling yang mendapat sinyal memutus putaran, dan pemindah gigi yang mendapat
+  sinyal membalik arahnya.
+- **HUD:** dengan Kacamata Insinyur dipakai di kepala atau dipegang, bagian kinetik yang dilihat
+  menampilkan kecepatannya di pojok kiri atas, dalam bahasa pemain.
 - **State** disimpan per thread (`thread_local`). Jendela game dan thread server masing-masing
   berjalan di thread sendiri.
 
@@ -50,7 +60,7 @@ Satu baris per titik, supaya merge dari upstream tetap mudah:
 
 ## Belum ada
 
-- Mengatur kecepatan motor (klik kanan) dan menyimpan data per blok.
+- Kacamata yang terlihat di kepala (sekarang tampilannya masih topi kulit dari template).
 - Stress (kapasitas dan beban).
 - Mesin yang memproses item.
 - Instancing GPU untuk jaringan yang sangat besar.

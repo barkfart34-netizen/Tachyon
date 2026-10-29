@@ -81,9 +81,9 @@ SHOWCASE = [
     ("setblock", (6, -2, 11), "minecraft:stone"),
     ("setblock", (6, -1, 11), "minecraft:air"),
     ("setblock", (6, 2, 9), "minecraft:water"),
-    # A windmill up in the open, along z, on a shaft.
-    ("setblock", (-6, 5, 2), "kinetica:windmill[axis=z]"),
-    ("setblock", (-6, 5, 3), "kinetica:shaft[axis=z]"),
+    # A windmill in the open, along z, on a shaft behind it.
+    ("setblock", (-6, 2, 2), "kinetica:windmill[axis=z]"),
+    ("setblock", (-6, 2, 1), "kinetica:shaft[axis=z]"),
 ]
 ITEMS = ["shaft", "cogwheel", "large_cogwheel", "gearbox", "hand_crank", "clutch", "gearshift",
          "water_wheel", "windmill", "creative_motor", "ferrostone_alloy"]
@@ -131,21 +131,31 @@ def kinetica(control, out):
     look_at(control, eye, [base[0], base[1], base[2] + 5])
     time.sleep(2)
     control.send("screenshot " + os.path.join(out, "kinetica-goggles.png"))
-    # Two right clicks on the first motor: 32 RPM, then 64, then 128.
-    look_at(control, eye, [base[0], base[1], base[2] + 7])
-    for _ in range(2):
-        control.send("mouse right click")
-        time.sleep(0.5)
-    look_at(control, eye, [base[0], base[1], base[2] + 5])
-    time.sleep(2)
-    control.send("screenshot " + os.path.join(out, "kinetica-faster.png"))
     control.send("look 35 30")
     time.sleep(2)
     control.send("screenshot " + os.path.join(out, "kinetica-side.png"))
+
+    def visit(stand, target):
+        """The player stood on the block at `stand`, looking at `target`'s
+        middle (both offsets): within reach, to use it or read its speed."""
+        x, y, z = [b + d for b, d in zip(base, stand)]
+        control.send(f"chat /tp @s {x + 0.5} {y} {z + 0.5}")
+        time.sleep(1.5)
+        look_at(control, [x + 0.5, y + 1.62, z + 0.5], [b + d for b, d in zip(base, target)])
+        time.sleep(1)
+
+    # Two right clicks on the first motor, from behind it: 32 RPM, then 64,
+    # then 128.
+    visit((0, 0, 9), (0, 0, 7))
+    for _ in range(2):
+        control.send("mouse right click")
+        time.sleep(0.5)
+    time.sleep(1)
+    control.send("screenshot " + os.path.join(out, "kinetica-faster.png"))
     # The water wheel and the windmill, each with its speed in the corner.
-    for name, target in [("water", (6, 1, 10)), ("wind", (-6, 5, 2))]:
-        look_at(control, eye, [b + d for b, d in zip(base, target)])
-        time.sleep(2)
+    for name, stand, target in [("water", (4, 0, 12), (6, 1, 10)), ("wind", (-5, 0, 4), (-6, 2, 2))]:
+        visit(stand, target)
+        time.sleep(1)
         control.send("screenshot " + os.path.join(out, f"kinetica-{name}.png"))
     return good
 
@@ -188,12 +198,11 @@ def main():
             if not reply.get("ok"):
                 failed.append(name)
             time.sleep(5)
-        # A client's command answers in chat a moment later.
+        # The coordinates mod answers /where in chat, on the window's side
+        # (chat-log reads the server's lines): a picture of it.
         control.send("chat /where")
-        time.sleep(2)
-        lines = control.send("chat-log 5").get("chat", [])
-        if not any(" in minecraft:" in str(line) for line in lines):
-            failed.append("/where")
+        time.sleep(1)
+        control.send("screenshot " + os.path.join(out, "where.png"))
         if not kinetica(control, out):
             failed.append("kinetica")
         control.send("options mods")

@@ -241,3 +241,11 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
     (juga lewat LAN). Melihat sebuah bagian menampilkan RPM-nya.
   - Kecepatan motor diatur dengan klik kanan dan disimpan di dunia.
   - Cara kerjanya dijelaskan di [tce.md](tce.md).
+- **29 Oktober 2026, Kinetica 0.2.**
+  - Diverifikasi di CI Windows: blok Kinetica termuat, roda gigi berputar, dan HUD menampilkan RPM.
+  - Ditambahkan:
+    - engkol tangan;
+    - kopling dan pemindah gigi (dikendalikan redstone);
+    - kincir air (digerakkan aliran air);
+    - kincir angin (butuh langit terbuka, lebih cepat di tempat tinggi);
+    - Kacamata Insinyur (RPM hanya tampil saat kacamata dipakai atau dipegang).
