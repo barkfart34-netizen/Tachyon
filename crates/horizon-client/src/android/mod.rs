@@ -81,6 +81,7 @@ pub fn main(app: AndroidApp) {
     jni::install_clipboard();
     horizon_client::brand::set(brand::NAME);
     phone_defaults(&paths.home);
+    crate::tachyon::mods::settle(&paths.home);
     log::info!(
         "{} {BUILD} on {}",
         brand::NAME,

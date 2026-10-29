@@ -99,6 +99,7 @@ fn game() -> i32 {
     horizon_client::window::set_icon(ICON);
     log::info!("{} {BUILD} (Horizon {})", brand::NAME, crash::version());
     let _ = std::fs::remove_file(home.join(ERROR_FILE));
+    crate::tachyon::mods::settle(&home);
     let code = match crate::game::run() {
         Ok(()) => 0,
         Err(error) => {

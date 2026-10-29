@@ -18,6 +18,8 @@ on:
       - "crates/horizon-client/src/desktop/**"
       - "crates/horizon-client/src/tachyon_main.rs"
       - ".github/workflows/tachyon-windows.yml"
+      - ".github/workflows/tachyon-check.yml"
+      - ".github/tachyon/scene.py"
   workflow_dispatch:
     inputs:
       profile:

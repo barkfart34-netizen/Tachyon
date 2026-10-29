@@ -1,0 +1,45 @@
+# Tachyon's own code checked and tested on Linux, the cheapest runner: the
+# desktop program's build, and the tests of Tachyon's parts (the launchers'
+# store and import, the built-in mods, the hook points). The APK and Windows
+# workflows build the releases.
+name: Tachyon check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/tachyon-check.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: tachyon-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: bash .github/tachyon/free-disk.sh
+
+      - name: The ALSA and udev headers the client links against
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: tachyon-check
+          cache-on-failure: true
+
+      - name: Tachyon's tests
+        run: cargo test -p horizon-client --bin tachyon-desktop -- tachyon desktop native_hooks
+
+      - name: The import's Java mod port
+        run: cargo test -p horizon-port-pack

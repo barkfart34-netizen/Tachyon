@@ -192,6 +192,7 @@ mod storage;
 mod structures;
 mod subtitle_hud;
 mod sulfur_cubes;
+mod tachyon_mods;
 mod text_displays;
 mod titles;
 mod tnt;

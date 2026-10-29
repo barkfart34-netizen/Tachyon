@@ -259,11 +259,12 @@ const MAPPINGS: [(&str, Option<KeyCode>); 9] = [
     ("key.use", None),
 ];
 
-/// The hook points. Each does nothing in Horizon.
+/// The hook points. Each does nothing in Horizon; in Tachyon they call the
+/// official native mods built in (`tachyon_mods.rs`).
 impl Game<'_> {
     /// Once a frame, in a world or not, after Horizon's extras.
     pub(super) fn native_frame(&mut self, elapsed: Duration) {
-        let _ = elapsed;
+        self.tachyon_frame(elapsed);
     }
     /// Once a tick, in every `Game`: the window's (in single player, on LAN
     /// and on servers), and the server's own (`native_window` is false
@@ -274,49 +275,49 @@ impl Game<'_> {
     /// `native_fill` and `native_text`. Skip a corner `native_corner_shown`
     /// says is taken.
     pub(super) fn native_hud(&mut self, batch: &mut HudBatch, corners: &mut Corners) {
-        let _ = (batch, corners);
+        self.tachyon_hud(batch, corners);
     }
     /// A key or mouse button went down or up, by its vanilla name
     /// (`key.keyboard.z`, `key.mouse.left`): keys on any screen (check
     /// `native_playing`), mouse buttons while playing. Repeats are left out.
     pub(super) fn native_key(&mut self, key: &str, pressed: bool) {
-        let _ = (key, pressed);
+        self.tachyon_key(key, pressed);
     }
     /// Wheel steps while playing: set `claimed` to keep them from the hotbar.
     pub(super) fn native_wheel(&mut self, steps: f32, claimed: &mut bool) {
-        let _ = (steps, claimed);
+        self.tachyon_wheel(steps, claimed);
     }
     /// A command typed or clicked in chat, without its slash, before the
     /// server and Horizon's commands see it: set `ran` when the mod ran it.
     pub(super) fn native_command(&mut self, command: &str, ran: &mut bool) {
-        let _ = (command, ran);
+        self.tachyon_command(command, ran);
     }
     /// The zoom a native mod asks for, applied while playing (the spyglass's
     /// own view wins): set `zoom` when it is none yet.
     pub(super) fn native_zoom(&self, zoom: &mut Option<NativeZoom>) {
-        let _ = zoom;
+        self.tachyon_zoom(zoom);
     }
     /// The minimap a native mod shows: set `minimap` when it is none yet.
     pub(super) fn native_minimap(&self, minimap: &mut Option<NativeMinimap>) {
-        let _ = minimap;
+        self.tachyon_minimap(minimap);
     }
     /// Options > Mods lists the native mods: push yours.
     pub(super) fn native_mods(&mut self, mods: &mut Vec<NativeMod>) {
-        let _ = mods;
+        self.tachyon_mods(mods);
     }
     /// The buttons of mod `mod_id`'s settings page, under its keys: push
     /// their labels when it is yours. Asked again after each click.
     pub(super) fn native_settings(&mut self, mod_id: &str, buttons: &mut Vec<String>) {
-        let _ = (mod_id, buttons);
+        self.tachyon_settings(mod_id, buttons);
     }
     /// Button `button` of mod `mod_id`'s settings page was clicked.
     pub(super) fn native_settings_click(&mut self, mod_id: &str, button: usize) {
-        let _ = (mod_id, button);
+        self.tachyon_settings_click(mod_id, button);
     }
     /// The player did `event` on mod `mod_id`'s panel (`native_panel_items`):
     /// act on it when it is yours. API 2.
     pub(super) fn native_panel_event(&mut self, mod_id: &str, event: &NativePanelEvent) {
-        let _ = (mod_id, event);
+        self.tachyon_panel_event(mod_id, event);
     }
 }
 
