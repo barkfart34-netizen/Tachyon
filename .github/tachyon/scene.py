@@ -47,8 +47,8 @@ class Control:
 # driving a gearbox that sends the drive three ways, the other blocks, and
 # its items in the hotbar.
 SHOWCASE = [
-    ("fill", (-8, -1, -2), (8, -1, 12), "minecraft:smooth_stone"),
-    ("fill", (-8, 0, -2), (8, 30, 12), "minecraft:air"),
+    ("fill", (-8, -1, -2), (8, -1, 20), "minecraft:smooth_stone"),
+    ("fill", (-8, 0, -2), (8, 30, 20), "minecraft:air"),
     ("setblock", (0, 0, 7), "kinetica:creative_motor[facing=south]"),
     ("setblock", (0, 0, 6), "kinetica:shaft[axis=z]"),
     ("setblock", (0, 0, 5), "kinetica:cogwheel[axis=z]"),
@@ -126,7 +126,7 @@ def kinetica(control, out):
             good = False
     time.sleep(2)
     chat = " ".join(str(line) for line in control.send("chat-log 30").get("chat", []))
-    for word in ["Unknown", "Incorrect", "Invalid", "Could not"]:
+    for word in ["Unknown", "Incorrect", "Invalid", "Could not", "Failed"]:
         if word in chat:
             print("chat says", word, ":", chat)
             good = False
@@ -179,6 +179,20 @@ def kinetica(control, out):
             found += int(filled.group(1)) if filled else 0
     print("tin ores under the showcase:", found)
     if not found:
+        good = False
+    # Lost Realms' workshop ruin: its template set down at the far end,
+    # turned so its door faces the player, and the nearest one the world
+    # made.
+    corner = " ".join(str(b + d) for b, d in zip(base, (3, -1, 20)))
+    control.send(f"chat /place template lost_realms:workshop_ruin {corner} 180")
+    visit((0, 0, 11), (0, 1, 17))
+    time.sleep(1)
+    control.send("screenshot " + os.path.join(out, "ruin.png"))
+    control.send("chat /locate structure lost_realms:workshop_ruin")
+    time.sleep(8)
+    lines = " ".join(str(line) for line in control.send("chat-log 3").get("chat", []))
+    print("locate:", lines)
+    if "nearest" not in lines:
         good = False
     return good
 

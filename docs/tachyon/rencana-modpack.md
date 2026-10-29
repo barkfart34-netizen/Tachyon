@@ -251,3 +251,9 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
     - Kacamata Insinyur (RPM hanya tampil saat kacamata dipakai atau dipegang);
     - timah (bijih, mentah, batangan, butiran, balok) yang muncul di dunia di tempat yang sama dengan
       tembaga, dan perunggu dari 3 tembaga + 1 timah.
+- **29 Oktober 2026, Alpha 1 dimulai: Lost Realms 0.1.**
+  - Struktur pertama, *Bengkel Terbengkalai* (`lost_realms:workshop_ruin`), berupa reruntuhan 7×5×7
+    dengan mesin Kinetica, meja kerja, dan peti loot (alloy, poros, roda gigi, timah, kadang Kacamata
+    Insinyur).
+  - Muncul di hutan, taiga, rimba, bukit, sabana, dan dataran, rata-rata satu tiap 28 chunk.
+  - Template NBT-nya ditulis oleh `tachyon/art/lost_realms.py`.

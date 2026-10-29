@@ -1,0 +1,7 @@
+# Tachyon: Aether & Gears. Lost Realms, the structures: written by tachyon/art/lost_realms.py.
+id = "lost_realms"
+name = "Lost Realms"
+version = "0.1.0"
+api = "0.2"
+side = "both"
+capabilities = ["registries"]
