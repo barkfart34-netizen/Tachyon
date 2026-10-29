@@ -10,6 +10,7 @@ OUT/scene.json. Exits nonzero when a step fails, so the job shows it.
 """
 
 import json
+import math
 import os
 import socket
 import subprocess
@@ -39,37 +40,67 @@ class Control:
         return reply
 
 
-# Kinetica's blocks on a stone floor south of the player (yaw 0 looks south),
-# and its items in the hotbar.
+# Kinetica on a stone floor south of the player (yaw 0 looks south), by
+# offsets from the block the player stands in: a motor driving a shaft and
+# cogwheels (small ones reverse, the large one turns at half speed), another
+# driving a gearbox that sends the drive three ways, the other blocks, and
+# its items in the hotbar.
 SHOWCASE = [
-    "fill ~-5 ~-1 ~2 ~5 ~-1 ~9 minecraft:smooth_stone",
-    "fill ~-5 ~ ~2 ~5 ~5 ~9 minecraft:air",
-    "setblock ~-4 ~ ~5 kinetica:ferrostone_casing",
-    "setblock ~-2 ~ ~5 kinetica:gearbox",
-    "setblock ~0 ~ ~5 kinetica:creative_motor[facing=north]",
-    "fill ~1 ~ ~5 ~4 ~ ~5 kinetica:shaft[axis=x]",
-    "setblock ~-3 ~2 ~6 kinetica:cogwheel[axis=z]",
-    "setblock ~1 ~2 ~6 kinetica:large_cogwheel[axis=z]",
-    "fill ~-4 ~1 ~7 ~-4 ~4 ~7 kinetica:shaft[axis=y]",
+    ("fill", (-6, -1, 2), (6, -1, 10), "minecraft:smooth_stone"),
+    ("fill", (-6, 0, 2), (6, 5, 10), "minecraft:air"),
+    ("setblock", (0, 0, 7), "kinetica:creative_motor[facing=south]"),
+    ("setblock", (0, 0, 6), "kinetica:shaft[axis=z]"),
+    ("setblock", (0, 0, 5), "kinetica:cogwheel[axis=z]"),
+    ("setblock", (1, 0, 5), "kinetica:cogwheel[axis=z]"),
+    ("setblock", (-1, 1, 5), "kinetica:large_cogwheel[axis=z]"),
+    ("setblock", (4, 0, 7), "kinetica:creative_motor[facing=south]"),
+    ("setblock", (4, 0, 6), "kinetica:gearbox[axis=y]"),
+    ("setblock", (4, 0, 5), "kinetica:shaft[axis=z]"),
+    ("fill", (5, 0, 6), (6, 0, 6), "kinetica:shaft[axis=x]"),
+    ("setblock", (3, 0, 6), "kinetica:shaft[axis=x]"),
+    ("setblock", (-4, 0, 6), "kinetica:ferrostone_casing"),
+    ("fill", (-4, 1, 6), (-4, 3, 6), "kinetica:shaft[axis=y]"),
 ]
 ITEMS = ["shaft", "cogwheel", "large_cogwheel", "gearbox", "ferrostone_casing", "creative_motor",
          "ferrostone_alloy"]
 
 
+def look_at(control, eye, target):
+    """Turns the player to look at a block's centre."""
+    v = [t + 0.5 - e for t, e in zip(target, eye)]
+    yaw = math.degrees(math.atan2(-v[0], v[2]))
+    pitch = -math.degrees(math.atan2(v[1], math.hypot(v[0], v[2])))
+    control.send(f"look {yaw:.1f} {pitch:.1f}")
+
+
 def kinetica(control, out):
-    """Kinetica's blocks placed by commands, in a picture: whether every
-    command ran (an unknown block is a command error in chat)."""
+    """Kinetica's blocks placed by commands, in pictures: two a second apart
+    (the parts turn between them), and one looking at a cogwheel (its speed
+    in the corner). Whether every command ran (an unknown block is a
+    command error in chat)."""
+    player = control.send("status").get("player") or {}
+    px, py, pz = player.get("position", [0.5, 64.0, 0.5])
+    base = [math.floor(px), math.floor(py), math.floor(pz)]
+    at = lambda o: " ".join(str(b + d) for b, d in zip(base, o))
     good = True
-    for command in SHOWCASE + [f"give @s kinetica:{item}" for item in ITEMS]:
+    commands = [f"{c[0]} {at(c[1])} {at(c[2])} {c[3]}" if c[0] == "fill" else f"{c[0]} {at(c[1])} {c[2]}"
+                for c in SHOWCASE]
+    for command in commands + [f"give @s kinetica:{item}" for item in ITEMS]:
         reply = control.send("chat /" + command)
         chat = " ".join(str(line) for line in reply.get("chat", [])[-2:])
         if "error" in reply or "Unknown" in chat or "Incorrect" in chat or "Invalid" in chat:
             good = False
     control.send("look 0 25")
-    time.sleep(4)
-    if not control.send("screenshot " + os.path.join(out, "kinetica.png")).get("ok"):
-        good = False
-    control.send("look 30 40")
+    time.sleep(6)
+    for name in ["kinetica", "kinetica-later"]:
+        if not control.send("screenshot " + os.path.join(out, f"{name}.png")).get("ok"):
+            good = False
+        time.sleep(1)
+    eye = [px, py + 1.62, pz]
+    look_at(control, eye, [base[0], base[1], base[2] + 5])
+    time.sleep(2)
+    control.send("screenshot " + os.path.join(out, "kinetica-goggles.png"))
+    control.send("look 35 30")
     time.sleep(2)
     control.send("screenshot " + os.path.join(out, "kinetica-side.png"))
     return good

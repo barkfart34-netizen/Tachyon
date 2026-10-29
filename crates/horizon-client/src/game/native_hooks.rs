@@ -269,7 +269,9 @@ impl Game<'_> {
     /// Once a tick, in every `Game`: the window's (in single player, on LAN
     /// and on servers), and the server's own (`native_window` is false
     /// there: the single player server thread, a dedicated server).
-    pub(super) fn native_tick(&mut self) {}
+    pub(super) fn native_tick(&mut self) {
+        self.tachyon_tick();
+    }
     /// The HUD (not drawn under F1), after the minimap: place a box with
     /// `corners.place` (boxes stack away from their edge) and draw it with
     /// `native_fill` and `native_text`. Skip a corner `native_corner_shown`

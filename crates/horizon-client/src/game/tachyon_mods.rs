@@ -39,6 +39,7 @@ impl Game<'_> {
         coords_hud_box(self, batch, corners);
         fps_hud(self, batch, corners);
         keystrokes_hud(self, batch, corners);
+        self.tachyon_engine_hud(batch, corners);
     }
     pub(super) fn tachyon_key(&mut self, key: &str, pressed: bool) {
         zoom_key(self, key, pressed);

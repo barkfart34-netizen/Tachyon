@@ -1,27 +1,27 @@
 {
   "variants": {
     "axis=x,waterlogged=false": {
-      "model": "kinetica:block/cogwheel",
+      "model": "kinetica:block/cogwheel_still",
       "x": 90,
       "y": 90
     },
     "axis=x,waterlogged=true": {
-      "model": "kinetica:block/cogwheel",
+      "model": "kinetica:block/cogwheel_still",
       "x": 90,
       "y": 90
     },
     "axis=y,waterlogged=false": {
-      "model": "kinetica:block/cogwheel"
+      "model": "kinetica:block/cogwheel_still"
     },
     "axis=y,waterlogged=true": {
-      "model": "kinetica:block/cogwheel"
+      "model": "kinetica:block/cogwheel_still"
     },
     "axis=z,waterlogged=false": {
-      "model": "kinetica:block/cogwheel",
+      "model": "kinetica:block/cogwheel_still",
       "x": 90
     },
     "axis=z,waterlogged=true": {
-      "model": "kinetica:block/cogwheel",
+      "model": "kinetica:block/cogwheel_still",
       "x": 90
     }
   }

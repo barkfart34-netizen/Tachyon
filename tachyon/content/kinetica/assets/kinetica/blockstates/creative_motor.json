@@ -1,19 +1,19 @@
 {
   "variants": {
     "facing=north": {
-      "model": "kinetica:block/creative_motor",
+      "model": "kinetica:block/creative_motor_body",
       "y": 180
     },
     "facing=east": {
-      "model": "kinetica:block/creative_motor",
+      "model": "kinetica:block/creative_motor_body",
       "y": 270
     },
     "facing=south": {
-      "model": "kinetica:block/creative_motor",
+      "model": "kinetica:block/creative_motor_body",
       "y": 0
     },
     "facing=west": {
-      "model": "kinetica:block/creative_motor",
+      "model": "kinetica:block/creative_motor_body",
       "y": 90
     }
   }

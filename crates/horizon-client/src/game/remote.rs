@@ -1768,6 +1768,10 @@ impl Game<'_> {
             // ClientCommonPacketListenerImpl.handlePing runs on the game
             // thread, after all preceding packets (especially teleports).
             C::Ping(p) => self.send(S::Pong(p)),
+            // Tachyon's content engine (its server's speeds, ...).
+            C::CustomPayload(p) if p.channel.starts_with("tachyon:") => {
+                self.tachyon_payload(&p.channel, &p.data);
+            }
             // PingDebugMonitor.onPongReceived.
             C::PongResponse(p) => {
                 let delay = self.debug_millis() - p.time;

@@ -288,22 +288,35 @@ def model(parent="minecraft:block/block", textures=None, elements=None):
 SHAFT_TEX = {"shaft": t("block/shaft"), "shaft_end": t("block/shaft_end"), "particle": t("block/shaft")}
 COG_TEX = dict(SHAFT_TEX, wood=t("block/cogwheel"), teeth=t("block/cogwheel_teeth"), particle=t("block/cogwheel"))
 
+def still(particle):
+    """A block's own model when its part turns: nothing but the particle
+    (the game draws the turning part, the content engine's `pieces`)."""
+    return {"parent": "minecraft:block/block", "textures": {"particle": t(particle)}}
+
+
+MOTOR_BODY = box([2, 2, 4], [14, 14, 16], {
+    "north": ("#back", [2, 2, 14, 14]), "south": ("#back", [2, 2, 14, 14], "south"),
+    "east": ("#side", [0, 2, 12, 14]), "west": ("#side", [4, 2, 16, 14]),
+    "up": ("#side", [2, 4, 14, 16]), "down": ("#side", [2, 0, 14, 12]),
+})
+MOTOR_TEX = {"side": t("block/creative_motor"), "back": t("block/creative_motor_back"),
+             "shaft": t("block/shaft"), "shaft_end": t("block/shaft_end"), "particle": t("block/creative_motor")}
+
 MODELS = {
     "block/ferrostone_casing": model("minecraft:block/cube_all", {"all": t("block/ferrostone_casing")}),
+    # The turning parts, about +Y: the items show them whole too.
     "block/shaft": model(textures=SHAFT_TEX, elements=[shaft_part()]),
+    "block/shaft_half": model(textures=SHAFT_TEX, elements=[shaft_part(8, 16)]),
+    "block/shaft_still": still("block/shaft"),
+    "block/cogwheel_still": still("block/cogwheel"),
+    "block/large_cogwheel_still": still("block/cogwheel"),
+    "block/creative_motor_body": model(textures=MOTOR_TEX, elements=[MOTOR_BODY]),
     "block/cogwheel": model(textures=COG_TEX, elements=cog(8, 8)),
     "block/large_cogwheel": model(textures=COG_TEX, elements=cog(14, 16)),
     "block/gearbox": model("minecraft:block/cube_column", {"side": t("block/ferrostone_casing"),
                                                          "end": t("block/gearbox_side")}),
-    "block/creative_motor": model(textures={
-        "side": t("block/creative_motor"), "back": t("block/creative_motor_back"),
-        "shaft": t("block/shaft"), "shaft_end": t("block/shaft_end"), "particle": t("block/creative_motor"),
-    }, elements=[
-        box([2, 2, 4], [14, 14, 16], {
-            "north": ("#back", [2, 2, 14, 14]), "south": ("#back", [2, 2, 14, 14], "south"),
-            "east": ("#side", [0, 2, 12, 14]), "west": ("#side", [4, 2, 16, 14]),
-            "up": ("#side", [2, 4, 14, 16]), "down": ("#side", [2, 0, 14, 12]),
-        }),
+    "block/creative_motor": model(textures=MOTOR_TEX, elements=[
+        MOTOR_BODY,
         box([6, 6, 0], [10, 10, 4], {
             "north": ("#shaft_end", [6, 6, 10, 10]),
             "east": ("#shaft", [6, 0, 10, 4]), "west": ("#shaft", [6, 0, 10, 4]),
@@ -349,18 +362,18 @@ BLOCKS = {
                           {"variants": {"": {"model": t("block/ferrostone_casing")}}},
                           "block/ferrostone_casing", ("Ferrostone Casing", "Selubung Ferrostone")),
     "shaft": ("minecraft:iron_chain", {"hardness": 1.5, "sounds": "minecraft:iron_block"},
-              axis_and_water("block/shaft"), "block/shaft", ("Shaft", "Poros")),
+              axis_and_water("block/shaft_still"), "block/shaft", ("Shaft", "Poros")),
     "cogwheel": ("minecraft:iron_chain", {"hardness": 1.5, "sounds": "minecraft:oak_planks", "map_color": 13},
-                 axis_and_water("block/cogwheel"), "block/cogwheel", ("Cogwheel", "Roda Gigi")),
+                 axis_and_water("block/cogwheel_still"), "block/cogwheel", ("Cogwheel", "Roda Gigi")),
     "large_cogwheel": ("minecraft:iron_chain", {"hardness": 1.5, "sounds": "minecraft:oak_planks", "map_color": 13},
-                       axis_and_water("block/large_cogwheel"), "block/large_cogwheel",
+                       axis_and_water("block/large_cogwheel_still"), "block/large_cogwheel",
                        ("Large Cogwheel", "Roda Gigi Besar")),
     "gearbox": ("minecraft:quartz_pillar", {"hardness": 2.0, "sounds": "minecraft:copper_block", "map_color": 11},
                 states(AXIS, "block/gearbox"), "block/gearbox", ("Gearbox", "Kotak Gigi")),
     "creative_motor": ("minecraft:white_glazed_terracotta",
                        {"hardness": -1.0, "explosion_resistance": 3600000.0, "sounds": "minecraft:copper_block",
                         "light": 6, "map_color": 23},
-                       states(FACING, "block/creative_motor"), "block/creative_motor",
+                       states(FACING, "block/creative_motor_body"), "block/creative_motor",
                        ("Creative Motor", "Motor Kreatif")),
 }
 

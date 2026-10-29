@@ -192,6 +192,7 @@ mod storage;
 mod structures;
 mod subtitle_hud;
 mod sulfur_cubes;
+mod tachyon_engine;
 mod tachyon_mods;
 mod text_displays;
 mod titles;
@@ -5635,6 +5636,8 @@ impl Game<'_> {
         if running {
             horizon_client::spans::time("tick_block_entities", || self.tick_block_entities())?;
             horizon_client::spans::time("tick_sculk_entities", || self.tick_sculk_entities());
+            // Tachyon's blocks: before sculk takes the block writes.
+            horizon_client::spans::time("tachyon_blocks", || self.tachyon_tick_blocks());
             horizon_client::spans::time("tick_sculk_blocks", || self.tick_sculk_blocks())?;
         }
         if running {
@@ -8298,6 +8301,8 @@ impl Game<'_> {
                     .block_entity_render()
                     .render(&scene, visible, &mut out);
             }
+            // Tachyon's turning parts, drawn as block entities are.
+            self.tachyon_render(camera, alpha, &mut out);
             self.mark_stage(out.len(), "DESTROY");
             for &(pos, stage) in &cracks {
                 let state = self.world.block(pos[0], pos[1], pos[2]);

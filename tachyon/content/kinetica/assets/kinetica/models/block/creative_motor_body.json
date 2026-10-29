@@ -1,0 +1,81 @@
+{
+  "parent": "minecraft:block/block",
+  "textures": {
+    "side": "kinetica:block/creative_motor",
+    "back": "kinetica:block/creative_motor_back",
+    "shaft": "kinetica:block/shaft",
+    "shaft_end": "kinetica:block/shaft_end",
+    "particle": "kinetica:block/creative_motor"
+  },
+  "elements": [
+    {
+      "from": [
+        2,
+        2,
+        4
+      ],
+      "to": [
+        14,
+        14,
+        16
+      ],
+      "faces": {
+        "north": {
+          "texture": "#back",
+          "uv": [
+            2,
+            2,
+            14,
+            14
+          ]
+        },
+        "south": {
+          "texture": "#back",
+          "uv": [
+            2,
+            2,
+            14,
+            14
+          ],
+          "cullface": "south"
+        },
+        "east": {
+          "texture": "#side",
+          "uv": [
+            0,
+            2,
+            12,
+            14
+          ]
+        },
+        "west": {
+          "texture": "#side",
+          "uv": [
+            4,
+            2,
+            16,
+            14
+          ]
+        },
+        "up": {
+          "texture": "#side",
+          "uv": [
+            2,
+            4,
+            14,
+            16
+          ]
+        },
+        "down": {
+          "texture": "#side",
+          "uv": [
+            2,
+            0,
+            14,
+            12
+          ]
+        }
+      }
+    }
+  ]
+}
