@@ -768,14 +768,16 @@ def ore_loot(block, drop):
 
 # Tin in the ground: a vein of up to 9 in stone or deepslate, 10 tries a
 # chunk between y -32 and 80 (most near 24), wherever vanilla puts copper.
+# 26.3's formats: a configured feature's settings beside its type, a block
+# state as {"id": ...}.
 WORLDGEN = {
-    "configured_feature/ore_tin": {"type": "minecraft:ore", "config": {
-        "size": 9, "discard_chance_on_air_exposure": 0.0, "targets": [
+    "configured_feature/ore_tin": {
+        "type": "minecraft:ore", "size": 9, "discard_chance_on_air_exposure": 0.0, "targets": [
             {"target": {"predicate_type": "minecraft:tag_match", "tag": "minecraft:stone_ore_replaceables"},
-             "state": {"Name": t("tin_ore")}},
+             "state": {"id": t("tin_ore")}},
             {"target": {"predicate_type": "minecraft:tag_match", "tag": "minecraft:deepslate_ore_replaceables"},
-             "state": {"Name": t("deepslate_tin_ore")}},
-        ]}},
+             "state": {"id": t("deepslate_tin_ore")}},
+        ]},
     "placed_feature/ore_tin": {"feature": t("ore_tin"), "placement": [
         {"type": "minecraft:count", "count": 10},
         {"type": "minecraft:in_square"},

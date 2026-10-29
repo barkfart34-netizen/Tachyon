@@ -12,6 +12,7 @@ OUT/scene.json. Exits nonzero when a step fails, so the job shows it.
 import json
 import math
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -78,7 +79,7 @@ SHOWCASE = [
     ("setblock", (6, 1, 9), "minecraft:stone"),
     ("fill", (5, 2, 8), (7, 2, 11), "minecraft:glass"),
     ("fill", (6, 2, 9), (6, 2, 11), "minecraft:air"),
-    ("setblock", (6, -2, 11), "minecraft:stone"),
+    ("setblock", (6, -2, 11), "minecraft:glass"),
     ("setblock", (6, -1, 11), "minecraft:air"),
     ("setblock", (6, 2, 9), "minecraft:water"),
     # Tin: its ores and blocks in a row.
@@ -117,7 +118,9 @@ def kinetica(control, out):
                 for c in SHOWCASE]
     gives = [f"give @s kinetica:{item}" for item in ITEMS]
     # Goggles on: a part's speed shows when looked at.
-    wear = ["item replace entity @s armor.head with kinetica:engineers_goggles"]
+    wear = ["item replace entity @s armor.head with kinetica:engineers_goggles",
+            # What the clearing dropped (cocoa, saplings) out of the pictures.
+            "kill @e[type=item]"]
     for command in commands + gives + wear:
         if "error" in control.send("chat /" + command):
             good = False
@@ -163,6 +166,20 @@ def kinetica(control, out):
         visit(stand, target)
         time.sleep(1)
         control.send("screenshot " + os.path.join(out, f"kinetica-{name}.png"))
+    # Tin in the ground under the showcase, counted by turning its ores to
+    # stone: two 32-block layers, about y 15 to 46 and -17 to 14.
+    found = 0
+    for top in (-17, -49):
+        corners = f"{base[0] - 16} {base[1] + top - 31} {base[2] - 16} {base[0] + 15} {base[1] + top} {base[2] + 15}"
+        control.send(f"chat /fill {corners} minecraft:stone replace kinetica:tin_ore")
+        control.send(f"chat /fill {corners} minecraft:deepslate replace kinetica:deepslate_tin_ore")
+        time.sleep(2)
+        for line in control.send("chat-log 2").get("chat", []):
+            filled = re.search(r"filled (\d+)", str(line))
+            found += int(filled.group(1)) if filled else 0
+    print("tin ores under the showcase:", found)
+    if not found:
+        good = False
     return good
 
 
@@ -204,11 +221,6 @@ def main():
             if not reply.get("ok"):
                 failed.append(name)
             time.sleep(5)
-        # The coordinates mod answers /where in chat, on the window's side
-        # (chat-log reads the server's lines): a picture of it.
-        control.send("chat /where")
-        time.sleep(1)
-        control.send("screenshot " + os.path.join(out, "where.png"))
         if not kinetica(control, out):
             failed.append("kinetica")
         control.send("options mods")
