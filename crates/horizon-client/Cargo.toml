@@ -113,6 +113,12 @@ rng-trace = ["horizon-core/rng-trace"]
 name = "client_probe"
 path = "examples/probe/main.rs"
 
+# Tachyon on the desktop: its launcher, and the game the launcher starts (Tachyon.exe in
+# the release, beside the resources).
+[[bin]]
+name = "tachyon-desktop"
+path = "src/tachyon_main.rs"
+
 # Tachyon's Android app: the game and the launcher in one library the activity loads.
 [[example]]
 name = "tachyon"

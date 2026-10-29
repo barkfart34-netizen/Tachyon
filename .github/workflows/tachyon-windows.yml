@@ -1,0 +1,166 @@
+# Tachyon for Windows: the launcher and the game in Tachyon.exe, with
+# Minecraft 26.3's prepared resources beside it in one zip, published as a
+# release of this private repository. Windows minutes cost twice Linux ones:
+# it runs when the desktop's own code changes, or by hand.
+name: Tachyon Windows
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/horizon-client/src/desktop/**"
+      - "crates/horizon-client/src/tachyon/**"
+      - "crates/horizon-client/src/tachyon_main.rs"
+      - ".github/workflows/tachyon-windows.yml"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Cargo profile: tachyon (thin LTO, the releases'), fast (quick to build) or release"
+        default: tachyon
+        type: choice
+        options: [tachyon, fast, release]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tachyon-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The resources in a cache Windows can read (a cross-OS archive), from the
+  # APK workflow's cache when it has them, else prepared here on Linux.
+  resources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      key: xos-resources-26.3-${{ steps.hash.outputs.hash }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Hashed here: a Windows checkout has other line endings, and another hash.
+      - name: The preparation's version
+        id: hash
+        run: echo "hash=${{ hashFiles('research-lock.json', 'crates/horizon-prepare/**', 'mods/horizon/src/test/java/dev/horizonlab/parity/**') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Cached for Windows
+        id: windows
+        uses: actions/cache/restore@v4
+        with:
+          path: .tachyon/resources
+          key: xos-resources-26.3-${{ steps.hash.outputs.hash }}
+          enableCrossOsArchive: true
+          lookup-only: true
+
+      - name: Cached for the APK
+        id: linux
+        if: steps.windows.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: .tachyon/resources
+          key: resources-26.3-${{ steps.hash.outputs.hash }}
+
+      - name: Free disk space
+        if: steps.windows.outputs.cache-hit != 'true' && steps.linux.outputs.cache-hit != 'true'
+        run: bash .github/tachyon/free-disk.sh
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.windows.outputs.cache-hit != 'true' && steps.linux.outputs.cache-hit != 'true'
+
+      - uses: actions/setup-java@v4
+        if: steps.windows.outputs.cache-hit != 'true' && steps.linux.outputs.cache-hit != 'true'
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Prepare the resources from Minecraft 26.3
+        if: steps.windows.outputs.cache-hit != 'true' && steps.linux.outputs.cache-hit != 'true'
+        run: bash .github/tachyon/prepare.sh "$PWD/.tachyon/resources"
+
+      - name: Save them for Windows
+        if: steps.windows.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .tachyon/resources
+          key: xos-resources-26.3-${{ steps.hash.outputs.hash }}
+          enableCrossOsArchive: true
+
+  windows:
+    needs: resources
+    runs-on: windows-latest
+    timeout-minutes: 150
+    env:
+      PROFILE: ${{ inputs.profile || 'tachyon' }}
+      # No DLL a player's Windows may lack (the C runtime), as Horizon's releases.
+      RUSTFLAGS: -C target-feature=+crt-static
+      TACHYON_BUILD: windows-${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: tachyon-windows-${{ inputs.profile || 'tachyon' }}
+          cache-on-failure: true
+
+      - name: Build Tachyon.exe
+        run: cargo build -p horizon-client --bin tachyon-desktop --profile ${{ env.PROFILE }}
+
+      - name: Resources
+        uses: actions/cache/restore@v4
+        with:
+          path: .tachyon/resources
+          key: ${{ needs.resources.outputs.key }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+
+      - name: Pack the zip
+        shell: bash
+        run: |
+          dir=dist/Tachyon
+          mkdir -p "$dir"
+          cp "target/$PROFILE/tachyon-desktop.exe" "$dir/Tachyon.exe"
+          mv .tachyon/resources/horizon-client/26.3 "$dir/resources"
+          cat > "$dir/README.txt" <<'EOF'
+          Tachyon for Windows: Minecraft: Java Edition 26.3, native, built on Horizon (Rust).
+
+          Start Tachyon.exe, add an offline account (a name) and press PLAY.
+          Keep the resources folder next to Tachyon.exe. Worlds, options and logs are in
+          %APPDATA%\.tachyon (each installation has its own folder there).
+
+          For personal use only: do not share. Not an official Minecraft product; not
+          approved by or associated with Mojang or Microsoft.
+          EOF
+          cd dist && 7z a -tzip -mx=5 Tachyon-windows.zip Tachyon > /dev/null
+          ls -la Tachyon-windows.zip
+
+      # Pictures of the launcher's pages (on Windows' software renderer), to
+      # look at without a Windows PC: the artifact tachyon-launcher.
+      - name: Pictures of the launcher
+        shell: bash
+        env:
+          TACHYON_SNAPSHOTS: ${{ github.workspace }}/snapshots
+        run: |
+          timeout 180 dist/Tachyon/Tachyon.exe || echo "the launcher ended with $?"
+          ls -la snapshots || true
+          tail -20 "$APPDATA/.tachyon/logs/latest.log" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tachyon-launcher
+          path: snapshots
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Publish a release
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "tachyon-windows-${{ github.run_number }}" dist/Tachyon-windows.zip
+          --repo "${{ github.repository }}" --target "${{ github.sha }}" --latest=false
+          --title "Tachyon for Windows #${{ github.run_number }}"
+          --notes "Tachyon untuk Windows (x64, DirectX 12 / Vulkan), profil ${{ env.PROFILE }}, dari commit ${{ github.sha }}. Ekstrak zip, jalankan Tachyon.exe, tambahkan akun offline (cukup nama), lalu PLAY. Folder resources harus tetap di samping Tachyon.exe. Untuk pribadi, jangan dibagikan."

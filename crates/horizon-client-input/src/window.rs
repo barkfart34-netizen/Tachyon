@@ -327,10 +327,19 @@ impl FullscreenState {
     }
 }
 
+/// Another build's icon (Tachyon's), set once before the first window.
+static ICON_PNG: std::sync::OnceLock<&'static [u8]> = std::sync::OnceLock::new();
+
+/// Gives the windows `png` as their icon instead of Horizon's.
+pub fn set_icon(png: &'static [u8]) {
+    let _ = ICON_PNG.set(png);
+}
+
 /// Horizon's icon for the window's title bar and the task bar (X11 and Windows; Wayland takes
 /// it from the `horizon.desktop` entry, macOS from the app bundle). `None` if it can't be read.
 pub fn icon() -> Option<winit::window::Icon> {
-    let mut decoder = png::Decoder::new(std::io::Cursor::new(horizon_theme::ICON_PNG));
+    let png = ICON_PNG.get().copied().unwrap_or(horizon_theme::ICON_PNG);
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(png));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().ok()?;
     let mut bytes = vec![0; reader.output_buffer_size()?];
