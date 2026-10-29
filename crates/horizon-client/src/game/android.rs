@@ -943,6 +943,8 @@ impl AndroidGame {
                         if game.debug_key(key, action) {
                             continue;
                         }
+                        // The native mods' keys (zoom, the quest book) too.
+                        game.native_key_event(key, pressed, false);
                         if key == KeyCode::Escape {
                             if pressed {
                                 let _ = game.pad_back();

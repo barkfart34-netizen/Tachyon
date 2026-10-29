@@ -298,6 +298,42 @@
           "isSwipple": false,
           "isPenetrable": false,
           "isToggleable": false
+        },
+        {
+          "text": {
+            "default": "Quest",
+            "matchQueue": [
+              {
+                "language_tag": "id",
+                "value": "Quest"
+              }
+            ]
+          },
+          "uuid": "7a3c1e5d9b2f4a6c80",
+          "position": {
+            "x": 3462,
+            "y": 0
+          },
+          "buttonSize": {
+            "type": "percentage",
+            "widthDp": 50.0,
+            "heightDp": 50.0,
+            "widthPercentage": 2289,
+            "heightPercentage": 1100,
+            "widthReference": "screen_height",
+            "heightReference": "screen_height"
+          },
+          "buttonStyle": "d1096cf91caa",
+          "visibilityType": "always",
+          "clickEvents": [
+            {
+              "type": "key",
+              "key": "GLFW_KEY_J"
+            }
+          ],
+          "isSwipple": false,
+          "isPenetrable": false,
+          "isToggleable": false
         }
       ]
     },
