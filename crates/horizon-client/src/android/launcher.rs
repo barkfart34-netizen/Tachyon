@@ -43,6 +43,8 @@ pub struct Launcher {
     started: Instant,
     /// The game's last crash.
     crash: Option<String>,
+    /// The last session's performance line (`tachyon-performance.txt`).
+    performance: Option<String>,
     /// The display cutout's margins in pixels, asked again when the window changes.
     insets: Option<[f32; 4]>,
     /// Set by Play: the arguments the game starts with.
@@ -93,12 +95,15 @@ impl Launcher {
             touch,
             started: Instant::now(),
             crash,
+            performance: None,
             insets: None,
             play: None,
             smoke: None,
         };
         launcher.smoke = jni::platform("intent_extra", "tachyon.smoke")
             .map(|text| text.split(',').map(str::to_owned).collect());
+        launcher.performance =
+            std::fs::read_to_string(launcher.paths.home.join("tachyon-performance.txt")).ok();
         if !install::up_to_date(&launcher.app, &launcher.paths) {
             launcher.unpack();
         }
@@ -438,6 +443,16 @@ impl Launcher {
         };
         ui.row(row, 3, "Resources", detail, 0.0);
         y += ROW;
+        // 04 how the last session ran, for reporting.
+        if let Some(perf) = self.performance.clone() {
+            let row = Rect::new(r.x, y, r.w, ROW * 1.5);
+            ui.row(row, 4, "Last session's performance", &perf, 70.0);
+            if ui.row_button(row, "Copy", false, true) {
+                jni::platform("clipboard_set", &perf);
+                self.note = Some("Copied: paste it in the chat.".into());
+            }
+            y += ROW * 1.5;
+        }
         y = self.task_and_error(ui, r, y + 12.0);
         y - self.scroll
     }

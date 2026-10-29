@@ -1150,7 +1150,15 @@ impl Renderer {
         if previous.is_none() {
             startup_step(format_args!("creating the pipelines"));
         }
-        let gpu_timer = timing::GpuTimer::new(&device, &queue);
+        // On a phone's tiled GPU the timer's marker passes store and reload the
+        // whole frame: there it runs only when asked for (TACHYON_GPU_TIMER).
+        let gpu_timer = if cfg!(target_os = "android")
+            && std::env::var_os("TACHYON_GPU_TIMER").is_none()
+        {
+            None
+        } else {
+            timing::GpuTimer::new(&device, &queue)
+        };
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Horizon terrain"),
             source: wgpu::ShaderSource::Wgsl(include_str!("terrain.wgsl").into()),
@@ -2489,7 +2497,12 @@ impl Renderer {
                 let mut cull =
                     cull::Cull::new(&device, config.format.remove_srgb_suffix(), depth_test);
                 cull.always = cull_env.as_deref() == Ok("all");
-                if !cull.always && adapter.get_info().backend == wgpu::Backend::Metal {
+                // Phones' GPUs are tiled as Apple's are (Mali, Adreno): the
+                // test's second pass stores and reloads the whole frame there too.
+                if !cull.always
+                    && (adapter.get_info().backend == wgpu::Backend::Metal
+                        || cfg!(target_os = "android"))
+                {
                     cull.min_sections = cull::TILED_MIN_SECTIONS;
                 }
                 cull

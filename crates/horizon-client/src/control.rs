@@ -502,6 +502,10 @@ impl FrameStats {
     pub fn gpu_millis(&self) -> &[f32] {
         &self.gpu
     }
+    /// Each recorded frame's CPU time per phase (`PHASES`), in milliseconds.
+    pub fn phase_millis(&self) -> &[[f32; PHASES.len()]] {
+        &self.phases
+    }
     pub fn reset(&mut self) {
         self.millis.clear();
         self.cpu.clear();

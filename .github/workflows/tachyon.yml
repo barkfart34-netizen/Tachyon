@@ -11,10 +11,10 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: "Cargo profile: android (quick to build) or release (LTO, faster game)"
-        default: android
+        description: "Cargo profile: tachyon (thin LTO, the releases'), android (quick to build) or release"
+        default: tachyon
         type: choice
-        options: [android, release]
+        options: [tachyon, android, release]
 
 permissions:
   contents: write
@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
-      PROFILE: ${{ inputs.profile || 'android' }}
+      PROFILE: ${{ inputs.profile || 'tachyon' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -41,7 +41,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: tachyon-${{ inputs.profile || 'android' }}
+          key: tachyon-${{ inputs.profile || 'tachyon' }}
           cache-on-failure: true
 
       # Java 25 runs horizon-prepare's exporters; Gradle runs on 17.

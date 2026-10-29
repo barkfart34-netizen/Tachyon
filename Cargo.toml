@@ -88,6 +88,14 @@ lto = false
 codegen-units = 16
 incremental = true
 
+# Tachyon's releases (Android and desktop): thin LTO across the crates for
+# speed, codegen split in four so a CI runner builds it in reasonable time.
+[profile.tachyon]
+inherits = "release"
+lto = "thin"
+codegen-units = 4
+debug = false
+
 # The Android app's library while iterating (HORIZON_ANDROID_PROFILE=android
 # android/build.sh): the fast profile's quick link, no debug info. Releases
 # use the release profile.

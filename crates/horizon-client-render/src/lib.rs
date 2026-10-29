@@ -6,6 +6,7 @@ pub mod atlas_sources;
 pub mod audio;
 pub mod auth;
 pub mod bidi;
+pub mod brand;
 pub mod biome;
 pub mod block_entities;
 pub mod block_entity_anim;

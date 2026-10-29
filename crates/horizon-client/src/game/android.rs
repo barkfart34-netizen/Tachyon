@@ -146,6 +146,48 @@ pub(crate) struct AndroidGame {
     was_in_game: bool,
     /// When the last status line was logged (`Tachyon status`).
     last_status: Instant,
+    /// How many frames, CPU and GPU times the stats held at the last status line.
+    stats_mark: [usize; 3],
+}
+
+/// The frames since `mark` in a line: FPS, frame, CPU (by phase) and GPU
+/// time, render distance and resolution. The launcher shows the last one.
+fn performance(game: &Game, mark: &mut [usize; 3]) -> Option<String> {
+    let stats = &game.frame_stats;
+    let (frames, cpu, gpu) = (stats.frame_millis(), stats.cpu_millis(), stats.gpu_millis());
+    let phases = stats.phase_millis();
+    let new = |all: &[f32], from: usize| all.get(from..).unwrap_or_default().to_vec();
+    let (f, c, g) = (new(frames, mark[0]), new(cpu, mark[1]), new(gpu, mark[2]));
+    let p: Vec<[f32; 4]> = phases.get(mark[1].min(phases.len())..).unwrap_or_default().to_vec();
+    *mark = [frames.len(), cpu.len(), gpu.len()];
+    if f.is_empty() {
+        return None;
+    }
+    let avg = |v: &[f32]| v.iter().sum::<f32>() / v.len().max(1) as f32;
+    let frame = avg(&f);
+    let mut sorted = f.clone();
+    sorted.sort_by(f32::total_cmp);
+    let worst = sorted[(sorted.len() * 99 / 100).min(sorted.len() - 1)];
+    let phase = |i: usize| p.iter().map(|x| x[i]).sum::<f32>() / p.len().max(1) as f32;
+    let gpu = if g.is_empty() {
+        "off".to_owned()
+    } else {
+        format!("{:.1} ms", avg(&g))
+    };
+    let size = game.window.as_ref().map(|w| w.inner_size());
+    Some(format!(
+        "{:.0} FPS (1% low {:.0}), frame {frame:.1} ms, CPU {:.1} ms [update {:.1}, tick {:.1}, prepare {:.1}, render {:.1}], GPU {gpu}; render distance {}, resolution {}% of {}",
+        1000.0 / frame,
+        1000.0 / worst,
+        avg(&c),
+        phase(0),
+        phase(1),
+        phase(2),
+        phase(3),
+        game.settings.render_distance,
+        game.settings.horizon.resolution_scale,
+        size.map_or_else(|| "?".to_owned(), |s| format!("{}x{}", s.width, s.height)),
+    ))
 }
 
 /// The control layout the player picked (`controlLayout` in horizon.txt,
@@ -310,6 +352,7 @@ impl AndroidGame {
             dark,
             was_in_game: false,
             last_status: Instant::now(),
+            stats_mark: [0; 3],
         })
     }
 
@@ -550,6 +593,11 @@ impl AndroidGame {
                     };
                     let at = game.player.as_ref().map(|p| p.position);
                     log::info!("Tachyon status: {state}, playing {in_game}, player at {at:?}");
+                    let perf = performance(game, &mut self.stats_mark);
+                    if let Some(perf) = perf.filter(|_| state == "world") {
+                        log::info!("Tachyon performance: {perf}");
+                        let _ = std::fs::write(self.home.join("tachyon-performance.txt"), &perf);
+                    }
                 }
                 App::Loading(_) => log::info!("Tachyon status: loading"),
             }

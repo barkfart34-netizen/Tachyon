@@ -32,7 +32,7 @@ pub mod command_storage;
 pub mod confirm_screen;
 pub mod container_screen;
 pub mod control;
-pub mod brand;
+pub use horizon_client_render::brand;
 pub mod controls;
 pub mod crafting;
 pub mod creative;

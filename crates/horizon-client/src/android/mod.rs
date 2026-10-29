@@ -20,6 +20,32 @@ pub const BUILD: &str = match option_env!("TACHYON_BUILD") {
     None => env!("CARGO_PKG_VERSION"),
 };
 
+/// Tachyon's lighter settings for a phone, applied once per version of them
+/// (`tachyon-defaults` in the game folder): Horizon's Performance preset (8
+/// chunks, fast clouds and leaves, fewer particles), 75% resolution, VSync
+/// up to 120 FPS (a 90 or 120 Hz screen gets its rate), and 4 worker threads
+/// for a phone's few big cores.
+fn phone_defaults(home: &std::path::Path) {
+    const VERSION: &str = "2";
+    let marker = home.join("tachyon-defaults");
+    if std::fs::read_to_string(&marker).is_ok_and(|v| v.trim() == VERSION) {
+        return;
+    }
+    let options = home.join("options.txt");
+    let mut settings = horizon_client::settings::Settings::load(&options);
+    horizon_client::graphics::apply_preset(
+        horizon_client::graphics::Preset::Performance,
+        &mut settings,
+    );
+    settings.max_fps = 120;
+    settings.vsync = true;
+    settings.horizon.resolution_scale = 75;
+    settings.horizon.workers = 4;
+    settings.save(&options);
+    let _ = std::fs::write(marker, VERSION);
+    log::info!("Tachyon: phone defaults {VERSION} applied");
+}
+
 /// The last game's crash, written when it stopped with an error.
 fn take_crash(paths: &install::Paths) -> Option<String> {
     let file = paths.data.join("last-crash.txt");
@@ -41,29 +67,22 @@ pub fn main(app: AndroidApp) {
     unsafe { std::env::set_var("HORIZON_HOME", &paths.home) };
     // SAFETY: as above.
     unsafe { std::env::set_var("TMPDIR", &paths.cache) };
+    // The GPU timer costs a phone frame bandwidth: only for the graph overlay.
+    let graphics = horizon_client::graphics::Graphics::load(&paths.home);
+    if graphics.overlay == horizon_client::graphics::Overlay::Graph {
+        // SAFETY: as above.
+        unsafe { std::env::set_var("TACHYON_GPU_TIMER", "1") };
+    }
     // Tachyon is not Horizon: no "playing now" ping to Horizon's servers.
     // SAFETY: as above.
     unsafe { std::env::set_var("HORIZON_NO_HEARTBEAT", "1") };
     let _ = std::env::set_current_dir(&paths.home);
-    // A phone's first start: Tachyon's lighter defaults, Horizon's Performance
-    // preset (8 chunks, fast clouds and leaves, fewer particles) at 60 FPS and
-    // 75% resolution, instead of a desktop's.
-    let options = paths.home.join("options.txt");
-    if !options.exists() {
-        let mut settings = horizon_client::settings::Settings::load(&options);
-        horizon_client::graphics::apply_preset(
-            horizon_client::graphics::Preset::Performance,
-            &mut settings,
-        );
-        settings.max_fps = 60;
-        settings.horizon.resolution_scale = 75;
-        settings.save(&options);
-    }
     horizon_client::telemetry::mark_start();
     horizon_client::logging::init(&paths.home, "Render thread");
     horizon_client::crash::install(paths.home.clone(), "client");
     jni::install_clipboard();
     horizon_client::brand::set(brand::NAME);
+    phone_defaults(&paths.home);
     log::info!(
         "{} {BUILD} on {}",
         brand::NAME,

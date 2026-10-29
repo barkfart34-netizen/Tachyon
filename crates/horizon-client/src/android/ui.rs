@@ -158,17 +158,19 @@ impl<'c, 'a> Ui<'c, 'a> {
         let width = (r.right() - control - 16.0 - x).max(40.0);
         let name_size = horizon_theme::UI.px + 1.0;
         let detail_size = horizon_theme::CAPTION.px;
+        let name_h = self.c.line(Face::Medium, name_size);
+        let detail_h = self.c.line(Face::Regular, detail_size);
+        // As many description lines as the row has room for: two in a normal one.
+        let room = (((r.h - 12.0 - name_h) / detail_h).floor() as usize).max(2);
         let lines: Vec<String> = if detail.is_empty() {
             Vec::new()
         } else {
             self.c
                 .wrap(detail, Face::Regular, detail_size, width)
                 .into_iter()
-                .take(2)
+                .take(room)
                 .collect()
         };
-        let name_h = self.c.line(Face::Medium, name_size);
-        let detail_h = self.c.line(Face::Regular, detail_size);
         let total = name_h + lines.len() as f32 * detail_h + if lines.is_empty() { 0.0 } else { 2.0 };
         let mut y = r.y + (r.h - total) / 2.0;
         let name = self.c.fit(name, Face::Medium, name_size, width);
