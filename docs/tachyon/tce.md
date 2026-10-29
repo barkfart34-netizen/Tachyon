@@ -57,7 +57,8 @@ Lapisan yang memberi blok modpack perilaku di luar template vanilla-nya. Rencana
     tick (gandum 150 kerja: hampir 5 detik pada 32 RPM). Hasil disimpan sampai 9 tumpukan; kalau
     penuh, batu berhenti menggiling.
   - Resepnya data: `kinetica/data/kinetica/tachyon/milling.json` (ditulis `tachyon/art/kinetica.py`),
-    dengan peluang untuk hasil tambahan.
+    dengan peluang untuk hasil tambahan. Penampil resep (mod Recipes) menampilkannya di tab batu
+    gilingan; hasil tambahan dan peluangnya ada di catatan resep.
   - Isinya disimpan bersama kecepatan motor di `kinetica-<dimensi>.json`, dan jatuh ke tanah saat
     batunya dihancurkan. Bentuknya meminjam template pemotong batu (setinggi 9 piksel); klik ke
     blok ini selalu ditangani TCE lebih dulu, jadi layar pemotong batu tidak pernah terbuka.
@@ -124,5 +125,4 @@ Satu baris per titik, supaya merge dari upstream tetap mudah:
 - Kacamata yang terlihat di kepala (sekarang tampilannya masih topi kulit dari template).
 - Mesin pemroses lain (press, mixer, kipas) dan logistik (belt, funnel), yaitu Kinetica II.
 - Corong atau hopper yang mengisi dan mengosongkan batu gilingan.
-- Resep batu gilingan di penampil resep.
 - Instancing GPU untuk jaringan yang sangat besar.
