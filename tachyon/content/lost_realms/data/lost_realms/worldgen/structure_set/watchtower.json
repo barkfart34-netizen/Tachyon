@@ -1,0 +1,14 @@
+{
+  "structures": [
+    {
+      "structure": "lost_realms:watchtower",
+      "weight": 1
+    }
+  ],
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 20481030,
+    "spacing": 34,
+    "separation": 12
+  }
+}

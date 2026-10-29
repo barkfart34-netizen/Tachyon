@@ -91,8 +91,10 @@ SHOWCASE = [
     ("setblock", (-6, 2, 2), "kinetica:windmill[axis=z]"),
     ("setblock", (-6, 2, 1), "kinetica:shaft[axis=z]"),
 ]
-ITEMS = ["shaft", "cogwheel", "large_cogwheel", "gearbox", "hand_crank", "clutch", "gearshift",
-         "water_wheel", "windmill", "creative_motor", "ferrostone_alloy", "raw_tin", "tin_ingot",
+# Given to the player: with the goggles on and the motor at 128 RPM, enough
+# for Chronicles' machine quests (the counts some ask to hold).
+ITEMS = ["shaft 8", "cogwheel 2", "large_cogwheel", "gearbox", "hand_crank", "clutch", "gearshift",
+         "water_wheel", "windmill", "creative_motor", "ferrostone_alloy 4", "raw_tin", "tin_ingot",
          "bronze_ingot"]
 
 
@@ -180,20 +182,49 @@ def kinetica(control, out):
     print("tin ores under the showcase:", found)
     if not found:
         good = False
-    # Lost Realms' workshop ruin: its template set down at the far end,
-    # turned so its door faces the player, and the nearest one the world
-    # made.
-    corner = " ".join(str(b + d) for b, d in zip(base, (3, -1, 20)))
-    control.send(f"chat /place template lost_realms:workshop_ruin {corner} 180")
+    # Lost Realms' workshop ruin and watchtower: their templates set down at
+    # the far end, turned so their doors face the player.
+    for name, corner in [("workshop_ruin", (3, -1, 20)), ("watchtower", (-5, -1, 20))]:
+        corner = " ".join(str(b + d) for b, d in zip(base, corner))
+        control.send(f"chat /place template lost_realms:{name} {corner} 180")
     visit((0, 0, 11), (0, 1, 17))
     time.sleep(1)
     control.send("screenshot " + os.path.join(out, "ruin.png"))
-    control.send("chat /locate structure lost_realms:workshop_ruin")
-    time.sleep(8)
-    lines = " ".join(str(line) for line in control.send("chat-log 3").get("chat", []))
-    print("locate:", lines)
-    if "nearest" not in lines:
-        good = False
+    visit((-3, 0, 10), (-7, 7, 18))
+    time.sleep(1)
+    control.send("screenshot " + os.path.join(out, "watchtower.png"))
+    return good
+
+
+def lost_realms(control, out):
+    """Lost Realms' structures where the world made them: the nearest of
+    each, the player set down at it (a picture), which does Chronicles'
+    quests to find them. Whether each was found and the player landed."""
+    good = True
+    for name in ["workshop_ruin", "watchtower"]:
+        control.send(f"chat /locate structure lost_realms:{name}")
+        time.sleep(8)
+        lines = " ".join(str(line) for line in control.send("chat-log 3").get("chat", []))
+        print("locate:", lines)
+        at = re.search(r"lost_realms:" + name + r" is at \[(-?\d+), ~, (-?\d+)\]", lines)
+        if not at:
+            good = False
+            continue
+        x, z = int(at.group(1)), int(at.group(2))
+        control.send(f"chat /tp @s {x + 0.5} 160 {z + 0.5}")
+        time.sleep(3)
+        deadline = time.time() + 90
+        while not (control.send("status").get("player") or {}).get("on_ground"):
+            if time.time() > deadline:
+                print(name, ": the player never landed")
+                good = False
+                break
+            time.sleep(2)
+        # The owner's look (once a second) marks the quest done.
+        time.sleep(4)
+        control.send("look 30 35")
+        time.sleep(1)
+        control.send("screenshot " + os.path.join(out, f"found-{name}.png"))
     return good
 
 
@@ -252,6 +283,8 @@ def main():
             time.sleep(5)
         if not kinetica(control, out):
             failed.append("kinetica")
+        if not lost_realms(control, out):
+            failed.append("lost realms")
         if not chronicles(control, out):
             failed.append("chronicles")
         control.send("options mods")
@@ -278,8 +311,14 @@ def main():
               if os.path.basename(d) == "chronicles" and f.endswith(".json")]
     for path in quests:
         print(path, open(path, encoding="utf-8").read())
-    if not any("welcome" in json.load(open(p, encoding="utf-8")).get("claimed", []) for p in quests):
+    progress = [json.load(open(p, encoding="utf-8")) for p in quests]
+    if not any("welcome" in p.get("claimed", []) for p in progress):
         failed.append("quest claimed")
+    # Done by the motor turning near the player, and by standing in the
+    # structures the world made.
+    for quest in ["in_motion", "full_speed", "lost_workshop", "watchtower"]:
+        if not any(quest in p.get("done", []) for p in progress):
+            failed.append("quest " + quest)
     if failed:
         raise SystemExit("failed: " + ", ".join(failed))
     print("the scene is done")

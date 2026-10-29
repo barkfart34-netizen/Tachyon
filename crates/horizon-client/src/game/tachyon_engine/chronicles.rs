@@ -43,6 +43,8 @@ pub(in crate::game) const KEY: &str = "quests";
 pub(in crate::game) const DEFAULT_KEY: &str = "key.keyboard.j";
 /// How often the owner looks at its players' items.
 const LOOK: Duration = Duration::from_secs(1);
+/// How near a turning machine counts for a quest (blocks).
+const NEAR: f64 = 16.0;
 
 #[derive(Deserialize)]
 pub(super) struct Book {
@@ -66,6 +68,13 @@ pub(super) struct Quest {
     pub tasks: Vec<Stack>,
     #[serde(default)]
     pub rewards: Vec<Stack>,
+    /// A machine turning at least this fast (RPM) within `NEAR` blocks of
+    /// the player.
+    #[serde(default)]
+    pub turning: Option<u32>,
+    /// A structure the player stands in (`lost_realms:workshop_ruin`).
+    #[serde(default)]
+    pub find: Option<String>,
 }
 #[derive(Clone, Deserialize)]
 pub(super) struct Stack {
@@ -75,6 +84,15 @@ pub(super) struct Stack {
 }
 fn one() -> u32 {
     1
+}
+
+/// What the owner saw of a player at a look: the items it holds (item →
+/// count), the fastest machine near it (RPM), the structures it is in.
+#[derive(Default)]
+pub(super) struct Seen {
+    pub held: HashMap<String, u32>,
+    pub turning: f32,
+    pub found: Vec<String>,
 }
 
 impl Book {
@@ -97,9 +115,9 @@ impl Progress {
     pub fn open(&self, q: &Quest) -> bool {
         q.after.iter().all(|a| self.done.contains(a))
     }
-    /// Marks done each open quest whose items the player holds (`held`:
-    /// item → count); the ones it marked.
-    pub fn update(&mut self, book: &Book, held: &HashMap<String, u32>) -> Vec<String> {
+    /// Marks done each open quest whose tasks the player did, by what the
+    /// owner `seen`; the ones it marked.
+    pub fn update(&mut self, book: &Book, seen: &Seen) -> Vec<String> {
         let mut marked = Vec::new();
         // Again while it marks: a quest done opens those after it.
         loop {
@@ -109,7 +127,9 @@ impl Progress {
                 .filter(|q| {
                     q.tasks
                         .iter()
-                        .all(|t| held.get(&t.item).copied().unwrap_or(0) >= t.count)
+                        .all(|t| seen.held.get(&t.item).copied().unwrap_or(0) >= t.count)
+                        && q.turning.is_none_or(|rpm| seen.turning >= rpm as f32)
+                        && q.find.as_ref().is_none_or(|s| seen.found.contains(s))
                 })
                 .map(|q| q.id.clone())
                 .collect();
@@ -265,21 +285,39 @@ impl Game<'_> {
         let Some(asked) = asked else {
             return;
         };
-        let players: Vec<(u32, u128, HashMap<String, u32>)> = host
+        // The structures quests send players to, looked up where the owner's
+        // level is the player's.
+        let wanted: Vec<&str> = book.quests().filter_map(|q| q.find.as_deref()).collect();
+        let here = self.dim.id();
+        let players: Vec<(u32, u128, Seen)> = host
             .hub
             .guests
             .iter()
             .map(|g| {
                 let slots = g.inventory.iter().chain(&g.armor).chain([&g.offhand]);
-                (g.conn, g.uuid, held(slots))
+                let found = if wanted.is_empty() || g.dimension != here {
+                    Vec::new()
+                } else {
+                    let at = g.position.map(|c| c.floor() as i32);
+                    self.structures_reaching_where(at, &|id| wanted.contains(&id))
+                        .into_iter()
+                        .map(|(id, _)| id)
+                        .collect()
+                };
+                let seen = Seen {
+                    held: held(slots),
+                    turning: Self::tachyon_fastest_near(&g.dimension, g.position, NEAR),
+                    found,
+                };
+                (g.conn, g.uuid, seen)
             })
             .collect();
         let uuid_of = |conn: u32| players.iter().find(|p| p.0 == conn).map(|p| p.1);
         let mut tell: Vec<u32> = Vec::new();
         let mut gifts: Vec<(u32, Vec<Stack>)> = Vec::new();
         OWNER.with_borrow_mut(|o| {
-            for (conn, uuid, held) in &players {
-                if !o.progress(*uuid).update(book, held).is_empty() {
+            for (conn, uuid, seen) in &players {
+                if !o.progress(*uuid).update(book, seen).is_empty() {
                     o.save(*uuid);
                     tell.push(*conn);
                 }
@@ -448,6 +486,38 @@ impl Game<'_> {
                     y += 18.0;
                 }
             }
+            if let Some(rpm) = q.turning {
+                let done = progress.done.contains(&q.id);
+                let line = self
+                    .translate("chronicles.turning", "A machine near you turning at %s RPM")
+                    .replace("%s", &rpm.to_string());
+                let color = if done {
+                    rgba(110, 230, 110, 255)
+                } else {
+                    u32::MAX
+                };
+                icons.push(("kinetica:cogwheel".to_owned(), right, y));
+                for (i, part) in self.tachyon_wrap(&line, page_w - 22.0).iter().enumerate() {
+                    batch.text(atlas, part, right + 22.0, y + 5.0 + i as f32 * 10.0, color, true);
+                }
+                y += 22.0;
+            }
+            if let Some(structure) = &q.find {
+                let done = progress.done.contains(&q.id);
+                let key = format!("structure.{}", structure.replace(':', "."));
+                let name = self.translate(&key, structure);
+                let line = self.translate("chronicles.find", "Find: %s").replace("%s", &name);
+                let color = if done {
+                    rgba(110, 230, 110, 255)
+                } else {
+                    u32::MAX
+                };
+                icons.push(("minecraft:compass".to_owned(), right, y));
+                for (i, part) in self.tachyon_wrap(&line, page_w - 22.0).iter().enumerate() {
+                    batch.text(atlas, part, right + 22.0, y + 5.0 + i as f32 * 10.0, color, true);
+                }
+                y += 22.0;
+            }
             if !q.rewards.is_empty() {
                 y += 4.0;
                 let label = self.translate("chronicles.rewards", "Rewards:");
@@ -554,6 +624,12 @@ impl Game<'_> {
         if !q.tasks.is_empty() {
             y += 12.0 + q.tasks.len() as f32 * 18.0;
         }
+        if q.turning.is_some() {
+            y += 22.0;
+        }
+        if q.find.is_some() {
+            y += 22.0;
+        }
         if !q.rewards.is_empty() {
             y += 4.0 + 12.0 + 22.0;
         }
@@ -641,7 +717,8 @@ mod tests {
                 {"id": "a", "icon": "minecraft:stick", "rewards": [{"item": "minecraft:bread", "count": 2}]},
                 {"id": "b", "icon": "minecraft:stick", "after": ["a"],
                  "tasks": [{"item": "minecraft:stick", "count": 4}]},
-                {"id": "c", "icon": "minecraft:stick", "after": ["b"]}
+                {"id": "c", "icon": "minecraft:stick", "after": ["b"], "turning": 32},
+                {"id": "d", "icon": "minecraft:stick", "after": ["b"], "find": "x:ruin"}
             ]}]}"#,
         )
         .unwrap()
@@ -651,14 +728,22 @@ mod tests {
     fn quests_open_in_order_and_are_done_with_the_items_held() {
         let book = book();
         let mut p = Progress::default();
-        let none = HashMap::new();
+        let sticks = |n| Seen {
+            held: HashMap::from([("minecraft:stick".to_owned(), n)]),
+            ..Seen::default()
+        };
         // "a" asks nothing, so it is done at once; "b" waits for sticks.
-        assert_eq!(p.update(&book, &none), ["a"]);
-        let three = HashMap::from([("minecraft:stick".to_owned(), 3)]);
-        assert!(p.update(&book, &three).is_empty());
-        // Four sticks: "b", and then "c" which it opened.
-        let four = HashMap::from([("minecraft:stick".to_owned(), 4)]);
-        assert_eq!(p.update(&book, &four), ["b", "c"]);
+        assert_eq!(p.update(&book, &Seen::default()), ["a"]);
+        assert!(p.update(&book, &sticks(3)).is_empty());
+        // Four sticks: "b"; "c" it opened wants a machine at 32 RPM, "d" a
+        // ruin.
+        assert_eq!(p.update(&book, &Seen { turning: 16.0, ..sticks(4) }), ["b"]);
+        assert_eq!(p.update(&book, &Seen { turning: 32.0, ..sticks(4) }), ["c"]);
+        let ruin = Seen {
+            found: vec!["x:ruin".to_owned()],
+            ..Seen::default()
+        };
+        assert_eq!(p.update(&book, &ruin), ["d"]);
     }
 
     #[test]
@@ -666,7 +751,7 @@ mod tests {
         let book = book();
         let mut p = Progress::default();
         assert!(p.claim(&book, "a").is_none());
-        p.update(&book, &HashMap::new());
+        p.update(&book, &Seen::default());
         let rewards = p.claim(&book, "a").unwrap();
         assert_eq!((rewards[0].item.as_str(), rewards[0].count), ("minecraft:bread", 2));
         assert!(p.claim(&book, "a").is_none());

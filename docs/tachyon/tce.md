@@ -50,11 +50,17 @@ Lapisan yang memberi blok modpack perilaku di luar template vanilla-nya. Rencana
 ## Quest (Chronicles)
 
 - **Data:** daftar quest ada di `chronicles/data/chronicles/tachyon/quests.json`, ditulis oleh
-  `tachyon/art/chronicles.py`. Isinya bab, quest, item yang harus dibawa sekaligus, hadiah, dan quest
-  yang harus selesai dulu. Nama dan teksnya ada di file bahasa mod itu.
+  `tachyon/art/chronicles.py`. Isinya bab, quest, tugas, hadiah, dan quest yang harus selesai dulu.
+  Nama dan teksnya ada di file bahasa mod itu.
+- **Tugas** (boleh digabung dalam satu quest):
+  - `tasks`: item yang harus dibawa sekaligus (inventaris, armor, tangan kiri);
+  - `turning`: bagian Kinetica yang berputar minimal sekian RPM dalam jarak 16 blok dari pemain;
+  - `find`: berdiri di dalam struktur itu (kotak struktur, termasuk tepi 12 blok untuk struktur yang
+    meratakan tanah). Namanya diambil dari `structure.<ns>.<id>` di file bahasa.
 - **Pemilik dunia** (`game/tachyon_engine/chronicles.rs`):
   - Menyimpan progres tiap pemain di `<dunia>/tachyon/chronicles/<uuid>.json`.
-  - Setiap detik memeriksa item para pemain dan menandai quest yang selesai.
+  - Setiap detik memeriksa item, mesin di sekitar, dan struktur tempat para pemain berada, lalu
+    menandai quest yang selesai.
   - Memberi hadiah saat diklaim, lalu mengirim progres lewat payload `tachyon:quests`.
 - **Jendela pemain:**
   - Tombol **J** (bisa diganti di menu Mods) membuka buku quest dan meminta progres
@@ -64,8 +70,7 @@ Lapisan yang memberi blok modpack perilaku di luar template vanilla-nya. Rencana
 - **Layar:** build Tachyon tidak memakai mod WebAssembly, jadi `Screen::Mod` dipakai untuk buku quest.
   Fungsi kosongnya di `game/mods.rs` diarahkan ke `tachyon_screen_*`.
 - **Belum ada:**
-  - tombol sentuh di Android;
-  - tugas selain membawa item (membuat, menemukan struktur, mengalahkan mob);
+  - tugas membuat item dan mengalahkan mob;
   - quest untuk pemain lokal dalam mode in-frame.
 
 ## Bijih di dunia

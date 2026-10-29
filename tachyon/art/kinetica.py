@@ -822,7 +822,7 @@ def main():
     (ROOT).mkdir(parents=True)
     (ROOT / "horizon-mod.toml").write_text(
         "# Tachyon: Aether & Gears. Kinetica, the machines: written by tachyon/art/kinetica.py.\n"
-        'id = "kinetica"\nname = "Kinetica"\nversion = "0.1.0"\napi = "0.2"\nside = "both"\n'
+        'id = "kinetica"\nname = "Kinetica"\nversion = "0.2.0"\napi = "0.2"\nside = "both"\n'
         'capabilities = ["registries"]\n', encoding="utf-8")
     for name, draw in TEXTURES.items():
         write(assets / "textures" / f"{name}.png", draw())

@@ -20,9 +20,16 @@ def stack(item, count=1):
     return {"item": item, "count": count}
 
 
-def quest(id, icon, names, texts, tasks=(), rewards=(), after=()):
-    return {"id": id, "icon": icon, "after": list(after), "tasks": list(tasks), "rewards": list(rewards),
-            "names": names, "texts": texts}
+def quest(id, icon, names, texts, tasks=(), rewards=(), after=(), turning=None, find=None):
+    """A quest: `tasks` the items to hold at once, `turning` a machine near
+    the player at that many RPM, `find` a structure to stand in."""
+    q = {"id": id, "icon": icon, "after": list(after), "tasks": list(tasks), "rewards": list(rewards),
+         "names": names, "texts": texts}
+    if turning is not None:
+        q["turning"] = turning
+    if find is not None:
+        q["find"] = find
+    return q
 
 
 # Each quest: what it is called and says (English, Indonesian), the items
@@ -52,6 +59,11 @@ CHAPTERS = [
                "Engkol tangan memutar poros di bawahnya selama dipakai. Jongkok untuk arah sebaliknya."),
               tasks=[stack("kinetica:hand_crank")],
               rewards=[stack("kinetica:cogwheel", 4)], after=["shafts_and_cogs"]),
+        quest("in_motion", "kinetica:cogwheel",
+              ("In Motion", "Bergerak"),
+              ("Build a machine and set it turning: any part near you at 16 RPM or more will do.",
+               "Bangun mesin dan buat ia berputar: bagian mana pun di dekatmu, 16 RPM atau lebih."),
+              turning=16, rewards=[stack("kinetica:ferrostone_casing", 4)], after=["hand_power"]),
         quest("goggles", "kinetica:engineers_goggles",
               ("Seeing Speed", "Melihat Kecepatan"),
               ("Engineer's Goggles show how fast a part turns when you look at it.",
@@ -76,6 +88,13 @@ CHAPTERS = [
                "Kopling yang diberi sinyal memutus jalur; pemindah gigi yang diberi sinyal membalik arahnya."),
               tasks=[stack("kinetica:gearbox"), stack("kinetica:clutch"), stack("kinetica:gearshift")],
               rewards=[stack("kinetica:ferrostone_casing", 8)], after=["water_power", "wind_power"]),
+        quest("full_speed", "kinetica:large_cogwheel",
+              ("Full Speed", "Kecepatan Penuh"),
+              ("A large cogwheel driving a small one doubles the speed. Step a wheel's turning up to 128 RPM.",
+               "Roda gigi besar yang memutar roda gigi kecil menggandakan kecepatan. Naikkan putaran kincir "
+               "sampai 128 RPM."),
+              turning=128, rewards=[stack("kinetica:bronze_ingot", 8), stack("kinetica:ferrostone_alloy", 16)],
+              after=["control"]),
     ]},
     {"id": "metals", "icon": "kinetica:tin_ingot", "names": ("Metals", "Logam"), "quests": [
         quest("tin", "kinetica:raw_tin",
@@ -91,6 +110,20 @@ CHAPTERS = [
               tasks=[stack("kinetica:bronze_ingot", 8)],
               rewards=[stack("kinetica:engineers_goggles")], after=["tin"]),
     ]},
+    {"id": "lost_realms", "icon": "minecraft:compass", "names": ("Lost Realms", "Dunia yang Hilang"), "quests": [
+        quest("lost_workshop", "kinetica:cogwheel",
+              ("The Lost Workshop", "Bengkel yang Hilang"),
+              ("Tinkerers once worked in the forests and plains. Find one of their ruined workshops.",
+               "Dulu para perajin bekerja di hutan dan dataran. Temukan salah satu bengkel mereka yang runtuh."),
+              find="lost_realms:workshop_ruin",
+              rewards=[stack("minecraft:spyglass"), stack("kinetica:ferrostone_alloy", 8)], after=["welcome"]),
+        quest("watchtower", "minecraft:spyglass",
+              ("The Old Watch", "Penjaga Lama"),
+              ("The old realm watched its borders from stone towers. Climb into one of them.",
+               "Kerajaan lama mengawasi perbatasannya dari menara batu. Masuklah ke salah satunya."),
+              find="lost_realms:watchtower",
+              rewards=[stack("minecraft:arrow", 16), stack("kinetica:tin_ingot", 6)], after=["welcome"]),
+    ]},
 ]
 
 
@@ -100,14 +133,16 @@ def main():
     ROOT.mkdir(parents=True)
     (ROOT / "horizon-mod.toml").write_text(
         "# Tachyon: Aether & Gears. Chronicles, the quests: written by tachyon/art/chronicles.py.\n"
-        'id = "chronicles"\nname = "Chronicles"\nversion = "0.1.0"\napi = "0.2"\nside = "both"\n'
+        'id = "chronicles"\nname = "Chronicles"\nversion = "0.2.0"\napi = "0.2"\nside = "both"\n'
         'capabilities = ["registries"]\n', encoding="utf-8")
     en = {"chronicles.title": "Chronicles", "chronicles.claim": "Claim", "chronicles.claimed": "Claimed",
           "chronicles.locked": "Finish the quests before it first", "chronicles.tasks": "Hold at once:",
-          "chronicles.rewards": "Rewards:", "chronicles.done": "Quest complete: %s"}
+          "chronicles.rewards": "Rewards:", "chronicles.done": "Quest complete: %s",
+          "chronicles.turning": "A machine near you turning at %s RPM", "chronicles.find": "Find: %s"}
     idn = {"chronicles.title": "Kronik", "chronicles.claim": "Klaim", "chronicles.claimed": "Sudah diklaim",
            "chronicles.locked": "Selesaikan quest sebelumnya dulu", "chronicles.tasks": "Bawa sekaligus:",
-           "chronicles.rewards": "Hadiah:", "chronicles.done": "Quest selesai: %s"}
+           "chronicles.rewards": "Hadiah:", "chronicles.done": "Quest selesai: %s",
+           "chronicles.turning": "Mesin di dekatmu berputar %s RPM", "chronicles.find": "Temukan: %s"}
     book = {"chapters": []}
     for chapter in CHAPTERS:
         en[f"chronicles.chapter.{chapter['id']}"], idn[f"chronicles.chapter.{chapter['id']}"] = chapter["names"]

@@ -577,6 +577,25 @@ impl Game<'_> {
         }
     }
 
+    /// The fastest part turning within `radius` blocks of `pos` in the
+    /// owner's `dimension` (RPM, either way).
+    pub(super) fn tachyon_fastest_near(dimension: &str, pos: [f64; 3], radius: f64) -> f32 {
+        OWNERS.with_borrow(|owners| {
+            let Some(owner) = owners.get(dimension) else {
+                return 0.0;
+            };
+            owner
+                .speeds
+                .iter()
+                .filter(|(p, _)| {
+                    let d = [0, 1, 2].map(|i| f64::from(p[i]) + 0.5 - pos[i]);
+                    d[0] * d[0] + d[1] * d[1] + d[2] * d[2] <= radius * radius
+                })
+                .map(|(_, [a, b])| a.abs().max(b.abs()))
+                .fold(0.0, f32::max)
+        })
+    }
+
     /// Whether the player wears engineer's goggles, or holds them.
     fn tachyon_goggles(&self) -> bool {
         [self.armor[0].as_ref(), self.held(), self.offhand.as_ref()]

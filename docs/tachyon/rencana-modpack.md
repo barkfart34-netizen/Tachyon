@@ -260,3 +260,11 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
 - **29 Oktober 2026, Chronicles 0.1 (buku quest).**
   - Ada 10 quest dalam dua bab, *Era Mesin* dan *Logam*. Buku dibuka dengan tombol J.
   - Progres disimpan oleh server per pemain, dan hadiahnya diberikan oleh server (aman untuk LAN).
+- **30 Oktober 2026, Lost Realms 0.2 dan Chronicles 0.2.**
+  - Struktur kedua, *Menara Pengawas Runtuh* (`lost_realms:watchtower`): menara batu 5×5 setinggi 12
+    blok, sisi timurnya runtuh, tangga sampai atap, peti loot di atas (panah, besi, timah, peta,
+    teropong). Muncul di dataran, padang, sabana, hutan, taiga, dan bukit berangin.
+  - Quest punya dua jenis tugas baru: mesin yang berputar di dekat pemain (`turning`) dan menemukan
+    struktur (`find`).
+  - Ada 14 quest dalam tiga bab. Bab baru *Dunia yang Hilang* berisi quest menemukan bengkel dan
+    menara; *Era Mesin* mendapat *Bergerak* (16 RPM) dan *Kecepatan Penuh* (128 RPM).

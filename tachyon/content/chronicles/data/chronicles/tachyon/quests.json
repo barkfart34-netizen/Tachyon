@@ -86,6 +86,21 @@
           ]
         },
         {
+          "id": "in_motion",
+          "icon": "kinetica:cogwheel",
+          "after": [
+            "hand_power"
+          ],
+          "tasks": [],
+          "rewards": [
+            {
+              "item": "kinetica:ferrostone_casing",
+              "count": 4
+            }
+          ],
+          "turning": 16
+        },
+        {
           "id": "goggles",
           "icon": "kinetica:engineers_goggles",
           "after": [
@@ -173,6 +188,25 @@
               "count": 8
             }
           ]
+        },
+        {
+          "id": "full_speed",
+          "icon": "kinetica:large_cogwheel",
+          "after": [
+            "control"
+          ],
+          "tasks": [],
+          "rewards": [
+            {
+              "item": "kinetica:bronze_ingot",
+              "count": 8
+            },
+            {
+              "item": "kinetica:ferrostone_alloy",
+              "count": 16
+            }
+          ],
+          "turning": 128
         }
       ]
     },
@@ -217,6 +251,50 @@
               "count": 1
             }
           ]
+        }
+      ]
+    },
+    {
+      "id": "lost_realms",
+      "icon": "minecraft:compass",
+      "quests": [
+        {
+          "id": "lost_workshop",
+          "icon": "kinetica:cogwheel",
+          "after": [
+            "welcome"
+          ],
+          "tasks": [],
+          "rewards": [
+            {
+              "item": "minecraft:spyglass",
+              "count": 1
+            },
+            {
+              "item": "kinetica:ferrostone_alloy",
+              "count": 8
+            }
+          ],
+          "find": "lost_realms:workshop_ruin"
+        },
+        {
+          "id": "watchtower",
+          "icon": "minecraft:spyglass",
+          "after": [
+            "welcome"
+          ],
+          "tasks": [],
+          "rewards": [
+            {
+              "item": "minecraft:arrow",
+              "count": 16
+            },
+            {
+              "item": "kinetica:tin_ingot",
+              "count": 6
+            }
+          ],
+          "find": "lost_realms:watchtower"
         }
       ]
     }
