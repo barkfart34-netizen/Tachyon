@@ -234,7 +234,17 @@ pub(super) fn content_root(
             Err(e) => log::warn!("Horizon: mod {} content not loaded: {e}", m.id),
         }
     }
-    match mod_content::resource_root(root, &mods, &here.join(".horizon-cache")) {
+    // The overlay beside the resources when that folder takes it, so its
+    // links to them stay on one disk (Windows copies across disks: the
+    // resources are hundreds of megabytes); else in the game folder.
+    let beside = root.parent().map(|p| p.join(".horizon-cache")).filter(|c| {
+        let probe = c.join(".probe");
+        let ok = std::fs::create_dir_all(c).is_ok() && std::fs::write(&probe, b"").is_ok();
+        let _ = std::fs::remove_file(probe);
+        ok
+    });
+    let cache = beside.unwrap_or_else(|| here.join(".horizon-cache"));
+    match mod_content::resource_root(root, &mods, &cache) {
         Ok(out) => {
             if out != root {
                 log::info!(

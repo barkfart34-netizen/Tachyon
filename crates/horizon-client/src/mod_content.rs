@@ -909,6 +909,9 @@ impl Overlay<'_> {
 fn link(target: &Path, at: &Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(target, at)
 }
+/// Without symbolic links (Windows lets only some users make them): real
+/// directories holding hard links to the files, which take no room, or
+/// copies where a hard link cannot be (another disk).
 #[cfg(not(unix))]
 fn link(target: &Path, at: &Path) -> std::io::Result<()> {
     if target.is_dir() {
@@ -918,7 +921,7 @@ fn link(target: &Path, at: &Path) -> std::io::Result<()> {
         }
         Ok(())
     } else {
-        fs::copy(target, at).map(|_| ())
+        fs::hard_link(target, at).or_else(|_| fs::copy(target, at).map(|_| ()))
     }
 }
 
