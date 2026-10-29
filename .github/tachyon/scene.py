@@ -252,6 +252,23 @@ def lost_realms(control, out):
         control.send("look 30 35")
         time.sleep(1)
         control.send("screenshot " + os.path.join(out, f"found-{name}.png"))
+        control.send("look 0 90")
+        time.sleep(1)
+        control.send("screenshot " + os.path.join(out, f"found-{name}-below.png"))
+        # Its blocks round where the player landed: stone bricks, which the
+        # ground there doesn't have, counted by turning them to air.
+        y = math.floor((control.send("status").get("player") or {}).get("position", [0, 64, 0])[1])
+        bricks = 0
+        for brick in ["stone_bricks", "mossy_stone_bricks", "cracked_stone_bricks"]:
+            control.send(f"chat /fill {x - 10} {y - 20} {z - 10} {x + 10} {y + 5} {z + 10} "
+                         f"minecraft:air replace minecraft:{brick}")
+            time.sleep(1)
+            for line in control.send("chat-log 1").get("chat", []):
+                filled = re.search(r"filled (\d+)", str(line))
+                bricks += int(filled.group(1)) if filled else 0
+        print(name, "stone bricks where it was found:", bricks)
+        if bricks < 10:
+            good = False
     return good
 
 
