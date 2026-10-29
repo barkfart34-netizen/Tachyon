@@ -59,6 +59,10 @@ pub fn main() {
     if std::env::var_os(GAME).is_some() {
         std::process::exit(game());
     }
+    // CI's test of importing (`TACHYON_IMPORT=<file>`, into HORIZON_HOME), as a drop does.
+    if let Some(file) = std::env::var_os("TACHYON_IMPORT") {
+        std::process::exit(import_file(Path::new(&file)));
+    }
     let paths = Paths::new();
     let _ = std::fs::create_dir_all(&paths.data);
     logging::init(&paths.data, "Launcher");
@@ -105,6 +109,24 @@ fn game() -> i32 {
         }
     };
     logging::flush();
+    code
+}
+
+/// Imports `file` into the game folder `HORIZON_HOME`, saying how it went
+/// in the folder's `tachyon-import.txt`. Returns the exit code.
+fn import_file(file: &Path) -> i32 {
+    let home = logging::game_home();
+    let _ = std::fs::create_dir_all(&home);
+    let name = file
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let result = crate::tachyon::import::import(file, &name, &home, &|_| {});
+    let (text, code) = match result {
+        Ok(imported) => (imported.note, 0),
+        Err(e) => (e, 1),
+    };
+    let _ = std::fs::write(home.join("tachyon-import.txt"), &text);
     code
 }
 

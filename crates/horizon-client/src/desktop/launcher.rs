@@ -8,6 +8,7 @@ use super::store::{self, Account, Installation, Store};
 use super::{ERROR_FILE, GAME, ICON, Paths};
 use crate::tachyon::brand::{self, P};
 use crate::tachyon::draw::{self, Face, Image, Rect, Renderer, hex};
+use crate::tachyon::import;
 use crate::tachyon::ui::{Pointer, Ui};
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -125,7 +126,7 @@ struct Snapshots {
     started: Instant,
 }
 
-const SHOTS: [&str; 7] = [
+const SHOTS: [&str; 8] = [
     "1-play",
     "2-play-menu",
     "3-installations",
@@ -133,10 +134,21 @@ const SHOTS: [&str; 7] = [
     "5-accounts",
     "6-notes",
     "7-settings",
+    "8-drop",
 ];
+
+/// What can be imported.
+const KINDS: &str = "A world or resource pack (.zip), a Horizon mod (.hmod), or a Java mod (.jar): its blocks, items and recipes come in; what it does in code can't.";
 
 /// Frames a page is shown before its picture, for the window to settle.
 const SHOT_FRAMES: u32 = 30;
+
+/// A file dropped on the window, being installed into an installation.
+struct Importing {
+    /// What the import is doing, from its thread.
+    line: Arc<std::sync::Mutex<String>>,
+    work: std::thread::JoinHandle<Result<import::Imported, String>>,
+}
 
 /// A message over the page: an error stays until dismissed.
 struct Note {
@@ -178,6 +190,9 @@ pub struct Launcher {
     snapshots: Option<Snapshots>,
     /// The launcher is done (the snapshots taken): the event loop ends.
     done: bool,
+    /// A file is dragged over the window.
+    dropping: bool,
+    importing: Option<Importing>,
 }
 
 /// A colour between two, `t` from 0 to 1.
@@ -297,6 +312,60 @@ impl Launcher {
             wanted_cursor: CursorIcon::Default,
             snapshots,
             done: false,
+            dropping: false,
+            importing: None,
+        }
+    }
+
+    /// Installs a file dropped on the window into the selected installation.
+    fn import(&mut self, file: PathBuf) {
+        if self.importing.is_some() {
+            self.note("Wait for the current import to finish, then drop the file again.", true);
+            return;
+        }
+        let installation = self.store.installations[self.store.selected_index()].clone();
+        let home = installation.folder(&self.paths.data);
+        let name = file
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        log::info!("Tachyon launcher: importing {} into {}", file.display(), home.display());
+        let line = Arc::new(std::sync::Mutex::new(format!(
+            "Importing {name} into {}",
+            installation.name
+        )));
+        let said = line.clone();
+        let work = std::thread::spawn(move || {
+            let _ = std::fs::create_dir_all(&home);
+            import::import(&file, &name, &home, &|l| *said.lock().unwrap() = l)
+        });
+        self.importing = Some(Importing { line, work });
+    }
+
+    /// Notices an import ending, and says how it went.
+    fn watch_import(&mut self) {
+        let Some(importing) = &self.importing else {
+            return;
+        };
+        if !importing.work.is_finished() {
+            let line = importing.line.lock().unwrap().clone();
+            self.note = Some(Note {
+                text: format!("{line}..."),
+                error: false,
+                at: Instant::now(),
+            });
+            return;
+        }
+        let Some(importing) = self.importing.take() else {
+            return;
+        };
+        match importing.work.join() {
+            Ok(Ok(imported)) => {
+                log::info!("Tachyon launcher: imported {}", imported.name);
+                self.note(imported.note, false);
+            }
+            Ok(Err(e)) => self.note(e, true),
+            Err(_) => self.note("The import stopped with an error.", true),
         }
     }
 
@@ -322,6 +391,7 @@ impl Launcher {
         self.note = None;
         self.edit = None;
         self.focus = None;
+        self.dropping = false;
         match step {
             0 => self.set_page(Page::Play),
             1 => {
@@ -341,7 +411,11 @@ impl Launcher {
                 self.note("Playing as Steve.", false);
             }
             5 => self.set_page(Page::Notes),
-            _ => self.set_page(Page::Settings),
+            6 => self.set_page(Page::Settings),
+            _ => {
+                self.set_page(Page::Installations);
+                self.dropping = true;
+            }
         }
     }
 
@@ -945,6 +1019,33 @@ impl Launcher {
         if let Some(r) = note {
             self.draw_note(ui, r);
         }
+        if self.dropping {
+            self.drop_overlay(ui, w, h);
+        }
+    }
+
+    /// Over everything while a file is dragged over the window.
+    fn drop_overlay(&self, ui: &mut Ui, w: f32, h: f32) {
+        let installation = &self.store.installations[self.store.selected_index()].name;
+        let frame = Rect::new(16.0, 16.0, w - 32.0, h - 32.0);
+        ui.c.rect(Rect::new(0.0, 0.0, w, h), 0.0, hex(P.page, 0.82));
+        ui.c.rect(frame, 20.0, hex(P.accent, 0.06));
+        ui.c.ring(frame, 20.0, 2.0, hex(P.accent, 0.9));
+        ui.centred(
+            Rect::new(0.0, h / 2.0 - 40.0, w, 40.0),
+            &format!("Drop to import into {installation}"),
+            Face::Medium,
+            24.0,
+            hex(P.ink, 1.0),
+        );
+        let kinds = ui.c.fit(KINDS, Face::Regular, 14.0, w - 120.0);
+        ui.centred(
+            Rect::new(0.0, h / 2.0 + 4.0, w, 24.0),
+            &kinds,
+            Face::Regular,
+            14.0,
+            hex(P.ink_soft, 1.0),
+        );
     }
 
     fn sidebar(&mut self, ui: &mut Ui, h: f32) {
@@ -1367,7 +1468,23 @@ impl Launcher {
             13.0,
             hex(P.muted, 1.0),
         );
-        y += 36.0;
+        y += 30.0;
+        // Where dropped files go.
+        let zone = Rect::new(x, y, w, 64.0);
+        ui.c.rect(zone, 14.0, hex(P.accent, if self.dropping { 0.12 } else { 0.04 }));
+        ui.c.ring(zone, 14.0, 1.0, hex(P.accent, if self.dropping { 0.9 } else { 0.35 }));
+        let selected_name = self.store.installations[self.store.selected_index()].name.clone();
+        ui.text(
+            zone.x + 20.0,
+            zone.y + 13.0,
+            &format!("Drop a file on this window to import it into {selected_name}"),
+            Face::Medium,
+            14.0,
+            hex(P.ink, 1.0),
+        );
+        let kinds = ui.c.fit(KINDS, Face::Regular, 12.0, zone.w - 40.0);
+        ui.text(zone.x + 20.0, zone.y + 36.0, &kinds, Face::Regular, 12.0, hex(P.muted, 1.0));
+        y += 80.0;
         let now = store::now();
         let selected = self.store.selected_index();
         let installations = self.store.installations.clone();
@@ -1819,6 +1936,12 @@ impl ApplicationHandler for Launcher {
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 self.key(&event);
             }
+            WindowEvent::HoveredFile(_) => self.dropping = true,
+            WindowEvent::HoveredFileCancelled => self.dropping = false,
+            WindowEvent::DroppedFile(file) => {
+                self.dropping = false;
+                self.import(file);
+            }
             WindowEvent::RedrawRequested => self.draw(),
             _ => {}
         }
@@ -1830,6 +1953,7 @@ impl ApplicationHandler for Launcher {
             return;
         }
         self.watch_game();
+        self.watch_import();
         let shown = self.game.is_none() || self.store.keep_open;
         if shown && (!self.occluded || self.snapshots.is_some()) {
             // Drawn at the display's rate (the renderer waits for it): the

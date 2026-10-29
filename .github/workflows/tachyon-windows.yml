@@ -163,6 +163,33 @@ jobs:
           tail -40 "$home/logs/latest.log" || true
           cp "$home/report.json" "$home/logs/latest.log" "$GITHUB_WORKSPACE/snapshots/" || true
 
+      # A Java mod (Create, from Modrinth) through the import a dropped file
+      # runs, then the game with its content on. Only logs leave the runner:
+      # the ported mod's assets are its authors'.
+      - name: A Java mod imported, and the game with it
+        shell: bash
+        continue-on-error: true
+        run: |
+          home="$RUNNER_TEMP/modded"
+          mkdir -p "$home" snapshots
+          versions='https://api.modrinth.com/v2/project/create/version?loaders=%5B%22neoforge%22%5D&game_versions=%5B%221.21.1%22%5D'
+          url=$(curl -fsSL "$versions" | python -c "import json,sys; v=json.load(sys.stdin); m=[x for x in v if '6.0.10' in x['version_number']] or v; print(m[0]['files'][0]['url'])")
+          curl -fsSL -o "$RUNNER_TEMP/create.jar" "$url"
+          TACHYON_IMPORT="$RUNNER_TEMP/create.jar" HORIZON_HOME="$home" dist/Tachyon/Tachyon.exe && echo "imported" || echo "the import failed: $?"
+          cat "$home/tachyon-import.txt" || true
+          echo
+          cat "$home/horizon-mods.txt" || true
+          cd "$home"
+          export TACHYON_GAME=1 HORIZON_HOME="$home" HORIZON_NO_HEARTBEAT=1 HORIZON_NO_DISCORD=1
+          args=(--world Modded --creative --seed 5 --render-distance 4 --world-frames 20)
+          timeout 900 "$GITHUB_WORKSPACE/dist/Tachyon/Tachyon.exe" "${args[@]}" \
+            --smoke-report "$home/report.json" || echo "the game ended with $?"
+          cat "$home/report.json" || true
+          grep -i "mod\|content\|warn\|error\|panic" "$home/logs/latest.log" | head -80 || true
+          cp "$home/logs/latest.log" "$GITHUB_WORKSPACE/snapshots/modded-game.log" || true
+          cp "$home/report.json" "$GITHUB_WORKSPACE/snapshots/modded-report.json" || true
+          cp "$home/tachyon-import.txt" "$GITHUB_WORKSPACE/snapshots/" || true
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
