@@ -197,6 +197,21 @@ def kinetica(control, out):
     return good
 
 
+def chronicles(control, out):
+    """Chronicles' book: opened with its key, the first quest's rewards
+    claimed. Whether Claim was there to click."""
+    control.send("key j tap")
+    time.sleep(3)
+    control.send("screenshot " + os.path.join(out, "quests.png"))
+    reply = control.send("click-button Claim")
+    print("claim:", reply)
+    time.sleep(3)
+    control.send("screenshot " + os.path.join(out, "quests-claimed.png"))
+    control.send("key escape tap")
+    time.sleep(1)
+    return bool(reply.get("ok"))
+
+
 def main():
     game, home, out = sys.argv[1:4]
     os.makedirs(home, exist_ok=True)
@@ -237,6 +252,8 @@ def main():
             time.sleep(5)
         if not kinetica(control, out):
             failed.append("kinetica")
+        if not chronicles(control, out):
+            failed.append("chronicles")
         control.send("options mods")
         time.sleep(2)
         if not control.send("screenshot " + os.path.join(out, "mods.png")).get("ok"):
@@ -256,6 +273,13 @@ def main():
         print(path, open(path, encoding="utf-8").read())
     if not kept:
         failed.append("motor speed kept")
+    # The first quest's rewards were taken, in the world's folder.
+    quests = [os.path.join(d, f) for d, _, files in os.walk(home) for f in files
+              if os.path.basename(d) == "chronicles" and f.endswith(".json")]
+    for path in quests:
+        print(path, open(path, encoding="utf-8").read())
+    if not any("welcome" in json.load(open(p, encoding="utf-8")).get("claimed", []) for p in quests):
+        failed.append("quest claimed")
     if failed:
         raise SystemExit("failed: " + ", ".join(failed))
     print("the scene is done")

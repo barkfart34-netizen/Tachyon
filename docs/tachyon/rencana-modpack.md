@@ -257,3 +257,6 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
     Insinyur).
   - Muncul di hutan, taiga, rimba, bukit, sabana, dan dataran, rata-rata satu tiap 28 chunk.
   - Template NBT-nya ditulis oleh `tachyon/art/lost_realms.py`.
+- **29 Oktober 2026, Chronicles 0.1 (buku quest).**
+  - Ada 10 quest dalam dua bab, *Era Mesin* dan *Logam*. Buku dibuka dengan tombol J.
+  - Progres disimpan oleh server per pemain, dan hadiahnya diberikan oleh server (aman untuk LAN).

@@ -47,6 +47,27 @@ Lapisan yang memberi blok modpack perilaku di luar template vanilla-nya. Rencana
 - **State** disimpan per thread (`thread_local`). Jendela game dan thread server masing-masing
   berjalan di thread sendiri.
 
+## Quest (Chronicles)
+
+- **Data:** daftar quest ada di `chronicles/data/chronicles/tachyon/quests.json`, ditulis oleh
+  `tachyon/art/chronicles.py`. Isinya bab, quest, item yang harus dibawa sekaligus, hadiah, dan quest
+  yang harus selesai dulu. Nama dan teksnya ada di file bahasa mod itu.
+- **Pemilik dunia** (`game/tachyon_engine/chronicles.rs`):
+  - Menyimpan progres tiap pemain di `<dunia>/tachyon/chronicles/<uuid>.json`.
+  - Setiap detik memeriksa item para pemain dan menandai quest yang selesai.
+  - Memberi hadiah saat diklaim, lalu mengirim progres lewat payload `tachyon:quests`.
+- **Jendela pemain:**
+  - Tombol **J** (bisa diganti di menu Mods) membuka buku quest dan meminta progres
+    (`tachyon:quests_hello`).
+  - Tombol Klaim mengirim `tachyon:quest_claim`.
+  - Quest yang baru selesai diberitahukan di chat.
+- **Layar:** build Tachyon tidak memakai mod WebAssembly, jadi `Screen::Mod` dipakai untuk buku quest.
+  Fungsi kosongnya di `game/mods.rs` diarahkan ke `tachyon_screen_*`.
+- **Belum ada:**
+  - tombol sentuh di Android;
+  - tugas selain membawa item (membuat, menemukan struktur, mengalahkan mob);
+  - quest untuk pemain lokal dalam mode in-frame.
+
 ## Bijih di dunia
 
 - Content mod boleh menambah `configured_feature` dan `placed_feature`, tetapi tidak boleh mengubah
@@ -68,6 +89,8 @@ Satu baris per titik, supaya merge dari upstream tetap mudah:
 | `game/remote.rs` | Payload `tachyon:*` menuju `tachyon_payload` |
 | `game/mods.rs` | `content_root` memasang konten bawaan |
 | `mod_content.rs` | `horizon:beside`: placed feature dari mod ikut masuk ke bioma |
+| `game/lan_actions.rs` | Payload `tachyon:*` dari pemain menuju `tachyon_guest_payload` |
+| `game/mods.rs` | Tanpa fitur `mods`, layar mod adalah buku quest (`tachyon_screen_*`) |
 
 ## Belum ada
 

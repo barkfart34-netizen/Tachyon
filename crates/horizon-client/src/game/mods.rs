@@ -276,13 +276,22 @@ impl Game<'_> {
     pub(super) fn mods_chat(&mut self, _line: &str) {}
     pub(super) fn draw_mod_panels(&self, _batch: &mut HudBatch, _corners: &mut Corners) {}
     pub(super) fn open_mod_screen(&mut self, _owner: usize, _settings: bool) {}
-    pub(super) fn close_mod_screen(&mut self, _tell: bool) {}
-    pub(super) fn draw_mod_screen(&mut self, _batch: &mut HudBatch) {}
-    pub(super) fn mod_screen_click(&mut self, _button: winit::event::MouseButton) {}
-    pub(super) fn mod_screen_key(&mut self, _key: winit::keyboard::KeyCode) -> bool {
-        false
+    // Without WebAssembly mods, the mod screen is Tachyon's (its quest book).
+    pub(super) fn close_mod_screen(&mut self, _tell: bool) {
+        self.tachyon_screen_close()
     }
-    pub(super) fn mod_screen_scroll(&mut self, _delta: f32) {}
+    pub(super) fn draw_mod_screen(&mut self, batch: &mut HudBatch) {
+        self.tachyon_screen_draw(batch)
+    }
+    pub(super) fn mod_screen_click(&mut self, button: winit::event::MouseButton) {
+        self.tachyon_screen_click(button)
+    }
+    pub(super) fn mod_screen_key(&mut self, key: winit::keyboard::KeyCode) -> bool {
+        self.tachyon_screen_key(key)
+    }
+    pub(super) fn mod_screen_scroll(&mut self, delta: f32) {
+        self.tachyon_screen_scroll(delta)
+    }
 }
 
 #[cfg(feature = "mods")]

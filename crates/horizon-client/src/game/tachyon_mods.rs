@@ -43,6 +43,7 @@ impl Game<'_> {
     }
     pub(super) fn tachyon_key(&mut self, key: &str, pressed: bool) {
         zoom_key(self, key, pressed);
+        self.tachyon_quests_key(key, pressed);
     }
     pub(super) fn tachyon_wheel(&self, steps: f32, claimed: &mut bool) {
         if self.native_on(zoom::ID) && zoom::wheel(steps) {
@@ -125,6 +126,20 @@ impl Game<'_> {
                 zoom::DEFAULT_KEY.into(),
             ]],
             ..row(zoom::ID, "Zoom", zoom::VERSION, zoom::DESCRIPTION)
+        });
+        use super::tachyon_engine::chronicles;
+        mods.push(NativeMod {
+            keys: vec![[
+                chronicles::KEY.into(),
+                "Quest book".into(),
+                chronicles::DEFAULT_KEY.into(),
+            ]],
+            ..row(
+                chronicles::ID,
+                "Chronicles",
+                "0.1.0",
+                "The modpack's quests: a book of what to do next, and rewards.",
+            )
         });
     }
     pub(super) fn tachyon_settings(&mut self, mod_id: &str, buttons: &mut Vec<String>) {

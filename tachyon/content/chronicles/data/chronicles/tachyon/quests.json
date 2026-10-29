@@ -1,0 +1,224 @@
+{
+  "chapters": [
+    {
+      "id": "machine_age",
+      "icon": "kinetica:cogwheel",
+      "quests": [
+        {
+          "id": "welcome",
+          "icon": "minecraft:writable_book",
+          "after": [],
+          "tasks": [],
+          "rewards": [
+            {
+              "item": "minecraft:bread",
+              "count": 6
+            },
+            {
+              "item": "minecraft:torch",
+              "count": 16
+            }
+          ]
+        },
+        {
+          "id": "first_alloy",
+          "icon": "kinetica:ferrostone_alloy",
+          "after": [
+            "welcome"
+          ],
+          "tasks": [
+            {
+              "item": "kinetica:ferrostone_alloy",
+              "count": 4
+            }
+          ],
+          "rewards": [
+            {
+              "item": "kinetica:shaft",
+              "count": 6
+            },
+            {
+              "item": "minecraft:iron_nugget",
+              "count": 9
+            }
+          ]
+        },
+        {
+          "id": "shafts_and_cogs",
+          "icon": "kinetica:shaft",
+          "after": [
+            "first_alloy"
+          ],
+          "tasks": [
+            {
+              "item": "kinetica:shaft",
+              "count": 8
+            },
+            {
+              "item": "kinetica:cogwheel",
+              "count": 2
+            }
+          ],
+          "rewards": [
+            {
+              "item": "kinetica:large_cogwheel",
+              "count": 2
+            }
+          ]
+        },
+        {
+          "id": "hand_power",
+          "icon": "kinetica:hand_crank",
+          "after": [
+            "shafts_and_cogs"
+          ],
+          "tasks": [
+            {
+              "item": "kinetica:hand_crank",
+              "count": 1
+            }
+          ],
+          "rewards": [
+            {
+              "item": "kinetica:cogwheel",
+              "count": 4
+            }
+          ]
+        },
+        {
+          "id": "goggles",
+          "icon": "kinetica:engineers_goggles",
+          "after": [
+            "shafts_and_cogs"
+          ],
+          "tasks": [
+            {
+              "item": "kinetica:engineers_goggles",
+              "count": 1
+            }
+          ],
+          "rewards": [
+            {
+              "item": "kinetica:ferrostone_alloy",
+              "count": 8
+            }
+          ]
+        },
+        {
+          "id": "water_power",
+          "icon": "kinetica:water_wheel",
+          "after": [
+            "hand_power"
+          ],
+          "tasks": [
+            {
+              "item": "kinetica:water_wheel",
+              "count": 1
+            }
+          ],
+          "rewards": [
+            {
+              "item": "kinetica:gearbox",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "id": "wind_power",
+          "icon": "kinetica:windmill",
+          "after": [
+            "hand_power"
+          ],
+          "tasks": [
+            {
+              "item": "kinetica:windmill",
+              "count": 1
+            }
+          ],
+          "rewards": [
+            {
+              "item": "kinetica:clutch",
+              "count": 1
+            },
+            {
+              "item": "kinetica:gearshift",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "id": "control",
+          "icon": "kinetica:gearshift",
+          "after": [
+            "water_power",
+            "wind_power"
+          ],
+          "tasks": [
+            {
+              "item": "kinetica:gearbox",
+              "count": 1
+            },
+            {
+              "item": "kinetica:clutch",
+              "count": 1
+            },
+            {
+              "item": "kinetica:gearshift",
+              "count": 1
+            }
+          ],
+          "rewards": [
+            {
+              "item": "kinetica:ferrostone_casing",
+              "count": 8
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "metals",
+      "icon": "kinetica:tin_ingot",
+      "quests": [
+        {
+          "id": "tin",
+          "icon": "kinetica:raw_tin",
+          "after": [
+            "welcome"
+          ],
+          "tasks": [
+            {
+              "item": "kinetica:tin_ingot",
+              "count": 8
+            }
+          ],
+          "rewards": [
+            {
+              "item": "minecraft:copper_ingot",
+              "count": 12
+            }
+          ]
+        },
+        {
+          "id": "bronze",
+          "icon": "kinetica:bronze_ingot",
+          "after": [
+            "tin"
+          ],
+          "tasks": [
+            {
+              "item": "kinetica:bronze_ingot",
+              "count": 8
+            }
+          ],
+          "rewards": [
+            {
+              "item": "kinetica:engineers_goggles",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -15,6 +15,7 @@
 //! block entity phase, [`Game::tachyon_tick`] from the native tick hook,
 //! [`Game::tachyon_payload`] for a payload, [`Game::tachyon_render`] with the
 //! block entities, [`Game::tachyon_engine_hud`] from the HUD hook.
+pub(super) mod chronicles;
 pub(crate) mod kinetic;
 
 use super::Game;
@@ -691,6 +692,7 @@ impl Game<'_> {
 
     /// Each tick of every game: a client's index follows its world.
     pub(super) fn tachyon_tick(&mut self) {
+        self.tachyon_quests_tick();
         if self.remote.is_none() {
             return;
         }
@@ -713,6 +715,10 @@ impl Game<'_> {
 
     /// A `tachyon:*` payload from the server.
     pub(super) fn tachyon_payload(&mut self, channel: &str, data: &[u8]) {
+        if channel == chronicles::PROGRESS {
+            self.tachyon_quests_payload(data);
+            return;
+        }
         if channel != KINETIC {
             return;
         }
