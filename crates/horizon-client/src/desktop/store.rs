@@ -248,14 +248,24 @@ mod tests {
         let mut store = Store {
             installations: Vec::new(),
             selected: "gone".into(),
-            accounts: vec![Account { name: "x".into() }, Account { name: "Alex".into() }],
+            accounts: vec![
+                Account { name: "x".into() },
+                Account {
+                    name: "Alex".into(),
+                },
+            ],
             active: "Steve".into(),
             ..Store::default()
         };
         store.mend();
         assert_eq!(store.installations.len(), 1);
         assert_eq!(store.selected, DEFAULT_ID);
-        assert_eq!(store.accounts, vec![Account { name: "Alex".into() }]);
+        assert_eq!(
+            store.accounts,
+            vec![Account {
+                name: "Alex".into()
+            }]
+        );
         assert_eq!(store.active, "Alex");
     }
 
@@ -270,7 +280,10 @@ mod tests {
 
     #[test]
     fn offline_uuids_have_vanilla_dashes() {
-        let text = Account { name: "Steve".into() }.uuid_text();
+        let text = Account {
+            name: "Steve".into(),
+        }
+        .uuid_text();
         assert_eq!(text.len(), 36);
         assert_eq!(text.matches('-').count(), 4);
     }

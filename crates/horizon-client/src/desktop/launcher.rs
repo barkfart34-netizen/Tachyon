@@ -260,7 +260,8 @@ fn skin_face(root: &Path, skin: &str) -> Option<Vec<u8>> {
         for x in 0..8 {
             let (base, hat) = (px(8 + x, 8 + y), px(40 + x, 8 + y));
             let a = u32::from(hat[3]);
-            let over = |i: usize| ((u32::from(hat[i]) * a + u32::from(base[i]) * (255 - a)) / 255) as u8;
+            let over =
+                |i: usize| ((u32::from(hat[i]) * a + u32::from(base[i]) * (255 - a)) / 255) as u8;
             face.extend([over(0), over(1), over(2), 255]);
         }
     }
@@ -320,7 +321,10 @@ impl Launcher {
     /// Installs a file dropped on the window into the selected installation.
     fn import(&mut self, file: PathBuf) {
         if self.importing.is_some() {
-            self.note("Wait for the current import to finish, then drop the file again.", true);
+            self.note(
+                "Wait for the current import to finish, then drop the file again.",
+                true,
+            );
             return;
         }
         let installation = self.store.installations[self.store.selected_index()].clone();
@@ -329,7 +333,11 @@ impl Launcher {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        log::info!("Tachyon launcher: importing {} into {}", file.display(), home.display());
+        log::info!(
+            "Tachyon launcher: importing {} into {}",
+            file.display(),
+            home.display()
+        );
         let line = Arc::new(std::sync::Mutex::new(format!(
             "Importing {name} into {}",
             installation.name
@@ -471,7 +479,10 @@ impl Launcher {
             return;
         }
         if let Err(e) = self.store.save(&self.paths.data) {
-            self.note(format!("The launcher's settings could not be saved: {e}"), true);
+            self.note(
+                format!("The launcher's settings could not be saved: {e}"),
+                true,
+            );
         }
     }
 
@@ -537,7 +548,10 @@ impl Launcher {
         let Some(account) = self.store.account().cloned() else {
             self.set_page(Page::Accounts);
             self.focus = Some(Field::Account);
-            self.note("Add an offline account first: a name is all it takes.", false);
+            self.note(
+                "Add an offline account first: a name is all it takes.",
+                false,
+            );
             return;
         };
         let Some(resources) = self.paths.resources.clone() else {
@@ -673,7 +687,13 @@ impl Launcher {
         let Some(edit) = self.edit.take() else {
             return;
         };
-        let size = |s: &str| s.trim().parse::<u32>().ok().filter(|n| (200..=16384).contains(n)).unwrap_or(0);
+        let size = |s: &str| {
+            s.trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|n| (200..=16384).contains(n))
+                .unwrap_or(0)
+        };
         let mut installation = match edit.index.and_then(|i| self.store.installations.get(i)) {
             Some(i) => i.clone(),
             None => Installation {
@@ -691,7 +711,9 @@ impl Launcher {
         installation.width = size(&edit.width);
         installation.height = size(&edit.height);
         match edit.index {
-            Some(i) if i < self.store.installations.len() => self.store.installations[i] = installation,
+            Some(i) if i < self.store.installations.len() => {
+                self.store.installations[i] = installation
+            }
             _ => self.store.installations.push(installation),
         }
         self.focus = None;
@@ -799,7 +821,8 @@ impl Launcher {
         let shortcut = (self.modifiers.control_key() && !self.modifiers.alt_key())
             || self.modifiers.super_key();
         if shortcut {
-            let letter = horizon_client::clipboard::shortcut_letter(&event.logical_key, event.physical_key);
+            let letter =
+                horizon_client::clipboard::shortcut_letter(&event.logical_key, event.physical_key);
             if letter == Some('v') {
                 use horizon_client::clipboard::Clipboard as _;
                 let pasted = horizon_client::clipboard::SystemClipboard::default().get();
@@ -903,7 +926,14 @@ impl Launcher {
         let text = self.text(field).to_owned();
         if text.is_empty() && !focused {
             let shown = ui.c.fit(placeholder, Face::Regular, size, room);
-            ui.text(r.x + 14.0, y, &shown, Face::Regular, size, hex(P.muted, 1.0));
+            ui.text(
+                r.x + 14.0,
+                y,
+                &shown,
+                Face::Regular,
+                size,
+                hex(P.muted, 1.0),
+            );
             return;
         }
         // A long value shows its end, where the caret is.
@@ -974,7 +1004,12 @@ impl Launcher {
             ui.c.rect(
                 band,
                 0.0,
-                mix(brand::STREAK[0], brand::STREAK[1], f, alpha + shimmer * (1.0 - f)),
+                mix(
+                    brand::STREAK[0],
+                    brand::STREAK[1],
+                    f,
+                    alpha + shimmer * (1.0 - f),
+                ),
             );
         }
     }
@@ -1063,15 +1098,33 @@ impl Launcher {
             ui.c.rect(card, 12.0, hex(P.plate_soft, 1.0));
         }
         let account = self.store.account().cloned();
-        self.avatar(ui, account.as_ref(), Rect::new(card.x + 12.0, card.y + 14.0, 36.0, 36.0));
+        self.avatar(
+            ui,
+            account.as_ref(),
+            Rect::new(card.x + 12.0, card.y + 14.0, 36.0, 36.0),
+        );
         let tx = card.x + 60.0;
         let (name, detail) = match &account {
             Some(a) => (a.name.as_str(), "Offline account"),
             None => ("No account", "Add one to play"),
         };
         let name = ui.c.fit(name, Face::Medium, 15.0, card.right() - tx - 8.0);
-        ui.text(tx, card.y + 13.0, &name, Face::Medium, 15.0, hex(P.ink, 1.0));
-        ui.text(tx, card.y + 35.0, detail, Face::Regular, 12.0, hex(P.muted, 1.0));
+        ui.text(
+            tx,
+            card.y + 13.0,
+            &name,
+            Face::Medium,
+            15.0,
+            hex(P.ink, 1.0),
+        );
+        ui.text(
+            tx,
+            card.y + 35.0,
+            detail,
+            Face::Regular,
+            12.0,
+            hex(P.muted, 1.0),
+        );
         ui.c.rect(Rect::new(x, 92.0, w, 1.0), 0.0, hex(P.rule, 1.0));
         // The game.
         Self::label(ui, x + 10.0, 110.0, "GAMES");
@@ -1082,7 +1135,11 @@ impl Launcher {
         }
         let selected = self.page != Page::Settings;
         if selected || hover {
-            ui.c.rect(item, 12.0, hex(if selected { P.plate } else { P.plate_soft }, 1.0));
+            ui.c.rect(
+                item,
+                12.0,
+                hex(if selected { P.plate } else { P.plate_soft }, 1.0),
+            );
         }
         if selected {
             ui.c.gradient(
@@ -1093,7 +1150,14 @@ impl Launcher {
             );
         }
         self.icon(ui, Rect::new(item.x + 14.0, item.y + 12.0, 36.0, 36.0));
-        ui.text(item.x + 62.0, item.y + 11.0, brand::NAME, Face::Medium, 15.0, hex(P.ink, 1.0));
+        ui.text(
+            item.x + 62.0,
+            item.y + 11.0,
+            brand::NAME,
+            Face::Medium,
+            15.0,
+            hex(P.ink, 1.0),
+        );
         ui.text(
             item.x + 62.0,
             item.y + 33.0,
@@ -1110,7 +1174,11 @@ impl Launcher {
         }
         let on = self.page == Page::Settings;
         if on || hover {
-            ui.c.rect(settings, 12.0, hex(if on { P.plate } else { P.plate_soft }, 1.0));
+            ui.c.rect(
+                settings,
+                12.0,
+                hex(if on { P.plate } else { P.plate_soft }, 1.0),
+            );
         }
         ui.text(
             settings.x + 16.0,
@@ -1125,7 +1193,11 @@ impl Launcher {
     }
 
     fn header(&mut self, ui: &mut Ui, main: Rect) {
-        ui.c.rect(Rect::new(main.x, 0.0, main.w, HEADER), 0.0, hex(P.page, 1.0));
+        ui.c.rect(
+            Rect::new(main.x, 0.0, main.w, HEADER),
+            0.0,
+            hex(P.page, 1.0),
+        );
         let x = main.x + 40.0;
         if self.page == Page::Settings {
             ui.text(x, 34.0, "Settings", Face::Medium, 28.0, hex(P.ink, 1.0));
@@ -1160,7 +1232,11 @@ impl Launcher {
                 tx += lw + 34.0;
             }
         }
-        ui.c.rect(Rect::new(main.x, HEADER - 1.0, main.w, 1.0), 0.0, hex(P.rule, 1.0));
+        ui.c.rect(
+            Rect::new(main.x, HEADER - 1.0, main.w, 1.0),
+            0.0,
+            hex(P.rule, 1.0),
+        );
     }
 
     /// The panorama, its four faces side by side, turning slowly.
@@ -1185,7 +1261,12 @@ impl Launcher {
             let (x0, x1) = (fx.max(hero.x), (fx + f).min(hero.right()));
             if x1 > x0 {
                 let (u0, u1) = ((x0 - fx) / f, (x1 - fx) / f);
-                let src = [e + u0 * (1.0 - 2.0 * e), e, e + u1 * (1.0 - 2.0 * e), 1.0 - e];
+                let src = [
+                    e + u0 * (1.0 - 2.0 * e),
+                    e,
+                    e + u1 * (1.0 - 2.0 * e),
+                    1.0 - e,
+                ];
                 ui.c.image(
                     self.panorama[i % n],
                     Rect::new(x0, hero.y, x1 - x0, hero.h),
@@ -1223,7 +1304,14 @@ impl Launcher {
         );
         let x = hero.x + 48.0;
         let mut y = hero.bottom() - 150.0;
-        ui.text(x, y, "NATIVE  ·  OFFLINE  ·  RUST", Face::Mono, 12.0, hex(P.accent, 1.0));
+        ui.text(
+            x,
+            y,
+            "NATIVE  ·  OFFLINE  ·  RUST",
+            Face::Mono,
+            12.0,
+            hex(P.accent, 1.0),
+        );
         y += 24.0;
         ui.text(
             x,
@@ -1244,7 +1332,10 @@ impl Launcher {
             15.0,
             hex(P.ink_soft, 1.0),
         );
-        self.bottom_bar(ui, Rect::new(content.x, content.bottom() - BAR, content.w, BAR));
+        self.bottom_bar(
+            ui,
+            Rect::new(content.x, content.bottom() - BAR, content.w, BAR),
+        );
     }
 
     fn bottom_bar(&mut self, ui: &mut Ui, bar: Rect) {
@@ -1263,18 +1354,38 @@ impl Launcher {
             hex(if hover || open { P.plate } else { P.plate_soft }, 1.0),
         );
         let installation = self.store.installations[self.store.selected_index()].clone();
-        self.icon(ui, Rect::new(selector.x + 14.0, selector.y + 14.0, 32.0, 32.0));
+        self.icon(
+            ui,
+            Rect::new(selector.x + 14.0, selector.y + 14.0, 32.0, 32.0),
+        );
         let tx = selector.x + 58.0;
         let room = selector.right() - tx - 34.0;
         let name = ui.c.fit(&installation.name, Face::Medium, 15.0, room);
-        ui.text(tx, selector.y + 11.0, &name, Face::Medium, 15.0, hex(P.ink, 1.0));
+        ui.text(
+            tx,
+            selector.y + 11.0,
+            &name,
+            Face::Medium,
+            15.0,
+            hex(P.ink, 1.0),
+        );
         let detail = if installation.last_played > 0 {
-            format!("26.3  ·  {}", store::ago(installation.last_played, store::now()))
+            format!(
+                "26.3  ·  {}",
+                store::ago(installation.last_played, store::now())
+            )
         } else {
             "26.3  ·  Never played".to_owned()
         };
         let detail = ui.c.fit(&detail, Face::Regular, 12.0, room);
-        ui.text(tx, selector.y + 33.0, &detail, Face::Regular, 12.0, hex(P.muted, 1.0));
+        ui.text(
+            tx,
+            selector.y + 33.0,
+            &detail,
+            Face::Regular,
+            12.0,
+            hex(P.muted, 1.0),
+        );
         Self::chevron(
             ui,
             selector.right() - 20.0,
@@ -1329,7 +1440,8 @@ impl Launcher {
             21.0,
             ink,
         );
-        let sub = ui.c.fit(&installation.name, Face::Mono, 11.0, play.w - 32.0);
+        let sub =
+            ui.c.fit(&installation.name, Face::Mono, 11.0, play.w - 32.0);
         ui.centred(
             Rect::new(play.x, play.y + 36.0, play.w, 18.0),
             &sub,
@@ -1342,7 +1454,12 @@ impl Launcher {
         }
         // The player, on the right.
         let account = self.store.account().cloned();
-        let who = Rect::new(bar.right() - 28.0 - 210.0, bar.y + (BAR - 56.0) / 2.0, 210.0, 56.0);
+        let who = Rect::new(
+            bar.right() - 28.0 - 210.0,
+            bar.y + (BAR - 56.0) / 2.0,
+            210.0,
+            56.0,
+        );
         let (hover, clicked) = self.clickable(ui, who);
         if clicked {
             self.set_page(Page::Accounts);
@@ -1355,13 +1472,27 @@ impl Launcher {
         let right = avatar.x - 12.0;
         let caption = "PLAYING AS";
         let cw = ui.c.measure(caption, Face::Mono, 10.0);
-        ui.text(right - cw, who.y + 11.0, caption, Face::Mono, 10.0, hex(P.muted, 1.0));
+        ui.text(
+            right - cw,
+            who.y + 11.0,
+            caption,
+            Face::Mono,
+            10.0,
+            hex(P.muted, 1.0),
+        );
         let (name, color) = match &account {
             Some(a) => (a.name.clone(), P.ink),
             None => ("Add an account".to_owned(), P.accent),
         };
         let nw = ui.c.measure(&name, Face::Medium, 15.0);
-        ui.text(right - nw, who.y + 27.0, &name, Face::Medium, 15.0, hex(color, 1.0));
+        ui.text(
+            right - nw,
+            who.y + 27.0,
+            &name,
+            Face::Medium,
+            15.0,
+            hex(color, 1.0),
+        );
     }
 
     /// The installation menu above the selector: its frame and items (the
@@ -1434,10 +1565,24 @@ impl Launcher {
             };
             self.icon(ui, Rect::new(r.x + 10.0, r.y + 11.0, 28.0, 28.0));
             let name = ui.c.fit(&installation.name, Face::Medium, 14.0, r.w - 90.0);
-            ui.text(r.x + 50.0, r.y + 7.0, &name, Face::Medium, 14.0, hex(P.ink, 1.0));
+            ui.text(
+                r.x + 50.0,
+                r.y + 7.0,
+                &name,
+                Face::Medium,
+                14.0,
+                hex(P.ink, 1.0),
+            );
             let folder = installation.folder(&self.paths.data).display().to_string();
             let folder = ui.c.fit(&folder, Face::Regular, 11.0, r.w - 90.0);
-            ui.text(r.x + 50.0, r.y + 27.0, &folder, Face::Regular, 11.0, hex(P.muted, 1.0));
+            ui.text(
+                r.x + 50.0,
+                r.y + 27.0,
+                &folder,
+                Face::Regular,
+                11.0,
+                hex(P.muted, 1.0),
+            );
             if i == selected {
                 let dot = Rect::new(r.right() - 22.0, r.y + r.h / 2.0 - 4.0, 8.0, 8.0);
                 ui.c.rect(dot, 4.0, hex(P.accent, 1.0));
@@ -1471,9 +1616,20 @@ impl Launcher {
         y += 30.0;
         // Where dropped files go.
         let zone = Rect::new(x, y, w, 64.0);
-        ui.c.rect(zone, 14.0, hex(P.accent, if self.dropping { 0.12 } else { 0.04 }));
-        ui.c.ring(zone, 14.0, 1.0, hex(P.accent, if self.dropping { 0.9 } else { 0.35 }));
-        let selected_name = self.store.installations[self.store.selected_index()].name.clone();
+        ui.c.rect(
+            zone,
+            14.0,
+            hex(P.accent, if self.dropping { 0.12 } else { 0.04 }),
+        );
+        ui.c.ring(
+            zone,
+            14.0,
+            1.0,
+            hex(P.accent, if self.dropping { 0.9 } else { 0.35 }),
+        );
+        let selected_name = self.store.installations[self.store.selected_index()]
+            .name
+            .clone();
         ui.text(
             zone.x + 20.0,
             zone.y + 13.0,
@@ -1483,7 +1639,14 @@ impl Launcher {
             hex(P.ink, 1.0),
         );
         let kinds = ui.c.fit(KINDS, Face::Regular, 12.0, zone.w - 40.0);
-        ui.text(zone.x + 20.0, zone.y + 36.0, &kinds, Face::Regular, 12.0, hex(P.muted, 1.0));
+        ui.text(
+            zone.x + 20.0,
+            zone.y + 36.0,
+            &kinds,
+            Face::Regular,
+            12.0,
+            hex(P.muted, 1.0),
+        );
         y += 80.0;
         let now = store::now();
         let selected = self.store.selected_index();
@@ -1516,7 +1679,14 @@ impl Launcher {
             let folder = installation.folder(&self.paths.data).display().to_string();
             let detail = format!("Java Edition 26.3  ·  {played}  ·  {folder}");
             let detail = ui.c.fit(&detail, Face::Regular, 12.0, room);
-            ui.text(tx, row.y + 44.0, &detail, Face::Regular, 12.0, hex(P.muted, 1.0));
+            ui.text(
+                tx,
+                row.y + 44.0,
+                &detail,
+                Face::Regular,
+                12.0,
+                hex(P.muted, 1.0),
+            );
             let by = row.y + (row.h - 36.0) / 2.0;
             let mut bx = row.right() - 16.0;
             bx -= 90.0;
@@ -1552,7 +1722,12 @@ impl Launcher {
         ui.text(x, y, title, Face::Medium, 22.0, hex(P.ink, 1.0));
         y += 58.0;
         Self::label(ui, x, y, "NAME");
-        self.field(ui, Rect::new(x, y + 18.0, w.min(440.0), 44.0), Field::Name, "Unnamed installation");
+        self.field(
+            ui,
+            Rect::new(x, y + 18.0, w.min(440.0), 44.0),
+            Field::Name,
+            "Unnamed installation",
+        );
         y += 88.0;
         Self::label(ui, x, y, "GAME DIRECTORY");
         let own = existing.clone().unwrap_or_else(|| Installation {
@@ -1571,9 +1746,26 @@ impl Launcher {
         );
         y += 108.0;
         Self::label(ui, x, y, "RESOLUTION");
-        self.field(ui, Rect::new(x, y + 18.0, 120.0, 44.0), Field::Width, "Auto");
-        ui.text(x + 132.0, y + 30.0, "×", Face::Regular, 16.0, hex(P.muted, 1.0));
-        self.field(ui, Rect::new(x + 156.0, y + 18.0, 120.0, 44.0), Field::Height, "Auto");
+        self.field(
+            ui,
+            Rect::new(x, y + 18.0, 120.0, 44.0),
+            Field::Width,
+            "Auto",
+        );
+        ui.text(
+            x + 132.0,
+            y + 30.0,
+            "×",
+            Face::Regular,
+            16.0,
+            hex(P.muted, 1.0),
+        );
+        self.field(
+            ui,
+            Rect::new(x + 156.0, y + 18.0, 120.0, 44.0),
+            Field::Height,
+            "Auto",
+        );
         ui.text(
             x + 292.0,
             y + 32.0,
@@ -1586,12 +1778,24 @@ impl Launcher {
         if self.button(ui, Rect::new(x, y, 120.0, 40.0), "Save", true, true) {
             self.save_edit();
         }
-        if self.button(ui, Rect::new(x + 132.0, y, 110.0, 40.0), "Cancel", false, true) {
+        if self.button(
+            ui,
+            Rect::new(x + 132.0, y, 110.0, 40.0),
+            "Cancel",
+            false,
+            true,
+        ) {
             self.edit = None;
             self.focus = None;
         }
         if let (Some(i), Some(installation)) = (index, &existing) {
-            if self.button(ui, Rect::new(x + 254.0, y, 130.0, 40.0), "Open folder", false, true) {
+            if self.button(
+                ui,
+                Rect::new(x + 254.0, y, 130.0, 40.0),
+                "Open folder",
+                false,
+                true,
+            ) {
                 super::open_folder(&installation.folder(&self.paths.data));
             }
             if installation.id != store::DEFAULT_ID
@@ -1605,7 +1809,9 @@ impl Launcher {
                 self.focus = None;
                 self.save();
                 self.note(
-                    format!("{name} is gone from the list. Its folder and worlds are still on disk."),
+                    format!(
+                        "{name} is gone from the list. Its folder and worlds are still on disk."
+                    ),
                     false,
                 );
             }
@@ -1651,11 +1857,29 @@ impl Launcher {
                 14.0,
                 hex(if hover { P.plate_soft } else { P.surface }, 1.0),
             );
-            self.avatar(ui, Some(account), Rect::new(row.x + 18.0, row.y + 17.0, 40.0, 40.0));
+            self.avatar(
+                ui,
+                Some(account),
+                Rect::new(row.x + 18.0, row.y + 17.0, 40.0, 40.0),
+            );
             let tx = row.x + 76.0;
-            ui.text(tx, row.y + 16.0, &account.name, Face::Medium, 16.0, hex(P.ink, 1.0));
+            ui.text(
+                tx,
+                row.y + 16.0,
+                &account.name,
+                Face::Medium,
+                16.0,
+                hex(P.ink, 1.0),
+            );
             let detail = format!("Offline  ·  {}", account.uuid_text());
-            ui.text(tx, row.y + 42.0, &detail, Face::Mono, 11.0, hex(P.muted, 1.0));
+            ui.text(
+                tx,
+                row.y + 42.0,
+                &detail,
+                Face::Mono,
+                11.0,
+                hex(P.muted, 1.0),
+            );
             let by = row.y + (row.h - 36.0) / 2.0;
             let remove_r = Rect::new(row.right() - 16.0 - 96.0, by, 96.0, 36.0);
             if self.button(ui, remove_r, "Remove", false, true) {
@@ -1677,9 +1901,20 @@ impl Launcher {
         }
         y += 18.0;
         Self::label(ui, x, y, "ADD AN OFFLINE ACCOUNT");
-        self.field(ui, Rect::new(x, y + 18.0, 320.0, 44.0), Field::Account, "Player name");
+        self.field(
+            ui,
+            Rect::new(x, y + 18.0, 320.0, 44.0),
+            Field::Account,
+            "Player name",
+        );
         let valid = store::valid_name(self.account_input.trim());
-        if self.button(ui, Rect::new(x + 332.0, y + 18.0, 100.0, 44.0), "Add", true, valid) {
+        if self.button(
+            ui,
+            Rect::new(x + 332.0, y + 18.0, 100.0, 44.0),
+            "Add",
+            true,
+            valid,
+        ) {
             self.add_account();
         }
         ui.text(
@@ -1717,7 +1952,14 @@ impl Launcher {
                 ui.c.rect(pill, 10.0, hex(P.accent, 0.14));
                 ui.centred(pill, "LATEST", Face::Mono, 10.0, hex(P.accent, 1.0));
             }
-            ui.text(card.x + 24.0, card.y + 40.0, title, Face::Medium, 18.0, hex(P.ink, 1.0));
+            ui.text(
+                card.x + 24.0,
+                card.y + 40.0,
+                title,
+                Face::Medium,
+                18.0,
+                hex(P.ink, 1.0),
+            );
             let mut ly = card.y + 76.0;
             for point in lines {
                 ui.c.rect(
@@ -1726,7 +1968,14 @@ impl Launcher {
                     hex(P.accent, 1.0),
                 );
                 for line in point {
-                    ui.text(card.x + 44.0, ly, &line, Face::Regular, 14.0, hex(P.ink_soft, 1.0));
+                    ui.text(
+                        card.x + 44.0,
+                        ly,
+                        &line,
+                        Face::Regular,
+                        14.0,
+                        hex(P.ink_soft, 1.0),
+                    );
                     ly += 21.0;
                 }
                 ly += 8.0;
@@ -1825,9 +2074,17 @@ impl Launcher {
             return None;
         }
         let w = 460.0f32.min(content.w - 48.0);
-        let lines = ui.c.wrap(&note.text, Face::Regular, 14.0, w - 64.0).len().max(1);
+        let lines =
+            ui.c.wrap(&note.text, Face::Regular, 14.0, w - 64.0)
+                .len()
+                .max(1);
         let h = 28.0 + lines as f32 * 21.0;
-        Some(Rect::new(content.right() - w - 24.0, content.y + 16.0, w, h))
+        Some(Rect::new(
+            content.right() - w - 24.0,
+            content.y + 16.0,
+            w,
+            h,
+        ))
     }
 
     fn draw_note(&mut self, ui: &mut Ui, r: Rect) {
@@ -1842,13 +2099,24 @@ impl Launcher {
         let shadow = Rect::new(r.x - 4.0, r.y + 2.0, r.w + 8.0, r.h + 10.0);
         ui.c.rect(shadow, 16.0, hex(0x000000, 0.4));
         ui.c.rect(r, 12.0, hex(P.plate, 1.0));
-        ui.c.rect(Rect::new(r.x + 12.0, r.y + 14.0, 3.0, r.h - 28.0), 1.5, hex(color, 1.0));
+        ui.c.rect(
+            Rect::new(r.x + 12.0, r.y + 14.0, 3.0, r.h - 28.0),
+            1.5,
+            hex(color, 1.0),
+        );
         let mut y = r.y + 14.0;
         for line in ui.c.wrap(&text, Face::Regular, 14.0, r.w - 64.0) {
             ui.text(r.x + 28.0, y, &line, Face::Regular, 14.0, hex(P.ink, 1.0));
             y += 21.0;
         }
-        ui.text(r.right() - 26.0, r.y + 12.0, "×", Face::Regular, 16.0, hex(P.muted, 1.0));
+        ui.text(
+            r.right() - 26.0,
+            r.y + 12.0,
+            "×",
+            Face::Regular,
+            16.0,
+            hex(P.muted, 1.0),
+        );
     }
 }
 
@@ -1890,7 +2158,10 @@ impl ApplicationHandler for Launcher {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        let scale = self.window.as_ref().map_or(1.0, |w| w.scale_factor() as f32);
+        let scale = self
+            .window
+            .as_ref()
+            .map_or(1.0, |w| w.scale_factor() as f32);
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {

@@ -230,8 +230,14 @@ pub fn decode_png(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let pixels = &buf[..info.buffer_size()];
     let rgba = match info.color_type.samples() {
         4 => pixels.to_vec(),
-        3 => pixels.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
-        2 => pixels.chunks_exact(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+        3 => pixels
+            .chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect(),
+        2 => pixels
+            .chunks_exact(2)
+            .flat_map(|p| [p[0], p[0], p[0], p[1]])
+            .collect(),
         1 => pixels.iter().flat_map(|&g| [g, g, g, 255]).collect(),
         _ => return None,
     };
@@ -352,7 +358,15 @@ impl Canvas<'_> {
         width / self.scale
     }
     /// Text with its top at `y`; returns its width in dp.
-    pub fn text(&mut self, x: f32, y: f32, text: &str, face: Face, size: f32, color: [f32; 4]) -> f32 {
+    pub fn text(
+        &mut self,
+        x: f32,
+        y: f32,
+        text: &str,
+        face: Face,
+        size: f32,
+        color: [f32; 4],
+    ) -> f32 {
         let px = self.px(size);
         let scale = self.glyphs.scale(face, px as f32);
         let (ascent, ids) = {
@@ -364,17 +378,12 @@ impl Canvas<'_> {
                     (id, font.h_advance(id))
                 })
                 .collect();
-            let kerns: Vec<f32> = ids
-                .windows(2)
-                .map(|w| font.kern(w[0].0, w[1].0))
-                .collect();
+            let kerns: Vec<f32> = ids.windows(2).map(|w| font.kern(w[0].0, w[1].0)).collect();
             (
                 font.ascent(),
                 ids.into_iter()
                     .enumerate()
-                    .map(|(i, (id, advance))| {
-                        (id, advance + kerns.get(i).copied().unwrap_or(0.0))
-                    })
+                    .map(|(i, (id, advance))| (id, advance + kerns.get(i).copied().unwrap_or(0.0)))
                     .collect::<Vec<_>>(),
             )
         };
@@ -681,10 +690,16 @@ impl Renderer {
     }
 
     /// Copies `texture` (the frame) out to `path` as a PNG.
-    fn save(&self, encoder: wgpu::CommandEncoder, texture: &wgpu::Texture, path: &std::path::Path) -> Result<()> {
+    fn save(
+        &self,
+        encoder: wgpu::CommandEncoder,
+        texture: &wgpu::Texture,
+        path: &std::path::Path,
+    ) -> Result<()> {
         let mut encoder = encoder;
         let (w, h) = (self.config.width, self.config.height);
-        let row = (w * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let row = (w * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("launcher capture"),
             size: u64::from(row * h),
@@ -724,7 +739,11 @@ impl Renderer {
         for y in 0..h {
             let line = &data[(y * row) as usize..][..(w * 4) as usize];
             for p in line.chunks_exact(4) {
-                rgba.extend(if bgra { [p[2], p[1], p[0], 255] } else { [p[0], p[1], p[2], 255] });
+                rgba.extend(if bgra {
+                    [p[2], p[1], p[0], 255]
+                } else {
+                    [p[0], p[1], p[2], 255]
+                });
             }
         }
         let file = std::io::BufWriter::new(std::fs::File::create(path)?);
@@ -787,10 +806,16 @@ impl Renderer {
         self.queue.write_buffer(
             &self.screen,
             0,
-            bytemuck::cast_slice(&[self.config.width as f32, self.config.height as f32, 0.0, 0.0]),
+            bytemuck::cast_slice(&[
+                self.config.width as f32,
+                self.config.height as f32,
+                0.0,
+                0.0,
+            ]),
         );
         let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+            wgpu::CurrentSurfaceTexture::Success(f)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
                 return Ok(());

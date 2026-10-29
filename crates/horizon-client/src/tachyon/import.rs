@@ -30,7 +30,12 @@ pub enum Kind {
 /// Installs `file`, which the player knows as `name` (its extension tells a
 /// jar from a zip), into the game folder `home`. `report` hears what it is
 /// doing.
-pub fn import(file: &Path, name: &str, home: &Path, report: &dyn Fn(String)) -> Result<Imported, String> {
+pub fn import(
+    file: &Path,
+    name: &str,
+    home: &Path,
+    report: &dyn Fn(String),
+) -> Result<Imported, String> {
     let lower = name.to_ascii_lowercase();
     let extension = Path::new(&lower)
         .extension()
@@ -130,8 +135,17 @@ fn java_mod(file: &Path, home: &Path, report: &dyn Fn(String)) -> Result<Importe
     let _ = fs::copy(work.join("check.json"), target.join("tachyon-check.json"));
     let _ = fs::remove_dir_all(&work);
     enable(home, &check.mod_id);
-    let ports = check.ports.iter().take(4).cloned().collect::<Vec<_>>().join(", ");
-    let mut note = format!("{} {} is installed and on: {ports}.", check.name, check.version);
+    let ports = check
+        .ports
+        .iter()
+        .take(4)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut note = format!(
+        "{} {} is installed and on: {ports}.",
+        check.name, check.version
+    );
     if !check.skipped.is_empty() {
         note.push_str(" What it does in code (machines, screens, entities...) doesn't come along.");
     }
@@ -145,10 +159,16 @@ fn java_mod(file: &Path, home: &Path, report: &dyn Fn(String)) -> Result<Importe
 /// A zip: a world (with `level.dat`), a resource pack (`pack.mcmeta` and
 /// `assets/`), or a Horizon mod (`horizon-mod.toml`), at its top or in one
 /// folder.
-fn archive(file: &Path, stem: &str, home: &Path, report: &dyn Fn(String)) -> Result<Imported, String> {
+fn archive(
+    file: &Path,
+    stem: &str,
+    home: &Path,
+    report: &dyn Fn(String),
+) -> Result<Imported, String> {
     let open = || -> Result<zip::ZipArchive<fs::File>, String> {
         let f = fs::File::open(file).map_err(|e| e.to_string())?;
-        zip::ZipArchive::new(f).map_err(|_| "Not a zip: a world, a pack or a mod comes as one.".to_owned())
+        zip::ZipArchive::new(f)
+            .map_err(|_| "Not a zip: a world, a pack or a mod comes as one.".to_owned())
     };
     let zip = open()?;
     let names: Vec<String> = zip.file_names().map(str::to_owned).collect();
@@ -167,7 +187,11 @@ fn archive(file: &Path, stem: &str, home: &Path, report: &dyn Fn(String)) -> Res
     }
     if let Some(prefix) = prefix("level.dat") {
         let name = prefix.trim_end_matches('/');
-        let name = if name.is_empty() { stem.to_owned() } else { clean_name(name) };
+        let name = if name.is_empty() {
+            stem.to_owned()
+        } else {
+            clean_name(name)
+        };
         let saves = home.join("saves");
         let target = free(&saves, &name, "");
         report(format!("Unpacking the world {name}"));
@@ -183,7 +207,11 @@ fn archive(file: &Path, stem: &str, home: &Path, report: &dyn Fn(String)) -> Res
         });
     }
     if let Some(prefix) = prefix("pack.mcmeta") {
-        let has = |dir: &str| names.iter().any(|n| n.starts_with(&format!("{prefix}{dir}")));
+        let has = |dir: &str| {
+            names
+                .iter()
+                .any(|n| n.starts_with(&format!("{prefix}{dir}")))
+        };
         if !has("assets/") {
             return Err(
                 "That is a data pack: it goes in a world's datapacks folder, not in the game's."
@@ -255,7 +283,8 @@ mod tests {
     use std::io::Write;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("tachyon-import-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("tachyon-import-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -277,7 +306,10 @@ mod tests {
         let file = dir.join("upload.zip");
         zip_of(
             &file,
-            &[("My World/level.dat", b"x"), ("My World/region/r.0.0.mca", b"y")],
+            &[
+                ("My World/level.dat", b"x"),
+                ("My World/region/r.0.0.mca", b"y"),
+            ],
         );
         let home = dir.join("home");
         let got = import(&file, "My World.zip", &home, &|_| {}).unwrap();
@@ -293,7 +325,10 @@ mod tests {
     fn a_resource_pack_zip_is_copied_whole() {
         let dir = scratch("pack");
         let file = dir.join("p.zip");
-        zip_of(&file, &[("pack.mcmeta", b"{}"), ("assets/minecraft/x.png", b"z")]);
+        zip_of(
+            &file,
+            &[("pack.mcmeta", b"{}"), ("assets/minecraft/x.png", b"z")],
+        );
         let home = dir.join("home");
         let got = import(&file, "Faithful.zip", &home, &|_| {}).unwrap();
         assert_eq!(got.what, Kind::ResourcePack);
@@ -305,9 +340,20 @@ mod tests {
         let dir = scratch("refused");
         let home = dir.join("home");
         let data = dir.join("d.zip");
-        zip_of(&data, &[("pack.mcmeta", b"{}"), ("data/x/recipe/a.json", b"{}")]);
-        assert!(import(&data, "d.zip", &home, &|_| {}).unwrap_err().contains("data pack"));
-        assert!(import(&data, "w.mcworld", &home, &|_| {}).unwrap_err().contains("Bedrock"));
+        zip_of(
+            &data,
+            &[("pack.mcmeta", b"{}"), ("data/x/recipe/a.json", b"{}")],
+        );
+        assert!(
+            import(&data, "d.zip", &home, &|_| {})
+                .unwrap_err()
+                .contains("data pack")
+        );
+        assert!(
+            import(&data, "w.mcworld", &home, &|_| {})
+                .unwrap_err()
+                .contains("Bedrock")
+        );
         let other = dir.join("o.zip");
         zip_of(&other, &[("readme.txt", b"hi")]);
         assert!(import(&other, "o.zip", &home, &|_| {}).is_err());

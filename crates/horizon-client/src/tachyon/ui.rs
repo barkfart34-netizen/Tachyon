@@ -2,8 +2,8 @@
 //! type does the work, lists instead of cards, one accent for the main action.
 //! Immediate mode: a frame lays out and draws every widget, and a widget that
 //! a finger tapped this frame says so.
-use super::draw::{Canvas, Face, Rect, hex};
 use super::brand::P;
+use super::draw::{Canvas, Face, Rect, hex};
 
 pub const GUTTER: f32 = 24.0;
 pub const ROW: f32 = 56.0;
@@ -95,7 +95,15 @@ impl<'c, 'a> Ui<'c, 'a> {
         })
     }
 
-    pub fn text(&mut self, x: f32, y: f32, text: &str, face: Face, size: f32, color: [f32; 4]) -> f32 {
+    pub fn text(
+        &mut self,
+        x: f32,
+        y: f32,
+        text: &str,
+        face: Face,
+        size: f32,
+        color: [f32; 4],
+    ) -> f32 {
         self.c.text(x, y, text, face, size, color)
     }
 
@@ -127,7 +135,10 @@ impl<'c, 'a> Ui<'c, 'a> {
         let (fill, text) = if primary {
             (hex(P.accent, alpha), hex(P.on_accent, 1.0))
         } else {
-            (hex(P.plate, alpha), hex(P.ink, if enabled { 1.0 } else { 0.5 }))
+            (
+                hex(P.plate, alpha),
+                hex(P.ink, if enabled { 1.0 } else { 0.5 }),
+            )
         };
         self.c.rect(r, r.h / 2.0, fill);
         self.centred(r, label, Face::Medium, horizon_theme::UI.px, text);
@@ -150,16 +161,32 @@ impl<'c, 'a> Ui<'c, 'a> {
     pub fn switch(&mut self, row: Rect, on: bool) -> Option<bool> {
         let (w, h) = (40.0, 24.0);
         let r = Rect::new(row.right() - w, row.y + (row.h - h) / 2.0, w, h);
-        self.c
-            .rect(r, h / 2.0, if on { hex(P.accent, 1.0) } else { hex(P.plate, 1.0) });
+        self.c.rect(
+            r,
+            h / 2.0,
+            if on {
+                hex(P.accent, 1.0)
+            } else {
+                hex(P.plate, 1.0)
+            },
+        );
         let knob = h - 6.0;
-        let x = if on { r.right() - knob - 3.0 } else { r.x + 3.0 };
+        let x = if on {
+            r.right() - knob - 3.0
+        } else {
+            r.x + 3.0
+        };
         self.c.rect(
             Rect::new(x, r.y + 3.0, knob, knob),
             knob / 2.0,
-            if on { hex(P.on_accent, 1.0) } else { hex(P.muted, 1.0) },
+            if on {
+                hex(P.on_accent, 1.0)
+            } else {
+                hex(P.muted, 1.0)
+            },
         );
-        self.tapped(Rect::new(row.x, row.y, row.w, row.h)).then_some(!on)
+        self.tapped(Rect::new(row.x, row.y, row.w, row.h))
+            .then_some(!on)
     }
 
     /// One row of a numbered list: the mono index, the name, a description
@@ -192,14 +219,17 @@ impl<'c, 'a> Ui<'c, 'a> {
                 .take(room)
                 .collect()
         };
-        let total = name_h + lines.len() as f32 * detail_h + if lines.is_empty() { 0.0 } else { 2.0 };
+        let total =
+            name_h + lines.len() as f32 * detail_h + if lines.is_empty() { 0.0 } else { 2.0 };
         let mut y = r.y + (r.h - total) / 2.0;
         let name = self.c.fit(name, Face::Medium, name_size, width);
-        self.c.text(x, y, &name, Face::Medium, name_size, hex(P.ink, 1.0));
+        self.c
+            .text(x, y, &name, Face::Medium, name_size, hex(P.ink, 1.0));
         y += name_h + 2.0;
         for line in lines {
             let line = self.c.fit(&line, Face::Regular, detail_size, width);
-            self.c.text(x, y, &line, Face::Regular, detail_size, hex(P.muted, 1.0));
+            self.c
+                .text(x, y, &line, Face::Regular, detail_size, hex(P.muted, 1.0));
             y += detail_h;
         }
         self.c.rule(r.x, r.bottom(), r.w, hex(P.rule, 1.0));
@@ -222,8 +252,11 @@ impl<'c, 'a> Ui<'c, 'a> {
                 let x0 = x.max(r.x);
                 let x1 = (x + part).min(r.right());
                 if x1 > x0 {
-                    self.c
-                        .rect(Rect::new(x0, r.y, x1 - x0, r.h), r.h / 2.0, hex(P.accent, 1.0));
+                    self.c.rect(
+                        Rect::new(x0, r.y, x1 - x0, r.h),
+                        r.h / 2.0,
+                        hex(P.accent, 1.0),
+                    );
                 }
             }
         }
