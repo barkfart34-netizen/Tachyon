@@ -66,6 +66,18 @@ with open(sys.argv[1], "rb") as f:
         h.update(chunk)
 print(h.hexdigest()[:24])
 EOF
+
+echo "== Tachyon's built-in content (tachyon/content)"
+# Its own asset and id: a new mod unpacks alone, not Minecraft's resources.
+(cd "$repo/tachyon/content" && find . -type f | sort | zip -q -X -D -@ "$stage/assets/content.zip")
+python3 -I - "$repo/tachyon/content" > "$stage/assets/content.id" <<'EOF'
+import hashlib, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+h = hashlib.sha256()
+for f in sorted(p for p in root.rglob("*") if p.is_file()):
+    h.update(f.relative_to(root).as_posix().encode() + b"\0" + f.read_bytes())
+print(h.hexdigest()[:24])
+EOF
 ls -la "$stage/assets"
 
 echo "== The APK"

@@ -80,6 +80,7 @@ pub fn main(app: AndroidApp) {
     horizon_client::crash::install(paths.home.clone(), "client");
     jni::install_clipboard();
     horizon_client::brand::set(brand::NAME);
+    horizon_client::brand::set_content(paths.content.clone());
     phone_defaults(&paths.home);
     crate::tachyon::mods::settle(&paths.home);
     log::info!(

@@ -14,6 +14,7 @@ on:
       - "crates/horizon-client/src/game/tachyon_mods.rs"
       - "crates/horizon-client/src/game/tachyon_mods/**"
       - ".github/tachyon/scene.py"
+      - "tachyon/**"
       - ".github/workflows/tachyon-windows.yml"
   workflow_dispatch:
     inputs:
@@ -125,6 +126,8 @@ jobs:
           mkdir -p "$dir"
           cp "target/$PROFILE/tachyon-desktop.exe" "$dir/Tachyon.exe"
           mv .tachyon/resources/horizon-client/26.3 "$dir/resources"
+          # The modpack's own content mods, always on (brand::CONTENT).
+          cp -r tachyon/content "$dir/resources/tachyon-mods"
           cat > "$dir/README.txt" <<'EOF'
           Tachyon for Windows: Minecraft: Java Edition 26.3, native, built on Horizon (Rust).
 

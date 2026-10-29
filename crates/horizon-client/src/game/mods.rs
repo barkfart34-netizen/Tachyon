@@ -196,7 +196,10 @@ pub(super) fn content_root(
     use horizon_client::mod_content::{self, ContentMod};
     use horizon_mods::{Capability, Content, Package};
     let here = std::env::current_dir().unwrap_or_default();
-    let mut paths = horizon_mods::find(&here.join(mod_list::DIR));
+    // A build's own content mods (Tachyon's), always on and first.
+    let built_in = horizon_client::brand::content().map_or_else(Vec::new, horizon_mods::find);
+    let mut paths = built_in.clone();
+    paths.extend(horizon_mods::find(&here.join(mod_list::DIR)));
     paths.retain(|p| !dev.contains(p));
     paths.extend(dev.iter().cloned());
     let mut mods: Vec<ContentMod> = Vec::new();
@@ -205,7 +208,7 @@ pub(super) fn content_root(
             continue;
         };
         let m = &package.manifest;
-        let on = enabled.contains(&m.id) || dev.contains(path);
+        let on = enabled.contains(&m.id) || dev.contains(path) || built_in.contains(path);
         if !on
             || !m.capabilities.contains(&Capability::Registries)
             || mods.iter().any(|c| c.id == m.id)

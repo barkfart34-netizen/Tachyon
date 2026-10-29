@@ -1,6 +1,7 @@
 //! The app's folders, and the game's resources: Tachyon's APK carries them
 //! ready made (`resources.zip`, prepared from Minecraft 26.3 by the build), so
 //! the first start only unpacks them. No Java runs on the phone.
+use crate::tachyon::brand;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -19,6 +20,10 @@ pub struct Paths {
     /// A folder a computer reaches over USB: control layouts in and out.
     pub shared: PathBuf,
     pub cache: PathBuf,
+    /// The content mods Tachyon carries built in (`content.zip`, from
+    /// `tachyon/content`): apart from the resources, so a new mod doesn't
+    /// unpack Minecraft's again.
+    pub content: PathBuf,
 }
 
 impl Paths {
@@ -36,6 +41,7 @@ impl Paths {
             home: internal.join("game"),
             shared,
             cache: internal.join("cache"),
+            content: internal.join(brand::CONTENT),
         }
     }
     pub fn resources(&self) -> PathBuf {
@@ -114,35 +120,56 @@ fn asset_text(app: &AndroidApp, name: &str) -> Option<String> {
     Some(text.trim().to_owned())
 }
 
-/// Whether the resources the APK carries are unpacked already (the same id).
+/// Whether the resources the APK carries are unpacked already (the same id),
+/// and its built-in content.
 pub fn up_to_date(app: &AndroidApp, paths: &Paths) -> bool {
     paths.prepared()
-        && asset_text(app, "resources.id")
-            .is_some_and(|id| fs::read_to_string(paths.stamp()).is_ok_and(|s| s.trim() == id))
+        && unpacked(app, "resources", &paths.root)
+        && unpacked(app, "content", &paths.content)
 }
 
-/// Unpacks `resources.zip` from the APK into the resources folder, unless the
-/// same resources are there already. A new APK with other resources replaces
-/// them; the worlds and settings live elsewhere and stay.
+/// Whether `<name>.zip` is unpacked in `dir` already: its `.unpacked` holds
+/// `<name>.id`. An APK without that asset has nothing to unpack.
+fn unpacked(app: &AndroidApp, name: &str, dir: &Path) -> bool {
+    asset_text(app, &format!("{name}.id"))
+        .is_none_or(|id| fs::read_to_string(dir.join(".unpacked")).is_ok_and(|s| s.trim() == id))
+}
+
+/// Unpacks `resources.zip` from the APK into the resources folder, and
+/// `content.zip` into the content folder, unless the same ones are there
+/// already. A new APK with others replaces them; the worlds and settings
+/// live elsewhere and stay.
 pub fn install(app: &AndroidApp, paths: &Paths, report: &Report) -> Result<(), String> {
-    if up_to_date(app, paths) {
-        return Ok(());
+    if !(paths.prepared() && unpacked(app, "resources", &paths.root)) {
+        report.line("Unpacking Minecraft's resources (the first start only)".into());
+        unpack(app, "resources", &paths.root, report)?;
     }
-    let id = asset_text(app, "resources.id")
-        .ok_or("This build of Tachyon carries no resources (resources.id is missing)")?;
-    report.line("Unpacking Minecraft's resources (the first start only)".into());
-    let partial = paths.root.with_extension("partial");
+    if !unpacked(app, "content", &paths.content) {
+        report.line("Unpacking Tachyon's mods".into());
+        unpack(app, "content", &paths.content, report)?;
+    }
+    report.line("Ready".into());
+    Ok(())
+}
+
+/// Unpacks the APK's `<name>.zip` into `dir` (replaced whole), and stamps it
+/// with `<name>.id`.
+fn unpack(app: &AndroidApp, name: &str, dir: &Path, report: &Report) -> Result<(), String> {
+    let id = asset_text(app, &format!("{name}.id")).ok_or(format!(
+        "This build of Tachyon carries no {name} ({name}.id is missing)"
+    ))?;
+    let partial = dir.with_extension("partial");
     let _ = fs::remove_dir_all(&partial);
     fs::create_dir_all(&partial).map_err(|e| e.to_string())?;
-    let file = std::ffi::CString::new("resources.zip").unwrap();
+    let file = std::ffi::CString::new(format!("{name}.zip")).map_err(|e| e.to_string())?;
     let asset = app
         .asset_manager()
         .open(&file)
-        .ok_or("This build of Tachyon carries no resources.zip")?;
-    let mut zip = zip::ZipArchive::new(asset).map_err(|e| format!("resources.zip: {e}"))?;
+        .ok_or(format!("This build of Tachyon carries no {name}.zip"))?;
+    let mut zip = zip::ZipArchive::new(asset).map_err(|e| format!("{name}.zip: {e}"))?;
     let count = zip.len();
     for i in 0..count {
-        let mut entry = zip.by_index(i).map_err(|e| format!("resources.zip: {e}"))?;
+        let mut entry = zip.by_index(i).map_err(|e| format!("{name}.zip: {e}"))?;
         let Some(relative) = entry.enclosed_name() else {
             continue;
         };
@@ -161,11 +188,9 @@ pub fn install(app: &AndroidApp, paths: &Paths, report: &Report) -> Result<(), S
         }
     }
     report.fraction(1.0);
-    let _ = fs::remove_dir_all(&paths.root);
-    fs::rename(&partial, &paths.root).map_err(|e| e.to_string())?;
-    fs::write(paths.stamp(), id).map_err(|e| e.to_string())?;
-    report.line("Ready".into());
-    Ok(())
+    let _ = fs::remove_dir_all(dir);
+    fs::rename(&partial, dir).map_err(|e| e.to_string())?;
+    fs::write(dir.join(".unpacked"), id).map_err(|e| e.to_string())
 }
 
 /// The player's name, kept by the launcher.

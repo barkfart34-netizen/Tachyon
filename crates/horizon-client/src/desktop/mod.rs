@@ -97,6 +97,9 @@ fn game() -> i32 {
     crash::install(home.clone(), "client");
     horizon_client::brand::set(brand::NAME);
     horizon_client::window::set_icon(ICON);
+    if let Some(resources) = game_resources() {
+        horizon_client::brand::set_content(resources.join(brand::CONTENT));
+    }
     log::info!("{} {BUILD} (Horizon {})", brand::NAME, crash::version());
     let _ = std::fs::remove_file(home.join(ERROR_FILE));
     crate::tachyon::mods::settle(&home);
@@ -111,6 +114,17 @@ fn game() -> i32 {
     };
     logging::flush();
     code
+}
+
+/// The resources the game loads: `--resources`, else `resources` beside the
+/// program, as the game's options read them.
+fn game_resources() -> Option<PathBuf> {
+    let mut args = std::env::args().skip_while(|a| a != "--resources").skip(1);
+    if let Some(dir) = args.next() {
+        return Some(dir.into());
+    }
+    let beside = std::env::current_exe().ok()?.parent()?.join("resources");
+    beside.join("horizon-resources.json").is_file().then_some(beside)
 }
 
 /// Imports `file` into the game folder `HORIZON_HOME`, saying how it went

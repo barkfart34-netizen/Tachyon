@@ -39,6 +39,42 @@ class Control:
         return reply
 
 
+# Kinetica's blocks on a stone floor south of the player (yaw 0 looks south),
+# and its items in the hotbar.
+SHOWCASE = [
+    "fill ~-5 ~-1 ~2 ~5 ~-1 ~9 minecraft:smooth_stone",
+    "fill ~-5 ~ ~2 ~5 ~5 ~9 minecraft:air",
+    "setblock ~-4 ~ ~5 kinetica:ferrostone_casing",
+    "setblock ~-2 ~ ~5 kinetica:gearbox",
+    "setblock ~0 ~ ~5 kinetica:creative_motor[facing=north]",
+    "fill ~1 ~ ~5 ~4 ~ ~5 kinetica:shaft[axis=x]",
+    "setblock ~-3 ~2 ~6 kinetica:cogwheel[axis=z]",
+    "setblock ~1 ~2 ~6 kinetica:large_cogwheel[axis=z]",
+    "fill ~-4 ~1 ~7 ~-4 ~4 ~7 kinetica:shaft[axis=y]",
+]
+ITEMS = ["shaft", "cogwheel", "large_cogwheel", "gearbox", "ferrostone_casing", "creative_motor",
+         "ferrostone_alloy"]
+
+
+def kinetica(control, out):
+    """Kinetica's blocks placed by commands, in a picture: whether every
+    command ran (an unknown block is a command error in chat)."""
+    good = True
+    for command in SHOWCASE + [f"give @s kinetica:{item}" for item in ITEMS]:
+        reply = control.send("chat /" + command)
+        chat = " ".join(str(line) for line in reply.get("chat", [])[-2:])
+        if "error" in reply or "Unknown" in chat or "Incorrect" in chat or "Invalid" in chat:
+            good = False
+    control.send("look 0 25")
+    time.sleep(4)
+    if not control.send("screenshot " + os.path.join(out, "kinetica.png")).get("ok"):
+        good = False
+    control.send("look 30 40")
+    time.sleep(2)
+    control.send("screenshot " + os.path.join(out, "kinetica-side.png"))
+    return good
+
+
 def main():
     game, home, out = sys.argv[1:4]
     os.makedirs(home, exist_ok=True)
@@ -80,6 +116,8 @@ def main():
         where = control.send("chat /where")
         if not any(" in minecraft:" in str(line) for line in where.get("chat", [])):
             failed.append("/where")
+        if not kinetica(control, out):
+            failed.append("kinetica")
         control.send("options mods")
         time.sleep(2)
         if not control.send("screenshot " + os.path.join(out, "mods.png")).get("ok"):

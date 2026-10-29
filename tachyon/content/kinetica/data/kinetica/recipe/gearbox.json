@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    " C ",
+    "CXC",
+    " C "
+  ],
+  "key": {
+    "C": "kinetica:cogwheel",
+    "X": "kinetica:ferrostone_casing"
+  },
+  "result": {
+    "id": "kinetica:gearbox",
+    "count": 1
+  }
+}

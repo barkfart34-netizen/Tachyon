@@ -1,0 +1,13 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    "kinetica:shaft",
+    "#minecraft:planks",
+    "#minecraft:planks"
+  ],
+  "result": {
+    "id": "kinetica:large_cogwheel",
+    "count": 1
+  }
+}

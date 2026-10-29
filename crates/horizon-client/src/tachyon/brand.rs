@@ -9,6 +9,9 @@ pub const NAME: &str = "Tachyon";
 pub const TAGLINE: &str = "Minecraft: Java Edition, native on Android. Built on Horizon, in Rust.";
 /// Where the source lives (private), for the About row.
 pub const SOURCE: &str = "github.com/Rxuser2/Tachyon";
+/// The folder in the resources holding the content mods Tachyon carries
+/// built in (the modpack's, from `tachyon/content`).
+pub const CONTENT: &str = "tachyon-mods";
 
 /// Deep space and Cherenkov blue: the launcher's palette, in the design
 /// system's roles (`horizon_theme::Palette`).

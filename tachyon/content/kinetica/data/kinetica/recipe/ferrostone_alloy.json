@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "SN",
+    "NS"
+  ],
+  "key": {
+    "S": "minecraft:andesite",
+    "N": "minecraft:iron_nugget"
+  },
+  "result": {
+    "id": "kinetica:ferrostone_alloy",
+    "count": 1
+  }
+}

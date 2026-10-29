@@ -1,0 +1,11 @@
+{
+  "template": "minecraft:white_glazed_terracotta",
+  "properties": {
+    "hardness": -1.0,
+    "explosion_resistance": 3600000.0,
+    "sounds": "minecraft:copper_block",
+    "light": 6,
+    "map_color": 23
+  },
+  "item": true
+}

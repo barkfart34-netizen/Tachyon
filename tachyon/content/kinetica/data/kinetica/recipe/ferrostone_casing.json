@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    " P ",
+    "PAP",
+    " P "
+  ],
+  "key": {
+    "P": "#minecraft:planks",
+    "A": "kinetica:ferrostone_alloy"
+  },
+  "result": {
+    "id": "kinetica:ferrostone_casing",
+    "count": 2
+  }
+}
