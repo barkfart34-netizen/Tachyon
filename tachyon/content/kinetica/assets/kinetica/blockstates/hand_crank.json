@@ -1,0 +1,30 @@
+{
+  "variants": {
+    "facing=up": {
+      "model": "kinetica:block/hand_crank_base"
+    },
+    "facing=down": {
+      "model": "kinetica:block/hand_crank_base",
+      "x": 180
+    },
+    "facing=north": {
+      "model": "kinetica:block/hand_crank_base",
+      "x": 90
+    },
+    "facing=south": {
+      "model": "kinetica:block/hand_crank_base",
+      "x": 90,
+      "y": 180
+    },
+    "facing=east": {
+      "model": "kinetica:block/hand_crank_base",
+      "x": 90,
+      "y": 90
+    },
+    "facing=west": {
+      "model": "kinetica:block/hand_crank_base",
+      "x": 90,
+      "y": 270
+    }
+  }
+}

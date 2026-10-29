@@ -60,9 +60,21 @@ SHOWCASE = [
     ("setblock", (3, 0, 6), "kinetica:shaft[axis=x]"),
     ("setblock", (-4, 0, 6), "kinetica:ferrostone_casing"),
     ("fill", (-4, 1, 6), (-4, 3, 6), "kinetica:shaft[axis=y]"),
+    # A line along x: a motor, a gearshift over a redstone block (the shaft
+    # after it turns the other way), an unpowered clutch (passing it on).
+    ("setblock", (-6, 0, 9), "kinetica:creative_motor[facing=west]"),
+    ("setblock", (-5, 0, 9), "kinetica:shaft[axis=x]"),
+    ("setblock", (-4, -1, 9), "minecraft:redstone_block"),
+    ("setblock", (-4, 0, 9), "kinetica:gearshift[axis=x]"),
+    ("setblock", (-3, 0, 9), "kinetica:shaft[axis=x]"),
+    ("setblock", (-2, 0, 9), "kinetica:clutch[axis=x]"),
+    ("setblock", (-1, 0, 9), "kinetica:shaft[axis=x]"),
+    # A hand crank on a shaft.
+    ("setblock", (2, 0, 9), "kinetica:shaft[axis=y]"),
+    ("setblock", (2, 1, 9), "kinetica:hand_crank[facing=up]"),
 ]
-ITEMS = ["shaft", "cogwheel", "large_cogwheel", "gearbox", "ferrostone_casing", "creative_motor",
-         "ferrostone_alloy"]
+ITEMS = ["shaft", "cogwheel", "large_cogwheel", "gearbox", "hand_crank", "clutch", "gearshift",
+         "creative_motor", "ferrostone_alloy"]
 
 
 def look_at(control, eye, target):

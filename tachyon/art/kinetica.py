@@ -162,6 +162,34 @@ def motor_back():
     return img
 
 
+def banded(color):
+    """A casing with a band across: a clutch's or a gearshift's sides."""
+    def draw():
+        img = casing()
+        for x in range(2, 14):
+            for y in (7, 8):
+                img.putpixel((x, y), color[3 if y == 7 else 2] + (255,))
+            img.putpixel((x, 6), color[1] + (255,))
+            img.putpixel((x, 9), color[0] + (255,))
+        return img
+    return draw
+
+
+REDSTONE = [(70, 8, 8), (120, 14, 10), (176, 24, 16), (226, 54, 40), (255, 120, 100)]
+
+
+def crank_wood():
+    rng = random.Random(11)
+    img = image()
+    for y in range(16):
+        for x in range(16):
+            c = WOOD[3] if (x // 2) % 2 else WOOD[2]
+            if rng.random() < 0.15:
+                c = WOOD[1]
+            img.putpixel((x, y), c + (255,))
+    return img
+
+
 def alloy():
     """An ingot: ferrostone grey, an iron sheen."""
     img = image()
@@ -201,6 +229,9 @@ TEXTURES = {
     "block/creative_motor": motor_side,
     "block/creative_motor_back": motor_back,
     "item/ferrostone_alloy": alloy,
+    "block/clutch": banded(REDSTONE),
+    "block/gearshift": banded(BRONZE),
+    "block/hand_crank": crank_wood,
 }
 
 
@@ -302,6 +333,21 @@ MOTOR_BODY = box([2, 2, 4], [14, 14, 16], {
 MOTOR_TEX = {"side": t("block/creative_motor"), "back": t("block/creative_motor_back"),
              "shaft": t("block/shaft"), "shaft_end": t("block/shaft_end"), "particle": t("block/creative_motor")}
 
+CRANK_TEX = {"wood": t("block/hand_crank"), "metal": t("block/shaft"), "particle": t("block/hand_crank")}
+
+
+def all_faces(texture, frm, to):
+    """Every face of a box, its UV from the box's own extent."""
+    x0, y0, z0 = frm
+    x1, y1, z1 = to
+    uv = {
+        "north": [x0, 16 - y1, x1, 16 - y0], "south": [x0, 16 - y1, x1, 16 - y0],
+        "east": [z0, 16 - y1, z1, 16 - y0], "west": [z0, 16 - y1, z1, 16 - y0],
+        "up": [x0, z0, x1, z1], "down": [x0, z0, x1, z1],
+    }
+    return box(frm, to, {k: (texture, [max(0, min(16, v)) for v in u]) for k, u in uv.items()})
+
+
 MODELS = {
     "block/ferrostone_casing": model("minecraft:block/cube_all", {"all": t("block/ferrostone_casing")}),
     # The turning parts, about +Y: the items show them whole too.
@@ -324,6 +370,25 @@ MODELS = {
         }),
     ]),
     "item/ferrostone_alloy": model("minecraft:item/generated", {"layer0": t("item/ferrostone_alloy")}),
+    "block/clutch": model("minecraft:block/cube_column", {"side": t("block/clutch"), "end": t("block/gearbox_side")}),
+    "block/gearshift": model("minecraft:block/cube_column",
+                             {"side": t("block/gearshift"), "end": t("block/gearbox_side")}),
+    # The hand crank, up from the block it is on: a still base, and a
+    # handle that turns (the content engine's `pieces`).
+    "block/hand_crank_base": model(textures=CRANK_TEX, elements=[
+        all_faces("#metal", [4, 0, 4], [12, 2, 12]),
+    ]),
+    "block/hand_crank_handle": model(textures=CRANK_TEX, elements=[
+        all_faces("#metal", [7, 0, 7], [9, 7, 9]),
+        all_faces("#wood", [2, 7, 7], [14, 9, 9]),
+        all_faces("#wood", [2, 9, 7], [4, 14, 9]),
+    ]),
+    "block/hand_crank": model(textures=CRANK_TEX, elements=[
+        all_faces("#metal", [4, 0, 4], [12, 2, 12]),
+        all_faces("#metal", [7, 0, 7], [9, 7, 9]),
+        all_faces("#wood", [2, 7, 7], [14, 9, 9]),
+        all_faces("#wood", [2, 9, 7], [4, 14, 9]),
+    ]),
 }
 
 AXIS = {
@@ -337,6 +402,12 @@ AXIS = {
 # shaft (the model's north) points the other way, where the player looked.
 FACING = {"variants": {f"facing={f}": {"y": y} for f, y in
                        [("north", 180), ("east", 270), ("south", 0), ("west", 90)]}}
+
+
+SIX = {"variants": {f"facing={f}": r for f, r in [
+    ("up", {}), ("down", {"x": 180}), ("north", {"x": 90}), ("south", {"x": 90, "y": 180}),
+    ("east", {"x": 90, "y": 90}), ("west", {"x": 90, "y": 270}),
+]}}
 
 
 def states(base, model_name):
@@ -375,6 +446,15 @@ BLOCKS = {
                         "light": 6, "map_color": 23},
                        states(FACING, "block/creative_motor_body"), "block/creative_motor",
                        ("Creative Motor", "Motor Kreatif")),
+    # A waxed lightning rod's states: six facings, powered, waterlogged;
+    # placed against a block, it faces out of it.
+    "hand_crank": ("minecraft:waxed_lightning_rod", {"hardness": 0.5, "sounds": "minecraft:oak_planks",
+                                                     "map_color": 13},
+                   states(SIX, "block/hand_crank_base"), "block/hand_crank", ("Hand Crank", "Engkol Tangan")),
+    "clutch": ("minecraft:quartz_pillar", {"hardness": 2.0, "sounds": "minecraft:copper_block", "map_color": 11},
+               states(AXIS, "block/clutch"), "block/clutch", ("Clutch", "Kopling")),
+    "gearshift": ("minecraft:quartz_pillar", {"hardness": 2.0, "sounds": "minecraft:copper_block", "map_color": 11},
+                  states(AXIS, "block/gearshift"), "block/gearshift", ("Gearshift", "Pemindah Gigi")),
 }
 
 ITEMS = {
@@ -404,6 +484,9 @@ RECIPES = {
     "ferrostone_casing": recipe_shaped([" P ", "PAP", " P "], {"P": "#minecraft:planks", "A": t("ferrostone_alloy")},
                                        "ferrostone_casing", 2),
     "gearbox": recipe_shaped([" C ", "CXC", " C "], {"C": t("cogwheel"), "X": t("ferrostone_casing")}, "gearbox"),
+    "hand_crank": recipe_shaped(["PPP", "  A"], {"P": "#minecraft:planks", "A": t("ferrostone_alloy")}, "hand_crank"),
+    "clutch": recipe_shapeless([t("ferrostone_casing"), t("shaft"), "minecraft:redstone"], "clutch"),
+    "gearshift": recipe_shapeless([t("ferrostone_casing"), t("cogwheel"), "minecraft:redstone"], "gearshift"),
 }
 
 
@@ -450,8 +533,9 @@ def main():
         en[f"item.{NS}.{item}"], idn[f"item.{NS}.{item}"] = name_en, name_id
     for name, r in RECIPES.items():
         write(data / NS / "recipe" / f"{name}.json", r)
-    pickaxe = [t(b) for b in BLOCKS if b not in ("cogwheel", "large_cogwheel")]
-    axe = [t("cogwheel"), t("large_cogwheel")]
+    wooden = ("cogwheel", "large_cogwheel", "hand_crank")
+    pickaxe = [t(b) for b in BLOCKS if b not in wooden]
+    axe = [t(b) for b in wooden]
     write(data / "minecraft" / "tags" / "block" / "mineable" / "pickaxe.json", {"values": pickaxe})
     write(data / "minecraft" / "tags" / "block" / "mineable" / "axe.json", {"values": axe})
     write(assets / "lang" / "en_us.json", en)

@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "PPP",
+    "  A"
+  ],
+  "key": {
+    "P": "#minecraft:planks",
+    "A": "kinetica:ferrostone_alloy"
+  },
+  "result": {
+    "id": "kinetica:hand_crank",
+    "count": 1
+  }
+}

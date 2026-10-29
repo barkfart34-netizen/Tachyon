@@ -1,0 +1,9 @@
+{
+  "template": "minecraft:waxed_lightning_rod",
+  "properties": {
+    "hardness": 0.5,
+    "sounds": "minecraft:oak_planks",
+    "map_color": 13
+  },
+  "item": true
+}

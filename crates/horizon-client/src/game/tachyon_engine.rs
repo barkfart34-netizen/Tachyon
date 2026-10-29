@@ -36,8 +36,11 @@ use std::{
 
 /// The payload channel for the speeds.
 const KINETIC: &str = "tachyon:kinetic";
-/// A creative motor's speed (RPM), until it can be set.
+/// A creative motor's speed (RPM) until a player sets it, and a hand
+/// crank's.
 const MOTOR_SPEED: f32 = 32.0;
+/// Ticks a hand crank turns after each use (holding use repeats it).
+const CRANK_TICKS: u64 = 10;
 /// Ticks between full sends of the speeds, for players who just came.
 const RESEND: u64 = 100;
 /// How far turning parts are drawn, in blocks.
@@ -84,6 +87,13 @@ fn part_of<'a>(name: &str, property: impl Fn(&str) -> Option<&'a str>) -> Option
         "creative_motor" => Some(Part::Motor(
             property("facing").and_then(Dir::parse)?.opposite(),
         )),
+        // Its template's facing points out of the block it was put on,
+        // which the crank turns.
+        "hand_crank" => Some(Part::Crank(
+            property("facing").and_then(Dir::parse)?.opposite(),
+        )),
+        "clutch" => Some(Part::Clutch(axis()?)),
+        "gearshift" => Some(Part::Gearshift(axis()?)),
         _ => None,
     }
 }
@@ -195,7 +205,7 @@ impl Index {
 #[derive(Default)]
 struct Owner {
     index: Index,
-    speeds: HashMap<[i32; 3], f32>,
+    speeds: kinetic::Speeds,
     jammed: HashSet<[i32; 3]>,
     ticks: u64,
     /// The creative motors' speeds the players set (RPM; the default is
@@ -205,6 +215,10 @@ struct Owner {
     loaded: bool,
     /// The speeds need solving again (a motor's speed changed).
     dirty: bool,
+    /// The hand cranks turning: until which tick, and their speed.
+    cranks: HashMap<[i32; 3], (u64, f32)>,
+    /// The clutches and gearshifts powered by redstone.
+    powered: HashSet<[i32; 3]>,
 }
 
 impl Owner {
@@ -234,7 +248,14 @@ impl Owner {
         let mut rows: Vec<[f64; 4]> = self
             .motors
             .iter()
-            .map(|(p, s)| [f64::from(p[0]), f64::from(p[1]), f64::from(p[2]), f64::from(*s)])
+            .map(|(p, s)| {
+                [
+                    f64::from(p[0]),
+                    f64::from(p[1]),
+                    f64::from(p[2]),
+                    f64::from(*s),
+                ]
+            })
             .collect();
         rows.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let file = Self::file(root, dimension);
@@ -256,7 +277,11 @@ fn next_motor_speed(speed: f32, sneaking: bool) -> f32 {
         return -speed;
     }
     let faster = speed.abs() * 2.0;
-    let faster = if faster > kinetic::MAX_SPEED { 8.0 } else { faster };
+    let faster = if faster > kinetic::MAX_SPEED {
+        8.0
+    } else {
+        faster
+    };
     faster.copysign(speed)
 }
 
@@ -264,7 +289,7 @@ fn next_motor_speed(speed: f32, sneaking: bool) -> f32 {
 #[derive(Default)]
 struct Client {
     index: Index,
-    speeds: HashMap<[i32; 3], f32>,
+    speeds: kinetic::Speeds,
     jammed: HashSet<[i32; 3]>,
     dimension: &'static str,
     /// Baked models, for the item renderer at `renderer` (a resource
@@ -279,16 +304,19 @@ thread_local! {
     static CLIENT: RefCell<Client> = RefCell::new(Client::default());
 }
 
-/// The speeds as a payload: the turning parts, then the jammed ones.
-fn encode(speeds: &HashMap<[i32; 3], f32>, jammed: &HashSet<[i32; 3]>) -> Vec<u8> {
-    let mut out = Vec::with_capacity(9 + speeds.len() * 16 + jammed.len() * 12);
-    out.push(1);
+/// The speeds as a payload: the turning parts (each half's speed), then
+/// the jammed ones.
+fn encode(speeds: &kinetic::Speeds, jammed: &HashSet<[i32; 3]>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(9 + speeds.len() * 20 + jammed.len() * 12);
+    out.push(VERSION);
     out.extend_from_slice(&(speeds.len() as u32).to_le_bytes());
     for (p, s) in speeds {
         for v in p {
             out.extend_from_slice(&v.to_le_bytes());
         }
-        out.extend_from_slice(&s.to_le_bytes());
+        for v in s {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
     }
     out.extend_from_slice(&(jammed.len() as u32).to_le_bytes());
     for p in jammed {
@@ -299,9 +327,10 @@ fn encode(speeds: &HashMap<[i32; 3], f32>, jammed: &HashSet<[i32; 3]>) -> Vec<u8
     out
 }
 
-type Speeds = (HashMap<[i32; 3], f32>, HashSet<[i32; 3]>);
+/// The payload's form.
+const VERSION: u8 = 2;
 
-fn decode(data: &[u8]) -> Option<Speeds> {
+fn decode(data: &[u8]) -> Option<(kinetic::Speeds, HashSet<[i32; 3]>)> {
     let mut at = 0usize;
     let mut next = |n: usize| {
         let s = data.get(at..at + n)?;
@@ -309,19 +338,23 @@ fn decode(data: &[u8]) -> Option<Speeds> {
         Some(s)
     };
     let word = |b: &[u8]| -> [u8; 4] { [b[0], b[1], b[2], b[3]] };
-    if next(1)? != [1] {
+    if next(1)? != [VERSION] {
         return None;
     }
     let count = u32::from_le_bytes(word(next(4)?)) as usize;
     let mut speeds = HashMap::with_capacity(count.min(1 << 16));
     for _ in 0..count {
-        let b = next(16)?;
+        let b = next(20)?;
         let p = [
             i32::from_le_bytes(word(&b[0..4])),
             i32::from_le_bytes(word(&b[4..8])),
             i32::from_le_bytes(word(&b[8..12])),
         ];
-        speeds.insert(p, f32::from_le_bytes(word(&b[12..16])));
+        let halves = [
+            f32::from_le_bytes(word(&b[12..16])),
+            f32::from_le_bytes(word(&b[16..20])),
+        ];
+        speeds.insert(p, halves);
     }
     let count = u32::from_le_bytes(word(next(4)?)) as usize;
     let mut jammed = HashSet::with_capacity(count.min(1 << 16));
@@ -337,21 +370,26 @@ fn decode(data: &[u8]) -> Option<Speeds> {
 }
 
 /// A turning piece of a part: its model, where its shaft points (+Y in
-/// the model), and its speed for each turn of the part's.
-fn pieces(part: Part) -> impl Iterator<Item = (&'static str, Dir, f32)> {
-    let (whole, axis_dir): (Option<&'static str>, Dir) = match part {
-        Part::Shaft(a) => (Some("kinetica:block/shaft"), positive(a)),
-        Part::Cog(a) => (Some("kinetica:block/cogwheel"), positive(a)),
-        Part::LargeCog(a) => (Some("kinetica:block/large_cogwheel"), positive(a)),
-        Part::Gearbox(_) | Part::Motor(_) => (None, Dir::Up),
-    };
-    let halves = Dir::ALL
-        .into_iter()
-        .filter(move |d| whole.is_none() && part.shaft_toward(*d));
-    whole
-        .map(|m| (m, axis_dir, 1.0))
-        .into_iter()
-        .chain(halves.map(move |d| ("kinetica:block/shaft_half", d, part.side_factor(d))))
+/// the model), its speed for each turn of its half's, and the half.
+fn pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
+    const HALF: &str = "kinetica:block/shaft_half";
+    match part {
+        Part::Shaft(a) => vec![("kinetica:block/shaft", positive(a), 1.0, 0)],
+        Part::Cog(a) => vec![("kinetica:block/cogwheel", positive(a), 1.0, 0)],
+        Part::LargeCog(a) => vec![("kinetica:block/large_cogwheel", positive(a), 1.0, 0)],
+        Part::Gearbox(_) => Dir::ALL
+            .into_iter()
+            .filter(|d| part.shaft_toward(*d))
+            .map(|d| (HALF, d, part.side_factor(d), 0))
+            .collect(),
+        Part::Motor(out) => vec![(HALF, out, 1.0, 0)],
+        // The handle stands out of the side the crank was put on.
+        Part::Crank(out) => vec![("kinetica:block/hand_crank_handle", out.opposite(), 1.0, 0)],
+        Part::Clutch(a) | Part::Gearshift(a) => {
+            let [neg, pos] = a.dirs();
+            vec![(HALF, neg, 1.0, 0), (HALF, pos, 1.0, 1)]
+        }
+    }
 }
 
 fn positive(axis: Axis) -> Dir {
@@ -400,20 +438,21 @@ impl Game<'_> {
     }
 
     /// The owner's turn, in the block entity phase: the index follows the
-    /// world, the speeds follow the index, and the players hear of them.
+    /// world, the speeds follow the index, the redstone and the cranks, and
+    /// the players hear of them.
     pub(super) fn tachyon_tick_blocks(&mut self) {
         let Some(kinds) = self.tachyon_kinds() else {
             return;
         };
         let dimension = self.dim.id();
         let root = self.save.root.clone();
-        let send = OWNERS.with_borrow_mut(|owners| {
+        let (split, mut changed) = OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
             owner.load(&root, dimension);
             owner.ticks += 1;
             // Sculk reads the writes after this: they stay.
             let mut removed = Vec::new();
-            let mut changed = owner
+            let changed = owner
                 .index
                 .sync(&mut self.world, &kinds, false, &mut removed);
             // A motor broken forgets its speed.
@@ -422,6 +461,42 @@ impl Game<'_> {
             if owner.motors.len() != before {
                 owner.save(&root, dimension);
             }
+            let split: Vec<[i32; 3]> = owner
+                .index
+                .parts
+                .iter()
+                .filter(|(_, part)| part.split())
+                .map(|(p, _)| *p)
+                .collect();
+            (split, changed)
+        });
+        // Redstone at the clutches and gearshifts.
+        let powered: HashSet<[i32; 3]> = if split.is_empty() {
+            HashSet::new()
+        } else {
+            self.with_level(|b, level, ticks| {
+                split
+                    .into_iter()
+                    .filter(|p| {
+                        let at = horizon_core::position::BlockPos::new(p[0], p[1], p[2]);
+                        b.has_neighbor_signal(level, ticks, at)
+                    })
+                    .collect()
+            })
+        };
+        let send = OWNERS.with_borrow_mut(|owners| {
+            let owner = owners.entry(dimension).or_default();
+            if powered != owner.powered {
+                owner.powered = powered;
+                changed = true;
+            }
+            // Cranks no one turns any more stop.
+            let now = owner.ticks;
+            let before = owner.cranks.len();
+            owner.cranks.retain(|p, (until, _)| {
+                *until > now && matches!(owner.index.parts.get(p), Some(Part::Crank(_)))
+            });
+            changed |= owner.cranks.len() != before;
             changed |= std::mem::take(&mut owner.dirty);
             let mut send = owner.ticks % RESEND == 1;
             if changed {
@@ -429,17 +504,20 @@ impl Game<'_> {
                     .index
                     .parts
                     .iter()
-                    .filter_map(|(p, part)| match part {
-                        // The set speed is the motor's as its front shows
+                    .filter_map(|(p, part)| {
+                        // The set speed is the source's as its front shows
                         // it; its own is along the axis.
-                        Part::Motor(out) => {
-                            let set = owner.motors.get(p).copied().unwrap_or(MOTOR_SPEED);
-                            Some((*p, if out.positive() { set } else { -set }))
-                        }
-                        _ => None,
+                        let (out, set) = match part {
+                            Part::Motor(out) => {
+                                (out, owner.motors.get(p).copied().unwrap_or(MOTOR_SPEED))
+                            }
+                            Part::Crank(out) => (out, owner.cranks.get(p)?.1),
+                            _ => return None,
+                        };
+                        Some((*p, if out.positive() { set } else { -set }))
                     })
                     .collect();
-                let solved = kinetic::solve(&owner.index.parts, &sources);
+                let solved = kinetic::solve(&owner.index.parts, &sources, &owner.powered);
                 if solved.speeds != owner.speeds || solved.jammed != owner.jammed {
                     owner.speeds = solved.speeds;
                     owner.jammed = solved.jammed;
@@ -461,8 +539,9 @@ impl Game<'_> {
     }
 
     /// The player used the block at `pos` (the world's owner, before the
-    /// block's own use): a creative motor's speed changes. Whether it was
-    /// Tachyon's to use.
+    /// block's own use): a creative motor's speed changes, a hand crank
+    /// turns a moment (sneaking, the other way). Whether it was Tachyon's to
+    /// use.
     pub(super) fn tachyon_use(&mut self, pos: [i32; 3]) -> bool {
         if self.remote.is_some() {
             return false;
@@ -471,7 +550,8 @@ impl Game<'_> {
             return false;
         };
         let state = self.world.block(pos[0], pos[1], pos[2]).0;
-        if !matches!(kinds.part(state), Some(Part::Motor(_))) {
+        let part = kinds.part(state);
+        if !matches!(part, Some(Part::Motor(_) | Part::Crank(_))) {
             return false;
         }
         let sneaking = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft);
@@ -480,6 +560,13 @@ impl Game<'_> {
         OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
             owner.load(&root, dimension);
+            if matches!(part, Some(Part::Crank(_))) {
+                let speed = if sneaking { -MOTOR_SPEED } else { MOTOR_SPEED };
+                let until = owner.ticks + CRANK_TICKS;
+                let was = owner.cranks.insert(pos, (until, speed));
+                owner.dirty |= was.is_none_or(|(_, s)| s != speed);
+                return;
+            }
             let speed = owner.motors.get(&pos).copied().unwrap_or(MOTOR_SPEED);
             owner.motors.insert(pos, next_motor_speed(speed, sneaking));
             owner.dirty = true;
@@ -528,7 +615,7 @@ impl Game<'_> {
     /// owner's when the world runs in the window's frame.
     fn tachyon_view<R>(
         &self,
-        f: impl FnOnce(&Index, &HashMap<[i32; 3], f32>, &HashSet<[i32; 3]>) -> R,
+        f: impl FnOnce(&Index, &kinetic::Speeds, &HashSet<[i32; 3]>) -> R,
     ) -> R {
         if self.remote.is_some() {
             CLIENT.with_borrow(|c| f(&c.index, &c.speeds, &c.jammed))
@@ -536,7 +623,7 @@ impl Game<'_> {
             let dimension = self.dim.id();
             OWNERS.with_borrow(|owners| match owners.get(dimension) {
                 Some(o) => f(&o.index, &o.speeds, &o.jammed),
-                None => f(&Index::default(), &HashMap::new(), &HashSet::new()),
+                None => f(&Index::default(), &kinetic::Speeds::new(), &HashSet::new()),
             })
         }
     }
@@ -548,7 +635,7 @@ impl Game<'_> {
         }
         let ticks = self.world.game_time as f64 + alpha;
         let view = self.view_frustum;
-        let mut draws: Vec<([i32; 3], Part, f32)> = Vec::new();
+        let mut draws: Vec<([i32; 3], Part, [f32; 2])> = Vec::new();
         self.tachyon_view(|index, speeds, _| {
             for (pos, part) in &index.parts {
                 let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
@@ -560,7 +647,7 @@ impl Game<'_> {
                 if view.is_some_and(|v| !v.intersects(o - Vec3::splat(1.5), o + Vec3::splat(2.5))) {
                     continue;
                 }
-                draws.push((*pos, *part, speeds.get(pos).copied().unwrap_or(0.0)));
+                draws.push((*pos, *part, speeds.get(pos).copied().unwrap_or([0.0; 2])));
             }
         });
         for (pos, part, speed) in draws {
@@ -568,8 +655,8 @@ impl Game<'_> {
             let light = horizon_client::block_entity_render::vertex_light(packed);
             let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
             let origin = (at - camera).as_vec3();
-            for (model, toward, factor) in pieces(part) {
-                let speed = speed * factor;
+            for (model, toward, factor, half) in pieces(part) {
+                let speed = speed[half] * factor;
                 let axis = toward.axis();
                 let degrees = kinetic::angle(part, pos, speed, ticks);
                 let pose = Mat4::from_translation(origin + Vec3::splat(0.5))
@@ -625,13 +712,17 @@ impl Game<'_> {
         };
         let line = self.tachyon_view(|index, speeds, jammed| {
             let part = index.parts.get(&hit.pos)?;
-            let speed = speeds.get(&hit.pos).copied().unwrap_or(0.0);
+            let [a, b] = speeds.get(&hit.pos).copied().unwrap_or([0.0; 2]);
+            let speed = if a.abs() >= b.abs() { a } else { b };
             let what = match part {
                 Part::Shaft(_) => "Shaft",
                 Part::Cog(_) => "Cogwheel",
                 Part::LargeCog(_) => "Large Cogwheel",
                 Part::Gearbox(_) => "Gearbox",
                 Part::Motor(_) => "Creative Motor",
+                Part::Crank(_) => "Hand Crank",
+                Part::Clutch(_) => "Clutch",
+                Part::Gearshift(_) => "Gearshift",
             };
             Some(if jammed.contains(&hit.pos) {
                 format!("{what}: jammed")
@@ -657,11 +748,11 @@ mod tests {
 
     #[test]
     fn speeds_go_and_come_back() {
-        let speeds = HashMap::from([([1, -64, 3], 32.0), ([-5, 70, 9], -16.0)]);
+        let speeds = HashMap::from([([1, -64, 3], [32.0; 2]), ([-5, 70, 9], [-16.0, 16.0])]);
         let jammed = HashSet::from([[0, 0, 0]]);
         let (s, j) = decode(&encode(&speeds, &jammed)).unwrap();
-        assert_eq!((s, j), (speeds, jammed));
-        assert!(decode(&[2]).is_none());
+        assert_eq!((s, j), (speeds.clone(), jammed.clone()));
+        assert!(decode(&[1]).is_none());
         assert!(decode(&encode(&speeds, &jammed)[..10]).is_none());
     }
 
@@ -686,13 +777,23 @@ mod tests {
             part_of("kinetica:creative_motor", facing),
             Some(Part::Motor(Dir::South))
         );
+        assert_eq!(
+            part_of("kinetica:hand_crank", facing),
+            Some(Part::Crank(Dir::South))
+        );
+        assert_eq!(
+            part_of("kinetica:gearshift", props("y")),
+            Some(Part::Gearshift(Axis::Y))
+        );
     }
 
     #[test]
     fn a_gearbox_shows_four_turning_shafts_a_shaft_one() {
-        assert_eq!(pieces(Part::Gearbox(Axis::Y)).count(), 4);
-        assert_eq!(pieces(Part::Shaft(Axis::Z)).count(), 1);
-        assert_eq!(pieces(Part::Motor(Dir::East)).count(), 1);
+        assert_eq!(pieces(Part::Gearbox(Axis::Y)).len(), 4);
+        assert_eq!(pieces(Part::Shaft(Axis::Z)).len(), 1);
+        assert_eq!(pieces(Part::Motor(Dir::East)).len(), 1);
+        let halves: Vec<usize> = pieces(Part::Clutch(Axis::X)).iter().map(|p| p.3).collect();
+        assert_eq!(halves, [0, 1]);
     }
 
     #[test]

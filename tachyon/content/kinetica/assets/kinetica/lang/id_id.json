@@ -5,5 +5,8 @@
   "block.kinetica.large_cogwheel": "Roda Gigi Besar",
   "block.kinetica.gearbox": "Kotak Gigi",
   "block.kinetica.creative_motor": "Motor Kreatif",
+  "block.kinetica.hand_crank": "Engkol Tangan",
+  "block.kinetica.clutch": "Kopling",
+  "block.kinetica.gearshift": "Pemindah Gigi",
   "item.kinetica.ferrostone_alloy": "Paduan Ferrostone"
 }

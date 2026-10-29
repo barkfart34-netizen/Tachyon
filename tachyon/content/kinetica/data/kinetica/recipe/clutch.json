@@ -1,0 +1,13 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    "kinetica:ferrostone_casing",
+    "kinetica:shaft",
+    "minecraft:redstone"
+  ],
+  "result": {
+    "id": "kinetica:clutch",
+    "count": 1
+  }
+}

@@ -1,6 +1,7 @@
 {
   "values": [
     "kinetica:cogwheel",
-    "kinetica:large_cogwheel"
+    "kinetica:large_cogwheel",
+    "kinetica:hand_crank"
   ]
 }
