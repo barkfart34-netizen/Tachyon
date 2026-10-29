@@ -6,6 +6,7 @@ mod android;
 // The desktop's own start (`run`) and what only it uses stay unused here.
 #[allow(dead_code)]
 mod game;
+mod tachyon;
 
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]

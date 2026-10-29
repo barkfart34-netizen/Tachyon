@@ -1,4 +1,4 @@
-//! Tachyon: the name and the look of the Android app, in one place so a new
+//! Tachyon: the name and the look of its launchers, in one place so a new
 //! name or palette is one change. The game underneath is Horizon
 //! (horizon-rust/horizon, MIT); its crates keep their names so Horizon's
 //! changes keep merging in.

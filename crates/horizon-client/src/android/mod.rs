@@ -1,15 +1,13 @@
 //! The app around the game: logcat, the activity's Java side, the folders,
 //! and Tachyon's launcher that runs before the game in the same window.
-pub mod brand;
 mod controls;
-mod draw;
 pub mod install;
 pub mod jni;
 mod launcher;
 mod logcat;
 mod shell;
-mod ui;
 
+use crate::tachyon::brand;
 use winit::event_loop::EventLoop;
 use winit::platform::android::EventLoopBuilderExtAndroid;
 use winit::platform::android::activity::AndroidApp;

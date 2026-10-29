@@ -18,6 +18,8 @@ pub struct Pointer {
     pub tap: Option<(f32, f32)>,
     /// Drag distance since the last frame, for scrolling.
     pub scroll: f32,
+    /// Where a mouse points while no button is down (the desktop).
+    pub hover: Option<(f32, f32)>,
 }
 
 impl Pointer {
@@ -50,17 +52,29 @@ pub struct Ui<'c, 'a> {
     pointer: &'c Pointer,
     /// The tap, until a widget takes it.
     tap: Option<(f32, f32)>,
+    /// The part of the window the widgets laid out now are seen in: a list
+    /// scrolled under a header drawn over it takes no taps there.
+    pub clip: Option<Rect>,
 }
 
 impl<'c, 'a> Ui<'c, 'a> {
     pub fn new(c: &'c mut Canvas<'a>, pointer: &'c Pointer) -> Self {
         let tap = pointer.tap;
-        Self { c, pointer, tap }
+        Self {
+            c,
+            pointer,
+            tap,
+            clip: None,
+        }
+    }
+
+    fn seen(&self, at: (f32, f32)) -> bool {
+        self.clip.is_none_or(|clip| clip.contains(at))
     }
 
     /// Whether the tap of this frame landed in `r` (once).
     pub fn tapped(&mut self, r: Rect) -> bool {
-        if self.tap.is_some_and(|t| r.contains(t)) {
+        if self.tap.is_some_and(|t| r.contains(t) && self.seen(t)) {
             self.tap = None;
             true
         } else {
@@ -68,10 +82,17 @@ impl<'c, 'a> Ui<'c, 'a> {
         }
     }
 
-    fn pressed(&self, r: Rect) -> bool {
+    /// Whether the mouse is over `r`.
+    pub fn hovered(&self, r: Rect) -> bool {
         self.pointer
-            .down
-            .is_some_and(|(start, now, dragged)| !dragged && r.contains(start) && r.contains(now))
+            .hover
+            .is_some_and(|at| r.contains(at) && self.seen(at))
+    }
+
+    pub fn pressed(&self, r: Rect) -> bool {
+        self.pointer.down.is_some_and(|(start, now, dragged)| {
+            !dragged && r.contains(start) && r.contains(now) && self.seen(start)
+        })
     }
 
     pub fn text(&mut self, x: f32, y: f32, text: &str, face: Face, size: f32, color: [f32; 4]) -> f32 {

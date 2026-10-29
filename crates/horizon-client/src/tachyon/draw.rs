@@ -1,7 +1,6 @@
-//! The launcher's renderer: rounded plates, rings and text in the design
-//! system's fonts, drawn with wgpu into the activity's window. It needs none
-//! of the game's resources, which do not exist before the launcher prepares
-//! them. Coordinates are dp (the launcher's logical pixels).
+//! The launchers' renderer: rounded plates, rings, gradients, images and text
+//! in the design system's fonts, drawn with wgpu into the window. Text and
+//! images share one atlas. Coordinates are dp (the launcher's logical pixels).
 use ab_glyph::{Font as _, FontRef, GlyphId, PxScale, ScaleFont as _, point};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -204,6 +203,55 @@ impl Glyphs {
     }
 }
 
+/// An image placed in the atlas (`Renderer::image`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Image {
+    /// Atlas pixels: x, y, width, height.
+    at: [u32; 4],
+}
+
+impl Image {
+    pub fn width(&self) -> u32 {
+        self.at[2]
+    }
+    pub fn height(&self) -> u32 {
+        self.at[3]
+    }
+}
+
+/// An RGBA image from PNG bytes.
+pub fn decode_png(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let (w, h) = (info.width, info.height);
+    let pixels = &buf[..info.buffer_size()];
+    let rgba = match info.color_type.samples() {
+        4 => pixels.to_vec(),
+        3 => pixels.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
+        2 => pixels.chunks_exact(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+        1 => pixels.iter().flat_map(|&g| [g, g, g, 255]).collect(),
+        _ => return None,
+    };
+    Some((rgba, w, h))
+}
+
+/// `rgba` (`w` by `h`) scaled to `nw` by `nh`, by nearest texel.
+pub fn resize_nearest(rgba: &[u8], w: u32, h: u32, nw: u32, nh: u32) -> Vec<u8> {
+    let mut out = vec![0u8; (nw * nh * 4) as usize];
+    for y in 0..nh {
+        for x in 0..nw {
+            let (sx, sy) = (x * w / nw, y * h / nh);
+            let s = ((sy * w + sx) * 4) as usize;
+            let d = ((y * nw + x) * 4) as usize;
+            out[d..d + 4].copy_from_slice(&rgba[s..s + 4]);
+        }
+    }
+    out
+}
+
 /// One frame's drawing, in dp.
 pub struct Canvas<'a> {
     glyphs: &'a mut Glyphs,
@@ -242,6 +290,42 @@ impl Canvas<'_> {
             return;
         }
         self.quad(r, [0.0; 4], color, [0.0, 0.0, radius * self.scale, 0.0]);
+    }
+    /// A part of `image` (`src`: left, top, right, bottom from 0 to 1) in `r`,
+    /// multiplied by `color`.
+    pub fn image(&mut self, image: Image, r: Rect, src: [f32; 4], color: [f32; 4]) {
+        let [x, y, w, h] = image.at.map(|v| v as f32);
+        let a = ATLAS as f32;
+        let uv = [
+            (x + src[0] * w) / a,
+            (y + src[1] * h) / a,
+            (x + src[2] * w) / a,
+            (y + src[3] * h) / a,
+        ];
+        self.quad(r, uv, color, [0.0, 0.0, 0.0, -1.0]);
+    }
+    /// A ring `width` dp wide just inside `r`'s rounded edge.
+    pub fn ring(&mut self, r: Rect, radius: f32, width: f32, color: [f32; 4]) {
+        let s = self.scale;
+        self.quad(r, [0.0; 4], color, [0.0, 0.0, radius * s, width * s]);
+    }
+    /// A plate shaded from `top` to `bottom`, its corners rounded by `radius` dp.
+    pub fn gradient(&mut self, r: Rect, radius: f32, top: [f32; 4], bottom: [f32; 4]) {
+        self.shaded(r, radius, [top, top, bottom, bottom]);
+    }
+    /// A plate shaded from `left` to `right`.
+    pub fn gradient_across(&mut self, r: Rect, radius: f32, left: [f32; 4], right: [f32; 4]) {
+        self.shaded(r, radius, [left, right, right, left]);
+    }
+    /// A plate with a colour at each corner: top left, top right, bottom
+    /// right, bottom left.
+    fn shaded(&mut self, r: Rect, radius: f32, colors: [[f32; 4]; 4]) {
+        let first = self.vertices.len();
+        self.quad(r, [0.0; 4], colors[0], [0.0, 0.0, radius * self.scale, 0.0]);
+        // `quad`'s two triangles, by corner.
+        for (v, corner) in self.vertices[first..].iter_mut().zip([0, 1, 2, 0, 2, 3]) {
+            v.color = colors[corner];
+        }
     }
     /// A one-pixel rule.
     pub fn rule(&mut self, x: f32, y: f32, w: f32, color: [f32; 4]) {
@@ -383,6 +467,10 @@ pub struct Renderer {
     glyphs: Glyphs,
     /// Colours are written as they are into an sRGB target's linear values.
     srgb: bool,
+    /// The window's frames can be copied out (`capture`).
+    copyable: bool,
+    /// Where the next frame is saved as a PNG.
+    capture: Option<std::path::PathBuf>,
     pub scale: f32,
 }
 
@@ -393,7 +481,11 @@ impl Renderer {
 
     async fn open(window: Arc<Window>) -> Result<Self> {
         let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
-        descriptor.backends = wgpu::Backends::VULKAN | wgpu::Backends::GL;
+        descriptor.backends = if cfg!(windows) {
+            wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::GL
+        } else {
+            wgpu::Backends::VULKAN | wgpu::Backends::GL
+        };
         let instance = wgpu::Instance::new(descriptor);
         let scale = window.scale_factor() as f32;
         let size = window.inner_size();
@@ -556,8 +648,91 @@ impl Renderer {
             atlas,
             glyphs: Glyphs::new(),
             srgb: format.is_srgb(),
+            copyable: caps.usages.contains(wgpu::TextureUsages::COPY_SRC),
+            capture: None,
             scale,
         })
+    }
+
+    /// Places an RGBA image in the atlas, for `Canvas::image`; none when the
+    /// atlas has no room left.
+    pub fn image(&mut self, rgba: &[u8], width: u32, height: u32) -> Option<Image> {
+        let [x, y] = self.glyphs.place(width, height)?;
+        self.glyphs
+            .uploads
+            .push(([x, y, width, height], rgba.to_vec()));
+        Some(Image {
+            at: [x, y, width, height],
+        })
+    }
+
+    /// Saves the next frame as a PNG at `path` (for pictures of the launcher
+    /// in CI); false where the window's frames cannot be copied out.
+    pub fn capture(&mut self, path: std::path::PathBuf) -> bool {
+        if !self.copyable {
+            return false;
+        }
+        if !self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
+            self.config.usage |= wgpu::TextureUsages::COPY_SRC;
+            self.surface.configure(&self.device, &self.config);
+        }
+        self.capture = Some(path);
+        true
+    }
+
+    /// Copies `texture` (the frame) out to `path` as a PNG.
+    fn save(&self, encoder: wgpu::CommandEncoder, texture: &wgpu::Texture, path: &std::path::Path) -> Result<()> {
+        let mut encoder = encoder;
+        let (w, h) = (self.config.width, self.config.height);
+        let row = (w * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("launcher capture"),
+            size: u64::from(row * h),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit([encoder.finish()]);
+        buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        self.device.poll(wgpu::PollType::wait_indefinitely())?;
+        let data = buffer.slice(..).get_mapped_range()?;
+        let bgra = matches!(
+            self.config.format,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+        let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            let line = &data[(y * row) as usize..][..(w * 4) as usize];
+            for p in line.chunks_exact(4) {
+                rgba.extend(if bgra { [p[2], p[1], p[0], 255] } else { [p[0], p[1], p[2], 255] });
+            }
+        }
+        let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+        let mut png = png::Encoder::new(file, w, h);
+        png.set_color(png::ColorType::Rgba);
+        png.set_depth(png::BitDepth::Eight);
+        png.write_header()?.write_image_data(&rgba)?;
+        Ok(())
     }
 
     pub fn resize(&mut self, width: u32, height: u32, scale: f32) {
@@ -664,7 +839,16 @@ impl Renderer {
                 pass.draw(0..vertices.len() as u32, 0..1);
             }
         }
-        self.queue.submit([encoder.finish()]);
+        match self.capture.take() {
+            Some(path) => {
+                if let Err(e) = self.save(encoder, &frame.texture, &path) {
+                    log::warn!("Tachyon launcher: {} not saved: {e}", path.display());
+                }
+            }
+            None => {
+                self.queue.submit([encoder.finish()]);
+            }
+        }
         self.queue.present(frame);
         Ok(())
     }

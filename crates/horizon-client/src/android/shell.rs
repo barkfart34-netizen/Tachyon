@@ -30,6 +30,11 @@ impl Shell {
         let State::Launcher(launcher) = &mut self.state else {
             return;
         };
+        // Off screen (the activity paused), the game would find no window:
+        // it starts when the launcher is back.
+        if !launcher.on_screen() {
+            return;
+        }
         let Some(args) = launcher.play.take() else {
             return;
         };

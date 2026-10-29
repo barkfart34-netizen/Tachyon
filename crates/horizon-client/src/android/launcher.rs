@@ -1,12 +1,12 @@
 //! Tachyon's launcher: the wordmark, Play, the player's name and the touch
 //! controls, drawn in the game's window before the game takes it over. The
 //! first start unpacks the resources the APK carries.
-use super::brand::{self, P};
+use crate::tachyon::brand::{self, P};
 use super::controls;
-use super::draw::{Face, Rect, Renderer, hex};
+use crate::tachyon::draw::{Face, Rect, Renderer, hex};
 use super::install::{self, Paths, Task};
 use super::jni;
-use super::ui::{CONTROL, GUTTER, Pointer, ROW, Ui};
+use crate::tachyon::ui::{CONTROL, GUTTER, Pointer, ROW, Ui};
 use std::sync::Arc;
 use std::time::Instant;
 use winit::event::{TouchPhase, WindowEvent};
@@ -153,6 +153,12 @@ impl Launcher {
         }
     }
 
+    /// Whether the launcher has its window and draws in it: the game can
+    /// only start then, as it needs the window's surface.
+    pub fn on_screen(&self) -> bool {
+        self.window.is_some() && self.renderer.is_some()
+    }
+
     /// The window is going away (the app left the screen): the surface goes with it.
     pub fn suspended(&mut self) {
         self.renderer = None;
@@ -263,6 +269,7 @@ impl Launcher {
         }
         if !self.busy()
             && self.paths.prepared()
+            && self.on_screen()
             && let Some(extra) = self.smoke.take()
         {
             log::info!("Tachyon launcher: smoke test, playing with {extra:?}");
@@ -291,7 +298,7 @@ impl Launcher {
         let tap_pointer = Pointer {
             down: self.pointer.down,
             tap,
-            scroll: 0.0,
+            ..Pointer::default()
         };
         let result = renderer.frame(hex(P.page, 1.0), |c| {
             let mut ui = Ui::new(c, &tap_pointer);
