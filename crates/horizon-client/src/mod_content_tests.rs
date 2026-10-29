@@ -34,6 +34,41 @@ fn json_keeps_key_order_and_numbers() {
 }
 
 #[test]
+fn a_placed_feature_joins_the_biomes_of_the_one_it_goes_beside() {
+    let ore = r#"{"feature":"tin:ore","placement":[],"horizon:beside":"minecraft:ore_iron_middle"}"#;
+    let (next_to, rest) = beside(ore).unwrap().unwrap();
+    assert_eq!(next_to, "minecraft:ore_iron_middle");
+    assert_eq!(rest, r#"{"feature":"tin:ore","placement":[]}"#);
+    assert!(beside(&rest).unwrap().is_none());
+    let biomes = serde_json::json!({
+        "minecraft:plains": serde_json::json!({"features": [[],
+            ["minecraft:ore_dirt", "minecraft:ore_iron_middle", "minecraft:ore_gold"]]}).to_string(),
+        "minecraft:the_void": serde_json::json!({"features": [["minecraft:void_start_platform"]]})
+            .to_string(),
+    });
+    let mut doc: J = serde_json::from_str(&biomes.to_string()).unwrap();
+    // Twice: placed once.
+    for _ in 0..2 {
+        place_beside(&mut doc, "minecraft:ore_iron_middle", "tin:ore").unwrap();
+    }
+    let features = |id: &str| -> serde_json::Value {
+        let Some(J::Str(text)) = doc.get(id) else {
+            panic!("{id}");
+        };
+        serde_json::from_str::<serde_json::Value>(text).unwrap()["features"].clone()
+    };
+    assert_eq!(
+        features("minecraft:plains"),
+        serde_json::json!([[], ["minecraft:ore_dirt", "minecraft:ore_iron_middle", "tin:ore",
+            "minecraft:ore_gold"]])
+    );
+    assert_eq!(
+        features("minecraft:the_void"),
+        serde_json::json!([["minecraft:void_start_platform"]])
+    );
+}
+
+#[test]
 fn tags_merge_without_repeats() {
     let vanilla = r#"{"values": ["minecraft:stone"]}"#;
     let more = [

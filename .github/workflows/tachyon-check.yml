@@ -43,3 +43,6 @@ jobs:
 
       - name: The import's Java mod port
         run: cargo test -p horizon-port-pack
+
+      - name: Content mods in the resource root (features beside vanilla's)
+        run: cargo test -p horizon-client --lib -- mod_content

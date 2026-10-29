@@ -10,7 +10,9 @@
 //!   keys and in-table state ids moved over, and the declared overrides
 //!   applied;
 //! - each mod's own `assets/` and `data/` files;
-//! - additions to tags merged into the tag files and bundles.
+//! - additions to tags merged into the tag files and bundles;
+//! - mods' placed features put in the biomes of the vanilla ones they name
+//!   (`horizon:beside`).
 //!
 //! The loaders need no mod code, vanilla state ids never move, and with no
 //! content mod the root is the base root itself.
@@ -688,7 +690,7 @@ const BIOME_TAGS: &str = "worldgen/biome_tags.json";
 /// Worldgen registries a content mod may add to, and the bundle the
 /// worldgen loader reads each from (id → the file's text): what structure
 /// mods hold. Biomes, noise and density functions change the terrain and
-/// are not read from mods.
+/// are not read from mods (but a placed feature may join biomes, `BESIDE`).
 const WORLDGEN_BUNDLES: [(&str, &str); 6] = [
     ("structure", "worldgen/structures.json"),
     ("structure_set", "worldgen/structure_sets.json"),
@@ -715,6 +717,71 @@ const ADDABLE: [(&str, &str); 2] = [
     ("worldgen/structure_sets.json", "structures"),
     ("worldgen/template_pools.json", "elements"),
 ];
+
+/// The worldgen loader's bundle of biomes (id → the biome's text).
+const BIOMES: &str = "worldgen/biomes.json";
+/// The key of a mod's placed feature that also places it in every biome
+/// placing the feature it names, in the same step right after that one: how
+/// a mod's ore joins the biomes vanilla's ores are in, as NeoForge's biome
+/// modifiers do. Vanilla data never has it.
+const BESIDE: &str = "horizon:beside";
+
+/// The feature a mod's placed feature goes beside (`horizon:beside`), and
+/// the placed feature's text without that key; `None` without it.
+fn beside(text: &str) -> Result<Option<(String, String)>> {
+    if !text.contains(BESIDE) {
+        return Ok(None);
+    }
+    let mut doc: J = serde_json::from_str(text)?;
+    let J::Obj(o) = &mut doc else {
+        return Ok(None);
+    };
+    let Some(i) = o.iter().position(|(k, _)| k == BESIDE) else {
+        return Ok(None);
+    };
+    let (_, J::Str(next_to)) = o.remove(i) else {
+        return Err(format!("{BESIDE}: not a placed feature id").into());
+    };
+    Ok(Some((next_to, serde_json::to_string(&doc)?)))
+}
+
+/// Puts `feature` right after `next_to` in each step of every biome of the
+/// bundle `doc` that places `next_to`, once.
+fn place_beside(doc: &mut J, next_to: &str, feature: &str) -> Result<()> {
+    let J::Obj(biomes) = doc else {
+        return Ok(());
+    };
+    for (id, text) in biomes {
+        let J::Str(text) = text else {
+            continue;
+        };
+        if !text.contains(next_to) {
+            continue;
+        }
+        let mut biome: J = serde_json::from_str(text).map_err(|e| format!("{id}: {e}"))?;
+        let Some(J::Arr(steps)) = biome.get_mut("features") else {
+            continue;
+        };
+        let named = |f: &J, name: &str| matches!(f, J::Str(s) if s == name);
+        let mut changed = false;
+        for step in steps {
+            let J::Arr(list) = step else {
+                continue;
+            };
+            let Some(i) = list.iter().position(|f| named(f, next_to)) else {
+                continue;
+            };
+            if !list.iter().any(|f| named(f, feature)) {
+                list.insert(i + 1, J::Str(feature.to_owned()));
+                changed = true;
+            }
+        }
+        if changed {
+            *text = serde_json::to_string(&biome)?;
+        }
+    }
+    Ok(())
+}
 
 /// A mod file's additions (`horizon:add_to`): its entries appended to the
 /// list of each set or pool it names, as lithostitched's
@@ -904,7 +971,7 @@ impl Known {
         Ok(Known {
             blocks,
             items,
-            biomes: keys("worldgen/biomes.json")?,
+            biomes: keys(BIOMES)?,
             biome_tags: keys(BIOME_TAGS)?,
             tag_files: tags.keys().cloned().collect(),
         })
@@ -1090,6 +1157,8 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
     let mut warnings = Vec::new();
     let mut worldgen: BTreeMap<&str, Vec<(String, String)>> = BTreeMap::new();
     let mut additions: BTreeMap<&str, Vec<Addition>> = BTreeMap::new();
+    // (the feature it goes beside, the mod's placed feature)
+    let mut besides: Vec<(String, String)> = Vec::new();
     for m in mods {
         let declarations = format!("data/{}/horizon/", m.id);
         let mut reader = m.content.reader()?;
@@ -1109,7 +1178,15 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
             } else if !file.starts_with(&declarations) {
                 overlay.write(file, &bytes)?;
                 if let Some((bundle, id)) = worldgen_entry(file) {
-                    let text = String::from_utf8(bytes).map_err(|e| format!("{file}: {e}"))?;
+                    let mut text =
+                        String::from_utf8(bytes).map_err(|e| format!("{file}: {e}"))?;
+                    if bundle == "worldgen/placed_features.json"
+                        && let Some((next_to, rest)) =
+                            beside(&text).map_err(|e| format!("{file}: {e}"))?
+                    {
+                        besides.push((next_to, id.clone()));
+                        text = rest;
+                    }
                     let entries = worldgen.entry(bundle).or_default();
                     match Addition::read(bundle, &text).map_err(|e| format!("{file}: {e}"))? {
                         Some(addition) => additions.entry(bundle).or_default().push(addition),
@@ -1207,6 +1284,14 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
                 .map_err(|e| format!("{bundle}: {e}"))?;
         }
         overlay.write(bundle, &serde_json::to_vec(&doc)?)?;
+    }
+    // Mods' placed features in the biomes of the ones they go beside.
+    if !besides.is_empty() && base.join(BIOMES).exists() {
+        let mut doc = read_json(&base.join(BIOMES))?;
+        for (next_to, feature) in &besides {
+            place_beside(&mut doc, next_to, feature).map_err(|e| format!("{BIOMES}: {e}"))?;
+        }
+        overlay.write(BIOMES, &serde_json::to_vec(&doc)?)?;
     }
     // A block without its own blockstate looks like its template, so every
     // state still has a model.
