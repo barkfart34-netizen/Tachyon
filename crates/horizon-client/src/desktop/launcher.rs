@@ -1381,7 +1381,8 @@ impl Launcher {
             );
             self.icon(ui, Rect::new(row.x + 18.0, row.y + 17.0, 44.0, 44.0));
             let tx = row.x + 78.0;
-            let buttons = 84.0 + 76.0 + 90.0 + 24.0;
+            // Play, Edit and Folder with their gaps, and room before them.
+            let buttons = 84.0 + 8.0 + 76.0 + 8.0 + 90.0 + 16.0 + 24.0;
             let room = (row.right() - buttons - tx).max(80.0);
             let name = ui.c.fit(&installation.name, Face::Medium, 16.0, room);
             let nw = ui.text(tx, row.y + 17.0, &name, Face::Medium, 16.0, hex(P.ink, 1.0));
@@ -1591,15 +1592,14 @@ impl Launcher {
             let body: f32 = lines.iter().map(|l| l.len() as f32 * 21.0 + 8.0).sum();
             let card = Rect::new(x, y, w, 76.0 + body + 12.0);
             ui.c.rect(card, 16.0, hex(P.surface, 1.0));
+            let date = date.to_uppercase();
+            Self::label(ui, card.x + 24.0, card.y + 22.0, &date);
             if i == 0 {
-                ui.c.gradient_across(
-                    Rect::new(card.x + 24.0, card.y, 120.0, 2.0),
-                    1.0,
-                    hex(brand::STREAK[0], 1.0),
-                    hex(brand::STREAK[1], 0.0),
-                );
+                let dw = ui.c.measure(&date, Face::Mono, 11.0);
+                let pill = Rect::new(card.x + 24.0 + dw + 10.0, card.y + 19.0, 58.0, 20.0);
+                ui.c.rect(pill, 10.0, hex(P.accent, 0.14));
+                ui.centred(pill, "LATEST", Face::Mono, 10.0, hex(P.accent, 1.0));
             }
-            Self::label(ui, card.x + 24.0, card.y + 22.0, &date.to_uppercase());
             ui.text(card.x + 24.0, card.y + 40.0, title, Face::Medium, 18.0, hex(P.ink, 1.0));
             let mut ly = card.y + 76.0;
             for point in lines {

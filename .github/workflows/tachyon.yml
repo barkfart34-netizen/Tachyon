@@ -7,7 +7,17 @@ name: Tachyon APK
 on:
   push:
     branches: [main]
-    paths-ignore: ["docs/**", "**/*.md", "roadmap/**", "tests/**", "tools/**"]
+    # The desktop's own files build in tachyon-windows.yml.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "roadmap/**"
+      - "tests/**"
+      - "tools/**"
+      - "packaging/**"
+      - "crates/horizon-client/src/desktop/**"
+      - "crates/horizon-client/src/tachyon_main.rs"
+      - ".github/workflows/tachyon-windows.yml"
   workflow_dispatch:
     inputs:
       profile:
