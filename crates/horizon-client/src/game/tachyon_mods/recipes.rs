@@ -27,7 +27,7 @@ pub const MAX_STACKS: usize = 64;
 /// A right click's gift in creative mode (cut to one stack by the game).
 pub const STACK: u32 = 99;
 /// The stations, in the order of their tabs, with each one's icon.
-pub const STATIONS: [&str; 8] = [
+pub const STATIONS: [&str; 9] = [
     "minecraft:crafting_table",
     "minecraft:furnace",
     "minecraft:blast_furnace",
@@ -36,6 +36,8 @@ pub const STATIONS: [&str; 8] = [
     "minecraft:stonecutter",
     "minecraft:smithing_table",
     "minecraft:brewing_stand",
+    // Tachyon: Kinetica's millstone.
+    "kinetica:millstone",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +51,8 @@ pub enum Kind {
     Stonecutting,
     Smithing,
     Brewing,
+    /// Tachyon: a millstone's (`results` past the first by `chances`).
+    Milling,
 }
 
 fn station(kind: Kind) -> usize {
@@ -61,6 +65,7 @@ fn station(kind: Kind) -> usize {
         Kind::Stonecutting => 5,
         Kind::Smithing => 6,
         Kind::Brewing => 7,
+        Kind::Milling => 8,
     }
 }
 
@@ -91,6 +96,8 @@ pub struct Recipe {
     pub experience: f32,
     /// The recipe book's id, or -1.
     pub book_id: i32,
+    /// Each result's chance, 0 to 1 (none: all certain).
+    pub chances: Vec<f32>,
 }
 
 /// An item as the panel shows it.
@@ -363,6 +370,20 @@ impl Viewer {
             Kind::Stonecutting => (Layout::Single, 1, 1, String::new()),
             Kind::Smithing => (Layout::Smithing, 3, 1, String::new()),
             Kind::Brewing => (Layout::Brewing, 2, 1, String::new()),
+            // The first result in its slot; the others, and their chances,
+            // in the note. A millstone's work is a tick's at 16 RPM.
+            Kind::Milling => {
+                let mut note = format!("{} s at 16 RPM", r.cooking_time as f32 / 20.0);
+                for (i, s) in r.results.iter().enumerate().skip(1) {
+                    let chance = r.chances.get(i).copied().unwrap_or(1.0);
+                    let name = self.name(self.id(s));
+                    note.push_str(&format!(", +{} {name}", s.count));
+                    if chance < 1.0 {
+                        note.push_str(&format!(" {}%", (chance * 100.0).round()));
+                    }
+                }
+                (Layout::Single, 1, 1, note)
+            }
         };
         // + only for what the recipe book shows; greyed until the book has it.
         let action = (r.book_id >= 0).then(|| known.contains(&r.book_id));
@@ -483,6 +504,7 @@ mod tests {
             cooking_time: 0,
             experience: 0.0,
             book_id: 7,
+            chances: Vec::new(),
         };
         let sticks = Recipe {
             kind: Kind::CraftingShaped,
@@ -502,6 +524,7 @@ mod tests {
             cooking_time: 200,
             experience: 0.15,
             book_id: 9,
+            chances: Vec::new(),
         };
         (items, vec![planks, sticks, charcoal])
     }

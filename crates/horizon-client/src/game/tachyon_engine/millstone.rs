@@ -74,7 +74,7 @@ struct Recipes {
 }
 
 /// The milling recipes of the built-in content, read once.
-fn recipes() -> &'static [Milling] {
+pub(super) fn recipes() -> &'static [Milling] {
     static RECIPES: OnceLock<Vec<Milling>> = OnceLock::new();
     RECIPES.get_or_init(|| {
         let Some(root) = horizon_client::brand::content() else {

@@ -49,7 +49,51 @@ fn recipe(r: &NativeRecipe) -> m::Recipe {
         cooking_time: r.cooking_time,
         experience: r.experience,
         book_id: r.book_id,
+        chances: Vec::new(),
     }
+}
+
+/// Tachyon: the millstone's recipes (the content engine's) whose items the
+/// tables know.
+fn milling(items: &[NativeItem]) -> Vec<m::Recipe> {
+    let index: std::collections::HashMap<&str, u32> = (items.iter().enumerate())
+        .map(|(i, it)| (it.id.as_str(), i as u32))
+        .collect();
+    let one = |id: &str, count: u32| {
+        Some(m::Ingredient {
+            item: *index.get(id)?,
+            count,
+            components: String::new(),
+        })
+    };
+    let mut out = Vec::new();
+    for (input, time, outputs) in crate::game::tachyon_engine::milling() {
+        let Some(slot) = one(&input, 1) else {
+            continue;
+        };
+        let (mut results, mut chances) = (Vec::new(), Vec::new());
+        for (item, count, chance) in outputs {
+            if let Some(r) = one(&item, count) {
+                results.push(r);
+                chances.push(chance);
+            }
+        }
+        if results.is_empty() {
+            continue;
+        }
+        out.push(m::Recipe {
+            kind: m::Kind::Milling,
+            width: 1,
+            height: 1,
+            slots: vec![vec![slot]],
+            results,
+            cooking_time: time.round() as u32,
+            experience: 0.0,
+            book_id: -1,
+            chances,
+        });
+    }
+    out
 }
 
 fn native(s: &m::Stack) -> NativeStack {
@@ -100,10 +144,9 @@ pub(super) fn frame(game: &mut Game<'_>) {
     };
     match (tables, m::loaded()) {
         (Some(t), false) => {
-            let (viewer, out) = m::Viewer::new(
-                t.items.iter().map(item).collect(),
-                t.recipes.iter().map(recipe).collect(),
-            );
+            let mut recipes: Vec<m::Recipe> = t.recipes.iter().map(recipe).collect();
+            recipes.extend(milling(&t.items));
+            let (viewer, out) = m::Viewer::new(t.items.iter().map(item).collect(), recipes);
             m::set_viewer(Some(viewer));
             apply(game, out);
         }

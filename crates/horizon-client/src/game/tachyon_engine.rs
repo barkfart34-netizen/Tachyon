@@ -327,6 +327,20 @@ thread_local! {
     static CLIENT: RefCell<Client> = RefCell::new(Client::default());
 }
 
+/// The millstone's recipes, for the recipe viewer: each input, its work,
+/// and its outputs (item, count, chance).
+pub(in crate::game) fn milling() -> Vec<(String, f32, Vec<(String, u32, f32)>)> {
+    millstone::recipes()
+        .iter()
+        .map(|r| {
+            let outputs = (r.outputs.iter())
+                .map(|o| (o.item.clone(), o.count, o.chance))
+                .collect();
+            (r.input.clone(), r.time, outputs)
+        })
+        .collect()
+}
+
 /// What a game shows of the parts: their speeds, the jammed ones, their
 /// networks' stress, and the millstones at work (on what).
 #[derive(Clone, Debug, Default, PartialEq)]
