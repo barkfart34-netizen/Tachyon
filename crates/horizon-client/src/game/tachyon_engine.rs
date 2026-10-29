@@ -41,6 +41,11 @@ const KINETIC: &str = "tachyon:kinetic";
 const MOTOR_SPEED: f32 = 32.0;
 /// Ticks a hand crank turns after each use (holding use repeats it).
 const CRANK_TICKS: u64 = 10;
+/// Ticks between looks at the water round the wheels and the sky above
+/// the sails.
+const NATURE_TICKS: u64 = 20;
+/// A water wheel's speed for each side water flows past squarely.
+const WATER_SPEED: f32 = 8.0;
 /// Ticks between full sends of the speeds, for players who just came.
 const RESEND: u64 = 100;
 /// How far turning parts are drawn, in blocks.
@@ -93,6 +98,8 @@ fn part_of<'a>(name: &str, property: impl Fn(&str) -> Option<&'a str>) -> Option
             property("facing").and_then(Dir::parse)?.opposite(),
         )),
         "clutch" => Some(Part::Clutch(axis()?)),
+        "water_wheel" => Some(Part::WaterWheel(axis()?)),
+        "windmill" => Some(Part::Windmill(axis()?)),
         "gearshift" => Some(Part::Gearshift(axis()?)),
         _ => None,
     }
@@ -219,6 +226,8 @@ struct Owner {
     cranks: HashMap<[i32; 3], (u64, f32)>,
     /// The clutches and gearshifts powered by redstone.
     powered: HashSet<[i32; 3]>,
+    /// The water wheels and windmills turning, at their own speeds.
+    natural: HashMap<[i32; 3], f32>,
 }
 
 impl Owner {
@@ -377,6 +386,8 @@ fn pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         Part::Shaft(a) => vec![("kinetica:block/shaft", positive(a), 1.0, 0)],
         Part::Cog(a) => vec![("kinetica:block/cogwheel", positive(a), 1.0, 0)],
         Part::LargeCog(a) => vec![("kinetica:block/large_cogwheel", positive(a), 1.0, 0)],
+        Part::WaterWheel(a) => vec![("kinetica:block/water_wheel", positive(a), 1.0, 0)],
+        Part::Windmill(a) => vec![("kinetica:block/windmill", positive(a), 1.0, 0)],
         Part::Gearbox(_) => Dir::ALL
             .into_iter()
             .filter(|d| part.shaft_toward(*d))
@@ -390,6 +401,10 @@ fn pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
             vec![(HALF, neg, 1.0, 0), (HALF, pos, 1.0, 1)]
         }
     }
+}
+
+fn add(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
 
 fn positive(axis: Axis) -> Dir {
@@ -446,7 +461,7 @@ impl Game<'_> {
         };
         let dimension = self.dim.id();
         let root = self.save.root.clone();
-        let (split, mut changed) = OWNERS.with_borrow_mut(|owners| {
+        let (split, nature, mut changed) = OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
             owner.load(&root, dimension);
             owner.ticks += 1;
@@ -468,8 +483,19 @@ impl Game<'_> {
                 .filter(|(_, part)| part.split())
                 .map(|(p, _)| *p)
                 .collect();
-            (split, changed)
+            let nature: Option<Vec<([i32; 3], Part)>> = (owner.ticks % NATURE_TICKS == 1)
+                .then(|| {
+                    owner
+                        .index
+                        .parts
+                        .iter()
+                        .filter(|(_, part)| matches!(part, Part::WaterWheel(_) | Part::Windmill(_)))
+                        .map(|(p, part)| (*p, *part))
+                        .collect()
+                });
+            (split, nature, changed)
         });
+        let natural = nature.map(|parts| self.tachyon_natural(&parts));
         // Redstone at the clutches and gearshifts.
         let powered: HashSet<[i32; 3]> = if split.is_empty() {
             HashSet::new()
@@ -488,6 +514,12 @@ impl Game<'_> {
             let owner = owners.entry(dimension).or_default();
             if powered != owner.powered {
                 owner.powered = powered;
+                changed = true;
+            }
+            if let Some(natural) = natural
+                && natural != owner.natural
+            {
+                owner.natural = natural;
                 changed = true;
             }
             // Cranks no one turns any more stop.
@@ -512,6 +544,10 @@ impl Game<'_> {
                                 (out, owner.motors.get(p).copied().unwrap_or(MOTOR_SPEED))
                             }
                             Part::Crank(out) => (out, owner.cranks.get(p)?.1),
+                            // Their speeds are their own already.
+                            Part::WaterWheel(_) | Part::Windmill(_) => {
+                                return owner.natural.get(p).map(|s| (*p, *s));
+                            }
                             _ => return None,
                         };
                         Some((*p, if out.positive() { set } else { -set }))
@@ -536,6 +572,74 @@ impl Game<'_> {
                     data,
                 }));
         }
+    }
+
+    /// The speeds of the water wheels and windmills among `parts`, each
+    /// about its axis: a wheel from the water flowing past its sides (its
+    /// turn about the axis), sails from the open sky above them, faster
+    /// higher up.
+    fn tachyon_natural(&self, parts: &[([i32; 3], Part)]) -> HashMap<[i32; 3], f32> {
+        let mut out = HashMap::new();
+        for &(p, part) in parts {
+            let speed = match part {
+                Part::WaterWheel(axis) => {
+                    let along = Vec3::from(positive(axis).offset().map(|c| c as f32));
+                    let turn: f32 = Dir::ALL
+                        .into_iter()
+                        .filter(|d| d.axis() != axis)
+                        .map(|d| {
+                            let r = Vec3::from(d.offset().map(|c| c as f32));
+                            let w = add(p, d.offset());
+                            r.cross(self.tachyon_water_flow(w)).dot(along)
+                        })
+                        .sum();
+                    (turn * WATER_SPEED).clamp(-32.0, 32.0)
+                }
+                Part::Windmill(_) => {
+                    let above = self.world.light(p[0], p[1] + 1, p[2]) >> 4;
+                    if above >= 15 && p[1] >= 60 {
+                        (8.0 + ((p[1] - 64).max(0) / 16 * 4) as f32).min(24.0)
+                    } else {
+                        0.0
+                    }
+                }
+                _ => 0.0,
+            };
+            if speed.abs() >= 0.5 {
+                out.insert(p, speed.round());
+            }
+        }
+        out
+    }
+
+    /// Which way the water at `w` flows, roughly: down where it falls, else
+    /// from its level toward lower neighbours; nothing for still water and
+    /// for no water.
+    fn tachyon_water_flow(&self, w: [i32; 3]) -> Vec3 {
+        use horizon_client::blocks::Fluid;
+        let facts = self.res.facts();
+        let here = facts.get(self.world.block(w[0], w[1], w[2]));
+        if here.fluid != Fluid::Water {
+            return Vec3::ZERO;
+        }
+        if here.fluid_falling {
+            return Vec3::NEG_Y;
+        }
+        let level = f32::from(here.fluid_level);
+        let mut v = Vec3::ZERO;
+        for d in [Dir::North, Dir::South, Dir::West, Dir::East] {
+            let n = add(w, d.offset());
+            let there = facts.get(self.world.block(n[0], n[1], n[2]));
+            let lower = if there.fluid == Fluid::Water {
+                if there.fluid_falling { 0.0 } else { f32::from(there.fluid_level) }
+            } else if there.replaceable {
+                0.0
+            } else {
+                continue;
+            };
+            v += Vec3::from(d.offset().map(|c| c as f32)) * (level - lower);
+        }
+        v.normalize_or_zero()
     }
 
     /// The player used the block at `pos` (the world's owner, before the
@@ -723,6 +827,8 @@ impl Game<'_> {
                 Part::Crank(_) => "Hand Crank",
                 Part::Clutch(_) => "Clutch",
                 Part::Gearshift(_) => "Gearshift",
+                Part::WaterWheel(_) => "Water Wheel",
+                Part::Windmill(_) => "Windmill",
             };
             Some(if jammed.contains(&hit.pos) {
                 format!("{what}: jammed")
@@ -784,6 +890,14 @@ mod tests {
         assert_eq!(
             part_of("kinetica:gearshift", props("y")),
             Some(Part::Gearshift(Axis::Y))
+        );
+        assert_eq!(
+            part_of("kinetica:water_wheel", props("x")),
+            Some(Part::WaterWheel(Axis::X))
+        );
+        assert_eq!(
+            part_of("kinetica:windmill", props("z")),
+            Some(Part::Windmill(Axis::Z))
         );
     }
 

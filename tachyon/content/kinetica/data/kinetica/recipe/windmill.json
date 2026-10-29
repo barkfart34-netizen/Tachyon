@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "W W",
+    " S ",
+    "W W"
+  ],
+  "key": {
+    "W": "#minecraft:wool",
+    "S": "kinetica:shaft"
+  },
+  "result": {
+    "id": "kinetica:windmill",
+    "count": 1
+  }
+}

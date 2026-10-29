@@ -8,5 +8,7 @@
   "block.kinetica.hand_crank": "Engkol Tangan",
   "block.kinetica.clutch": "Kopling",
   "block.kinetica.gearshift": "Pemindah Gigi",
+  "block.kinetica.water_wheel": "Kincir Air",
+  "block.kinetica.windmill": "Kincir Angin",
   "item.kinetica.ferrostone_alloy": "Paduan Ferrostone"
 }

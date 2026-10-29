@@ -190,6 +190,22 @@ def crank_wood():
     return img
 
 
+def canvas():
+    """A windmill sail's cloth: off-white weave, a darker seam each side."""
+    rng = random.Random(23)
+    img = image()
+    cloth = [(150, 140, 120), (186, 176, 154), (212, 204, 184), (232, 226, 210)]
+    for y in range(16):
+        for x in range(16):
+            c = cloth[2] if (x + y) % 2 else cloth[3]
+            if rng.random() < 0.12:
+                c = cloth[1]
+            if x in (0, 15) or y in (0, 15):
+                c = cloth[0]
+            img.putpixel((x, y), c + (255,))
+    return img
+
+
 def alloy():
     """An ingot: ferrostone grey, an iron sheen."""
     img = image()
@@ -232,6 +248,7 @@ TEXTURES = {
     "block/clutch": banded(REDSTONE),
     "block/gearshift": banded(BRONZE),
     "block/hand_crank": crank_wood,
+    "block/sail": canvas,
 }
 
 
@@ -348,6 +365,41 @@ def all_faces(texture, frm, to):
     return box(frm, to, {k: (texture, [max(0, min(16, v)) for v in u]) for k, u in uv.items()})
 
 
+WHEEL_TEX = dict(SHAFT_TEX, wood=t("block/cogwheel"), particle=t("block/cogwheel"))
+SAIL_TEX = dict(SHAFT_TEX, wood=t("block/hand_crank"), cloth=t("block/sail"), particle=t("block/sail"))
+
+
+def water_wheel():
+    """A shaft, a hub, eight paddles out to 20 pixels, and a rim between them."""
+    elements = [shaft_part(), all_faces("#wood", [4, 5, 4], [12, 11, 12])]
+    for i in range(8):
+        elements.append(turned((all_faces("#wood", [7, 3, -12], [9, 13, 4]), i * 45)))
+        elements.append(turned((all_faces("#wood", [0.5, 4, -10], [15.5, 12, -8]), i * 45 + 22.5)))
+    return elements
+
+
+def windmill():
+    """A shaft, a hub, and four spars out to 24 pixels, a sail on each."""
+    elements = [shaft_part(), all_faces("#wood", [5, 6, 5], [11, 10, 11])]
+    for i in range(4):
+        elements.append(turned((all_faces("#wood", [7, 7, -16], [9, 9, 5]), i * 90)))
+        elements.append(turned((all_faces("#cloth", [9, 7.5, -16], [16, 8.5, 1]), i * 90)))
+    return elements
+
+
+def big_item(block):
+    """An item for a part wider than its block: the block's model, smaller."""
+    return {"parent": t(block), "display": {
+        "gui": {"rotation": [30, 225, 0], "translation": [0, 0, 0], "scale": [0.3, 0.3, 0.3]},
+        "ground": {"rotation": [0, 0, 0], "translation": [0, 3, 0], "scale": [0.15, 0.15, 0.15]},
+        "fixed": {"rotation": [0, 0, 0], "translation": [0, 0, 0], "scale": [0.3, 0.3, 0.3]},
+        "thirdperson_righthand": {"rotation": [75, 45, 0], "translation": [0, 2.5, 0], "scale": [0.2, 0.2, 0.2]},
+        "thirdperson_lefthand": {"rotation": [75, 45, 0], "translation": [0, 2.5, 0], "scale": [0.2, 0.2, 0.2]},
+        "firstperson_righthand": {"rotation": [0, 45, 0], "translation": [0, 0, 0], "scale": [0.25, 0.25, 0.25]},
+        "firstperson_lefthand": {"rotation": [0, 225, 0], "translation": [0, 0, 0], "scale": [0.25, 0.25, 0.25]},
+    }}
+
+
 MODELS = {
     "block/ferrostone_casing": model("minecraft:block/cube_all", {"all": t("block/ferrostone_casing")}),
     # The turning parts, about +Y: the items show them whole too.
@@ -389,6 +441,12 @@ MODELS = {
         all_faces("#wood", [2, 7, 7], [14, 9, 9]),
         all_faces("#wood", [2, 9, 7], [4, 14, 9]),
     ]),
+    "block/water_wheel": model(textures=WHEEL_TEX, elements=water_wheel()),
+    "block/water_wheel_still": still("block/cogwheel"),
+    "item/water_wheel": big_item("block/water_wheel"),
+    "block/windmill": model(textures=SAIL_TEX, elements=windmill()),
+    "block/windmill_still": still("block/sail"),
+    "item/windmill": big_item("block/windmill"),
 }
 
 AXIS = {
@@ -455,6 +513,12 @@ BLOCKS = {
                states(AXIS, "block/clutch"), "block/clutch", ("Clutch", "Kopling")),
     "gearshift": ("minecraft:quartz_pillar", {"hardness": 2.0, "sounds": "minecraft:copper_block", "map_color": 11},
                   states(AXIS, "block/gearshift"), "block/gearshift", ("Gearshift", "Pemindah Gigi")),
+    # A wheel on a shaft: water flowing past its sides turns it.
+    "water_wheel": ("minecraft:iron_chain", {"hardness": 1.5, "sounds": "minecraft:oak_planks", "map_color": 13},
+                    axis_and_water("block/water_wheel_still"), "item/water_wheel", ("Water Wheel", "Kincir Air")),
+    # Sails on a shaft: the wind turns them under open sky, faster higher up.
+    "windmill": ("minecraft:iron_chain", {"hardness": 1.5, "sounds": "minecraft:white_wool", "map_color": 3},
+                 axis_and_water("block/windmill_still"), "item/windmill", ("Windmill", "Kincir Angin")),
 }
 
 ITEMS = {
@@ -487,6 +551,8 @@ RECIPES = {
     "hand_crank": recipe_shaped(["PPP", "  A"], {"P": "#minecraft:planks", "A": t("ferrostone_alloy")}, "hand_crank"),
     "clutch": recipe_shapeless([t("ferrostone_casing"), t("shaft"), "minecraft:redstone"], "clutch"),
     "gearshift": recipe_shapeless([t("ferrostone_casing"), t("cogwheel"), "minecraft:redstone"], "gearshift"),
+    "water_wheel": recipe_shaped(["PPP", "PSP", "PPP"], {"P": "#minecraft:planks", "S": t("shaft")}, "water_wheel"),
+    "windmill": recipe_shaped(["W W", " S ", "W W"], {"W": "#minecraft:wool", "S": t("shaft")}, "windmill"),
 }
 
 
@@ -533,7 +599,7 @@ def main():
         en[f"item.{NS}.{item}"], idn[f"item.{NS}.{item}"] = name_en, name_id
     for name, r in RECIPES.items():
         write(data / NS / "recipe" / f"{name}.json", r)
-    wooden = ("cogwheel", "large_cogwheel", "hand_crank")
+    wooden = ("cogwheel", "large_cogwheel", "hand_crank", "water_wheel", "windmill")
     pickaxe = [t(b) for b in BLOCKS if b not in wooden]
     axe = [t(b) for b in wooden]
     write(data / "minecraft" / "tags" / "block" / "mineable" / "pickaxe.json", {"values": pickaxe})

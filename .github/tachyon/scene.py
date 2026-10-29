@@ -47,7 +47,7 @@ class Control:
 # its items in the hotbar.
 SHOWCASE = [
     ("fill", (-8, -1, -2), (8, -1, 12), "minecraft:smooth_stone"),
-    ("fill", (-8, 0, -2), (8, 10, 12), "minecraft:air"),
+    ("fill", (-8, 0, -2), (8, 30, 12), "minecraft:air"),
     ("setblock", (0, 0, 7), "kinetica:creative_motor[facing=south]"),
     ("setblock", (0, 0, 6), "kinetica:shaft[axis=z]"),
     ("setblock", (0, 0, 5), "kinetica:cogwheel[axis=z]"),
@@ -72,9 +72,21 @@ SHOWCASE = [
     # A hand crank on a shaft.
     ("setblock", (2, 0, 9), "kinetica:shaft[axis=y]"),
     ("setblock", (2, 1, 9), "kinetica:hand_crank[facing=up]"),
+    # A water wheel along x: water from a source runs over its top in a
+    # glass channel, then falls past its south side into a hole.
+    ("setblock", (6, 1, 10), "kinetica:water_wheel[axis=x]"),
+    ("setblock", (6, 1, 9), "minecraft:stone"),
+    ("fill", (5, 2, 8), (7, 2, 11), "minecraft:glass"),
+    ("fill", (6, 2, 9), (6, 2, 11), "minecraft:air"),
+    ("setblock", (6, -2, 11), "minecraft:stone"),
+    ("setblock", (6, -1, 11), "minecraft:air"),
+    ("setblock", (6, 2, 9), "minecraft:water"),
+    # A windmill up in the open, along z, on a shaft.
+    ("setblock", (-6, 5, 2), "kinetica:windmill[axis=z]"),
+    ("setblock", (-6, 5, 3), "kinetica:shaft[axis=z]"),
 ]
 ITEMS = ["shaft", "cogwheel", "large_cogwheel", "gearbox", "hand_crank", "clutch", "gearshift",
-         "creative_motor", "ferrostone_alloy"]
+         "water_wheel", "windmill", "creative_motor", "ferrostone_alloy"]
 
 
 def look_at(control, eye, target):
@@ -127,6 +139,11 @@ def kinetica(control, out):
     control.send("look 35 30")
     time.sleep(2)
     control.send("screenshot " + os.path.join(out, "kinetica-side.png"))
+    # The water wheel and the windmill, each with its speed in the corner.
+    for name, target in [("water", (6, 1, 10)), ("wind", (-6, 5, 2))]:
+        look_at(control, eye, [b + d for b, d in zip(base, target)])
+        time.sleep(2)
+        control.send("screenshot " + os.path.join(out, f"kinetica-{name}.png"))
     return good
 
 

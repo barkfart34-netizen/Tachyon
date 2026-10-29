@@ -8,5 +8,7 @@
   "block.kinetica.hand_crank": "Hand Crank",
   "block.kinetica.clutch": "Clutch",
   "block.kinetica.gearshift": "Gearshift",
+  "block.kinetica.water_wheel": "Water Wheel",
+  "block.kinetica.windmill": "Windmill",
   "item.kinetica.ferrostone_alloy": "Ferrostone Alloy"
 }

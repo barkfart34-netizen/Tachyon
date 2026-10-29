@@ -136,6 +136,11 @@ pub enum Part {
     /// Two half shafts along the axis, one turning against the other while
     /// powered.
     Gearshift(Axis),
+    /// A water wheel on a shaft along its axis, turned by the water flowing
+    /// past it.
+    WaterWheel(Axis),
+    /// Sails on a shaft along its axis, turned by the wind under open sky.
+    Windmill(Axis),
 }
 
 impl Part {
@@ -146,7 +151,9 @@ impl Part {
             | Part::Cog(a)
             | Part::LargeCog(a)
             | Part::Clutch(a)
-            | Part::Gearshift(a) => d.axis() == a,
+            | Part::Gearshift(a)
+            | Part::WaterWheel(a)
+            | Part::Windmill(a) => d.axis() == a,
             Part::Gearbox(a) => d.axis() != a,
             Part::Motor(out) | Part::Crank(out) => d == out,
         }
@@ -424,6 +431,21 @@ mod tests {
         assert_eq!(s.speeds.get(&[2, 0, 0]), Some(&[32.0; 2]));
         assert_eq!(s.speeds.get(&[3, 0, 0]), None);
         assert!(s.jammed.is_empty());
+    }
+
+    #[test]
+    fn a_water_wheel_drives_the_shafts_along_its_axis() {
+        let p = parts(&[
+            ([0, 0, 0], Part::WaterWheel(Axis::X)),
+            ([1, 0, 0], Part::Shaft(Axis::X)),
+            ([-1, 0, 0], Part::Shaft(Axis::X)),
+            // Beside it, under its paddles: not joined.
+            ([0, 0, 1], Part::Shaft(Axis::Z)),
+        ]);
+        let s = solve1(&p, &[([0, 0, 0], 16.0)]);
+        assert_eq!(s.speeds.get(&[1, 0, 0]), Some(&[16.0; 2]));
+        assert_eq!(s.speeds.get(&[-1, 0, 0]), Some(&[16.0; 2]));
+        assert_eq!(s.speeds.get(&[0, 0, 1]), None);
     }
 
     #[test]
