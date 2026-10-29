@@ -105,6 +105,7 @@ impl Index {
         world: &mut horizon_client::world::World,
         kinds: &Kinds,
         take: bool,
+        removed: &mut Vec<[i32; 3]>,
     ) -> bool {
         // The world records writes of the states it watches (sculk's, and these).
         if world.watched.len() < kinds.parts.len() {
@@ -148,7 +149,10 @@ impl Index {
             }
             match is {
                 Some(part) => self.parts.insert([x, y, z], part),
-                None => self.parts.remove(&[x, y, z]),
+                None => {
+                    removed.push([x, y, z]);
+                    self.parts.remove(&[x, y, z])
+                }
             };
             changed = true;
         }
@@ -194,6 +198,66 @@ struct Owner {
     speeds: HashMap<[i32; 3], f32>,
     jammed: HashSet<[i32; 3]>,
     ticks: u64,
+    /// The creative motors' speeds the players set (RPM; the default is
+    /// [`MOTOR_SPEED`]), kept in the world's folder.
+    motors: HashMap<[i32; 3], f32>,
+    /// `motors` was read from the world's folder.
+    loaded: bool,
+    /// The speeds need solving again (a motor's speed changed).
+    dirty: bool,
+}
+
+impl Owner {
+    /// The motors' file in the world's folder, for this dimension.
+    fn file(root: &std::path::Path, dimension: &str) -> std::path::PathBuf {
+        let name = dimension.replace([':', '/'], "_");
+        root.join("tachyon").join(format!("kinetica-{name}.json"))
+    }
+    fn load(&mut self, root: &std::path::Path, dimension: &str) {
+        if std::mem::replace(&mut self.loaded, true) {
+            return;
+        }
+        let Ok(text) = std::fs::read_to_string(Self::file(root, dimension)) else {
+            return;
+        };
+        let rows: Vec<[f64; 4]> = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| serde_json::from_value(v["motors"].clone()).ok())
+            .unwrap_or_default();
+        self.motors = rows
+            .into_iter()
+            .map(|[x, y, z, s]| ([x as i32, y as i32, z as i32], s as f32))
+            .collect();
+        self.dirty = true;
+    }
+    fn save(&self, root: &std::path::Path, dimension: &str) {
+        let mut rows: Vec<[f64; 4]> = self
+            .motors
+            .iter()
+            .map(|(p, s)| [f64::from(p[0]), f64::from(p[1]), f64::from(p[2]), f64::from(*s)])
+            .collect();
+        rows.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let file = Self::file(root, dimension);
+        let text = serde_json::json!({ "motors": rows }).to_string();
+        let written = file
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&file, text));
+        if let Err(e) = written {
+            log::warn!("Tachyon: {} not written: {e}", file.display());
+        }
+    }
+}
+
+/// A creative motor's next speed when used: twice as fast, from 256 back
+/// to 8; sneaking, the other way round.
+fn next_motor_speed(speed: f32, sneaking: bool) -> f32 {
+    if sneaking {
+        return -speed;
+    }
+    let faster = speed.abs() * 2.0;
+    let faster = if faster > kinetic::MAX_SPEED { 8.0 } else { faster };
+    faster.copysign(speed)
 }
 
 /// What a client keeps.
@@ -342,11 +406,23 @@ impl Game<'_> {
             return;
         };
         let dimension = self.dim.id();
+        let root = self.save.root.clone();
         let send = OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
+            owner.load(&root, dimension);
             owner.ticks += 1;
             // Sculk reads the writes after this: they stay.
-            let changed = owner.index.sync(&mut self.world, &kinds, false);
+            let mut removed = Vec::new();
+            let mut changed = owner
+                .index
+                .sync(&mut self.world, &kinds, false, &mut removed);
+            // A motor broken forgets its speed.
+            let before = owner.motors.len();
+            owner.motors.retain(|p, _| !removed.contains(p));
+            if owner.motors.len() != before {
+                owner.save(&root, dimension);
+            }
+            changed |= std::mem::take(&mut owner.dirty);
             let mut send = owner.ticks % RESEND == 1;
             if changed {
                 let sources: HashMap<[i32; 3], f32> = owner
@@ -354,14 +430,12 @@ impl Game<'_> {
                     .parts
                     .iter()
                     .filter_map(|(p, part)| match part {
-                        Part::Motor(out) => Some((
-                            *p,
-                            if out.positive() {
-                                MOTOR_SPEED
-                            } else {
-                                -MOTOR_SPEED
-                            },
-                        )),
+                        // The set speed is the motor's as its front shows
+                        // it; its own is along the axis.
+                        Part::Motor(out) => {
+                            let set = owner.motors.get(p).copied().unwrap_or(MOTOR_SPEED);
+                            Some((*p, if out.positive() { set } else { -set }))
+                        }
                         _ => None,
                     })
                     .collect();
@@ -386,6 +460,34 @@ impl Game<'_> {
         }
     }
 
+    /// The player used the block at `pos` (the world's owner, before the
+    /// block's own use): a creative motor's speed changes. Whether it was
+    /// Tachyon's to use.
+    pub(super) fn tachyon_use(&mut self, pos: [i32; 3]) -> bool {
+        if self.remote.is_some() {
+            return false;
+        }
+        let Some(kinds) = self.tachyon_kinds() else {
+            return false;
+        };
+        let state = self.world.block(pos[0], pos[1], pos[2]).0;
+        if !matches!(kinds.part(state), Some(Part::Motor(_))) {
+            return false;
+        }
+        let sneaking = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft);
+        let dimension = self.dim.id();
+        let root = self.save.root.clone();
+        OWNERS.with_borrow_mut(|owners| {
+            let owner = owners.entry(dimension).or_default();
+            owner.load(&root, dimension);
+            let speed = owner.motors.get(&pos).copied().unwrap_or(MOTOR_SPEED);
+            owner.motors.insert(pos, next_motor_speed(speed, sneaking));
+            owner.dirty = true;
+            owner.save(&root, dimension);
+        });
+        true
+    }
+
     /// Each tick of every game: a client's index follows its world.
     pub(super) fn tachyon_tick(&mut self) {
         if self.remote.is_none() {
@@ -402,7 +504,9 @@ impl Game<'_> {
                 client.jammed.clear();
                 client.dimension = dimension;
             }
-            client.index.sync(&mut self.world, &kinds, true);
+            client
+                .index
+                .sync(&mut self.world, &kinds, true, &mut Vec::new());
         });
     }
 
@@ -559,6 +663,14 @@ mod tests {
         assert_eq!((s, j), (speeds, jammed));
         assert!(decode(&[2]).is_none());
         assert!(decode(&encode(&speeds, &jammed)[..10]).is_none());
+    }
+
+    #[test]
+    fn a_motor_doubles_up_to_256_then_starts_again() {
+        assert_eq!(next_motor_speed(32.0, false), 64.0);
+        assert_eq!(next_motor_speed(256.0, false), 8.0);
+        assert_eq!(next_motor_speed(-128.0, false), -256.0);
+        assert_eq!(next_motor_speed(64.0, true), -64.0);
     }
 
     #[test]

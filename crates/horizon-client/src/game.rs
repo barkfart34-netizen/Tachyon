@@ -4302,6 +4302,11 @@ impl Game<'_> {
             && let Some(hit) = block_hit
         {
             let held = self.held().cloned();
+            // Tachyon's blocks (a creative motor's speed).
+            if self.tachyon_use(hit.pos) {
+                self.swing_arm();
+                return Ok(true);
+            }
             if self.use_lectern(hit.pos, held.as_ref()) {
                 self.swing_arm();
                 return Ok(true);

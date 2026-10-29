@@ -46,8 +46,8 @@ class Control:
 # driving a gearbox that sends the drive three ways, the other blocks, and
 # its items in the hotbar.
 SHOWCASE = [
-    ("fill", (-6, -1, 2), (6, -1, 10), "minecraft:smooth_stone"),
-    ("fill", (-6, 0, 2), (6, 5, 10), "minecraft:air"),
+    ("fill", (-8, -1, -2), (8, -1, 12), "minecraft:smooth_stone"),
+    ("fill", (-8, 0, -2), (8, 10, 12), "minecraft:air"),
     ("setblock", (0, 0, 7), "kinetica:creative_motor[facing=south]"),
     ("setblock", (0, 0, 6), "kinetica:shaft[axis=z]"),
     ("setblock", (0, 0, 5), "kinetica:cogwheel[axis=z]"),
@@ -86,9 +86,13 @@ def kinetica(control, out):
     commands = [f"{c[0]} {at(c[1])} {at(c[2])} {c[3]}" if c[0] == "fill" else f"{c[0]} {at(c[1])} {c[2]}"
                 for c in SHOWCASE]
     for command in commands + [f"give @s kinetica:{item}" for item in ITEMS]:
-        reply = control.send("chat /" + command)
-        chat = " ".join(str(line) for line in reply.get("chat", [])[-2:])
-        if "error" in reply or "Unknown" in chat or "Incorrect" in chat or "Invalid" in chat:
+        if "error" in control.send("chat /" + command):
+            good = False
+    time.sleep(2)
+    chat = " ".join(str(line) for line in control.send("chat-log 30").get("chat", []))
+    for word in ["Unknown", "Incorrect", "Invalid", "Could not"]:
+        if word in chat:
+            print("chat says", word, ":", chat)
             good = False
     control.send("look 0 25")
     time.sleep(6)
@@ -100,6 +104,14 @@ def kinetica(control, out):
     look_at(control, eye, [base[0], base[1], base[2] + 5])
     time.sleep(2)
     control.send("screenshot " + os.path.join(out, "kinetica-goggles.png"))
+    # Two right clicks on the first motor: 32 RPM, then 64, then 128.
+    look_at(control, eye, [base[0], base[1], base[2] + 7])
+    for _ in range(2):
+        control.send("mouse right click")
+        time.sleep(0.5)
+    look_at(control, eye, [base[0], base[1], base[2] + 5])
+    time.sleep(2)
+    control.send("screenshot " + os.path.join(out, "kinetica-faster.png"))
     control.send("look 35 30")
     time.sleep(2)
     control.send("screenshot " + os.path.join(out, "kinetica-side.png"))
@@ -144,8 +156,11 @@ def main():
             if not reply.get("ok"):
                 failed.append(name)
             time.sleep(5)
-        where = control.send("chat /where")
-        if not any(" in minecraft:" in str(line) for line in where.get("chat", [])):
+        # A client's command answers in chat a moment later.
+        control.send("chat /where")
+        time.sleep(2)
+        lines = control.send("chat-log 5").get("chat", [])
+        if not any(" in minecraft:" in str(line) for line in lines):
             failed.append("/where")
         if not kinetica(control, out):
             failed.append("kinetica")
@@ -162,6 +177,12 @@ def main():
             proc.wait(timeout=60)
         except subprocess.TimeoutExpired:
             proc.kill()
+    # The motor's speed is kept in the world's folder.
+    kept = [os.path.join(d, f) for d, _, files in os.walk(home) for f in files if f.startswith("kinetica-")]
+    for path in kept:
+        print(path, open(path, encoding="utf-8").read())
+    if not kept:
+        failed.append("motor speed kept")
     if failed:
         raise SystemExit("failed: " + ", ".join(failed))
     print("the scene is done")
