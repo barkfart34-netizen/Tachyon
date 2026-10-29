@@ -1393,6 +1393,7 @@ dependencies = [
  "horizon-hdr",
  "horizon-items",
  "horizon-mods",
+ "horizon-port-pack",
  "horizon-protocol",
  "horizon-server-files",
  "horizon-shader-api",

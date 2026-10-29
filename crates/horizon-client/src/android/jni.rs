@@ -82,6 +82,61 @@ extern "system" fn Java_com_tachyon_game_TachyonActivity_nativeKeyboard<'caller>
     }
 }
 
+/// A file the player picked to import (`platform("pick")`).
+#[derive(Debug, PartialEq)]
+pub enum Picked {
+    /// Copied into the app's cache at `path`; `name` is what it was called.
+    File { path: String, name: String },
+    Failed(String),
+    Cancelled,
+}
+
+static PICKED: Mutex<Option<Picked>> = Mutex::new(None);
+
+pub fn take_picked() -> Option<Picked> {
+    PICKED.lock().unwrap().take()
+}
+
+/// Opens the system's file picker; the choice comes back as `take_picked`.
+pub fn pick_file() {
+    platform("pick", "");
+}
+
+#[unsafe(no_mangle)]
+extern "system" fn Java_com_tachyon_game_TachyonActivity_nativePicked<'caller>(
+    mut env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    path: JString<'caller>,
+    name: JString<'caller>,
+) {
+    env.with_env(|env| -> Result<(), jni::errors::Error> {
+        let path = if path.is_null() {
+            None
+        } else {
+            Some(path.try_to_string(env)?)
+        };
+        let name = if name.is_null() {
+            None
+        } else {
+            Some(name.try_to_string(env)?)
+        };
+        let picked = match (path, name) {
+            (Some(path), name) => Picked::File {
+                path,
+                name: name.unwrap_or_default(),
+            },
+            (None, Some(why)) => Picked::Failed(why),
+            (None, None) => Picked::Cancelled,
+        };
+        *PICKED.lock().unwrap() = Some(picked);
+        if let Some(proxy) = WAKE.lock().unwrap().as_ref() {
+            let _ = proxy.send_event(());
+        }
+        Ok(())
+    })
+    .resolve::<jni::errors::LogErrorAndDefault>()
+}
+
 static GYRO: Mutex<(f32, f32)> = Mutex::new((0.0, 0.0));
 
 #[unsafe(no_mangle)]

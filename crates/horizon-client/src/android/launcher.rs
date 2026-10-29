@@ -14,6 +14,9 @@ use winit::event_loop::ActiveEventLoop;
 use winit::platform::android::activity::AndroidApp;
 use winit::window::Window;
 
+/// The task that installs an imported file.
+const IMPORTING: &str = "Importing";
+
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Play,
@@ -123,6 +126,24 @@ impl Launcher {
                     _ => e,
                 }
             })
+        }));
+    }
+
+    /// Installs the picked file into the game folder, off the UI's thread.
+    fn import(&mut self, path: String, name: String) {
+        if self.busy() {
+            self.error = Some("Wait for the current task to finish, then import again.".into());
+            return;
+        }
+        let home = self.paths.home.clone();
+        self.error = None;
+        self.note = None;
+        self.task = Some(Task::spawn(IMPORTING, move |report| {
+            let file = std::path::PathBuf::from(path);
+            let result = crate::tachyon::import::import(&file, &name, &home, &|line| report.line(line));
+            let _ = std::fs::remove_file(&file);
+            report.line(result?.note);
+            Ok(())
         }));
     }
 
@@ -259,13 +280,23 @@ impl Launcher {
 
     pub fn about_to_wait(&mut self) {
         self.typed();
-        if let Some(task) = &self.task
-            && let Some(done) = task.progress().done
-        {
-            if let Err(e) = done {
-                self.error = Some(e);
+        if let Some(task) = &self.task {
+            let progress = task.progress();
+            if let Some(done) = progress.done {
+                match done {
+                    Err(e) => self.error = Some(e),
+                    // An import's last line says what came in.
+                    Ok(()) if task.what == IMPORTING => self.note = Some(progress.line),
+                    Ok(()) => {}
+                }
+                self.task = None;
             }
-            self.task = None;
+        }
+        match jni::take_picked() {
+            Some(jni::Picked::File { path, name }) => self.import(path, name),
+            Some(jni::Picked::Failed(why)) => self.error = Some(why),
+            Some(jni::Picked::Cancelled) => self.note = None,
+            None => {}
         }
         if !self.busy()
             && self.paths.prepared()
@@ -450,10 +481,25 @@ impl Launcher {
         };
         ui.row(row, 3, "Resources", detail, 0.0);
         y += ROW;
-        // 04 how the last session ran, for reporting.
+        // 04 bringing in worlds, packs and mods from the phone's files.
+        let row = Rect::new(r.x, y, r.w, ROW * 1.5);
+        ui.row(
+            row,
+            4,
+            "Import a world, pack or mod",
+            "A world or resource pack (.zip), a Horizon mod (.hmod), or a Java mod (.jar): its blocks, items and recipes come in; what it does in code can't.",
+            90.0,
+        );
+        if ui.row_button(row, "Import", false, !self.busy()) {
+            self.note = Some("Pick the file in the phone's files.".into());
+            self.error = None;
+            jni::pick_file();
+        }
+        y += ROW * 1.5;
+        // 05 how the last session ran, for reporting.
         if let Some(perf) = self.performance.clone() {
             let row = Rect::new(r.x, y, r.w, ROW * 1.5);
-            ui.row(row, 4, "Last session's performance", &perf, 70.0);
+            ui.row(row, 5, "Last session's performance", &perf, 70.0);
             if ui.row_button(row, "Copy", false, true) {
                 jni::platform("clipboard_set", &perf);
                 self.note = Some("Copied: paste it in the chat.".into());

@@ -10,10 +10,13 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.database.Cursor;
 import android.net.Uri;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.VibrationEffect;
+import android.provider.OpenableColumns;
 import android.os.Vibrator;
 import android.text.InputType;
 import android.view.DisplayCutout;
@@ -54,9 +57,19 @@ public class TachyonActivity extends NativeActivity {
     /** The phone turned by (x, y) radians since the last call: the gyroscope's look. */
     static native void nativeGyro(float x, float y);
 
+    /**
+     * The file the player picked to import, copied into the cache: its path
+     * and the name it had. No path: the name is why it failed, or both are
+     * null when the player backed out.
+     */
+    static native void nativePicked(String path, String name);
+
+    private static final int PICK = 7;
+
     private TextSink sink;
     private boolean keyboardShown;
     private SensorEventListener gyroscope;
+    private WifiManager.MulticastLock multicast;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -82,6 +95,107 @@ public class TachyonActivity extends NativeActivity {
                     OnBackInvokedDispatcher.PRIORITY_DEFAULT, () -> nativeKey(3));
         }
         immersive();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        multicast(true);
+    }
+
+    @Override
+    protected void onPause() {
+        multicast(false);
+        super.onPause();
+    }
+
+    /**
+     * LAN games announce themselves by multicast (224.0.2.60:4445), which
+     * Android's Wi-Fi drops unless an app holds this lock: with it the
+     * Multiplayer list finds them, while the app is on screen.
+     */
+    private void multicast(boolean on) {
+        if (multicast == null) {
+            WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wifi == null) {
+                return;
+            }
+            multicast = wifi.createMulticastLock("Tachyon LAN games");
+            multicast.setReferenceCounted(false);
+        }
+        try {
+            if (on) {
+                multicast.acquire();
+            } else if (multicast.isHeld()) {
+                multicast.release();
+            }
+        } catch (RuntimeException e) {
+            // A Wi-Fi service that refuses: LAN games are then found by address only.
+        }
+    }
+
+    /** The system's file picker, for a world, a pack or a mod to import. */
+    private void pick() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("*/*");
+        try {
+            startActivityForResult(intent, PICK);
+        } catch (RuntimeException e) {
+            nativePicked(null, "No file picker on this phone: " + e.getMessage());
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request != PICK) {
+            return;
+        }
+        Uri uri = result == RESULT_OK && data != null ? data.getData() : null;
+        if (uri == null) {
+            nativePicked(null, null);
+            return;
+        }
+        // A world can be hundreds of megabytes: copied off the UI thread.
+        new Thread(() -> copyPicked(uri), "Tachyon import").start();
+    }
+
+    private void copyPicked(Uri uri) {
+        String name = "import";
+        try (Cursor cursor = getContentResolver().query(uri,
+                new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst() && !cursor.isNull(0)) {
+                name = cursor.getString(0);
+            }
+        } catch (RuntimeException e) {
+            // The name only tells a jar from a zip: the content decides the rest.
+        }
+        java.io.File dir = new java.io.File(getCacheDir(), "import");
+        java.io.File[] old = dir.listFiles();
+        if (old != null) {
+            for (java.io.File f : old) {
+                f.delete();
+            }
+        }
+        dir.mkdirs();
+        java.io.File out = new java.io.File(dir, "picked");
+        try (java.io.InputStream in = getContentResolver().openInputStream(uri);
+                java.io.OutputStream o = new java.io.FileOutputStream(out)) {
+            if (in == null) {
+                throw new java.io.IOException("the file can't be read");
+            }
+            byte[] buffer = new byte[1 << 16];
+            int n;
+            while ((n = in.read(buffer)) > 0) {
+                o.write(buffer, 0, n);
+            }
+        } catch (java.io.IOException | RuntimeException e) {
+            out.delete();
+            nativePicked(null, "Copying " + name + " failed: " + e.getMessage());
+            return;
+        }
+        nativePicked(out.getAbsolutePath(), name);
     }
 
     @Override
@@ -149,6 +263,9 @@ public class TachyonActivity extends NativeActivity {
                 return null;
             case "gyroscope":
                 runOnUiThread(() -> gyroscope(arg.equals("1")));
+                return null;
+            case "pick":
+                runOnUiThread(this::pick);
                 return null;
             case "toast":
                 runOnUiThread(() -> Toast.makeText(this, arg, Toast.LENGTH_LONG).show());
