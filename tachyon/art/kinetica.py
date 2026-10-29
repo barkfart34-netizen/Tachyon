@@ -206,6 +206,25 @@ def canvas():
     return img
 
 
+def goggles():
+    """Engineer's goggles: two lenses in a brass frame on a leather strap."""
+    img = image()
+    rows = [
+        "...aaaa..aaaa...",
+        "..abbbbaabbbba..",
+        "ssabhcbaabhcbass",
+        "ssabccbaabccbass",
+        "..abbbbaabbbba..",
+        "...aaaa..aaaa...",
+    ]
+    colors = {"a": BRONZE[1], "b": BRONZE[3], "c": CORE[2], "h": CORE[4], "s": WOOD[1]}
+    for y, row in enumerate(rows):
+        for x, ch in enumerate(row):
+            if ch in colors:
+                img.putpixel((x, y + 5), colors[ch] + (255,))
+    return img
+
+
 def alloy():
     """An ingot: ferrostone grey, an iron sheen."""
     img = image()
@@ -249,6 +268,7 @@ TEXTURES = {
     "block/gearshift": banded(BRONZE),
     "block/hand_crank": crank_wood,
     "block/sail": canvas,
+    "item/engineers_goggles": goggles,
 }
 
 
@@ -422,6 +442,7 @@ MODELS = {
         }),
     ]),
     "item/ferrostone_alloy": model("minecraft:item/generated", {"layer0": t("item/ferrostone_alloy")}),
+    "item/engineers_goggles": model("minecraft:item/generated", {"layer0": t("item/engineers_goggles")}),
     "block/clutch": model("minecraft:block/cube_column", {"side": t("block/clutch"), "end": t("block/gearbox_side")}),
     "block/gearshift": model("minecraft:block/cube_column",
                              {"side": t("block/gearshift"), "end": t("block/gearbox_side")}),
@@ -523,6 +544,17 @@ BLOCKS = {
 
 ITEMS = {
     "ferrostone_alloy": ("minecraft:brick", "item/ferrostone_alloy", ("Ferrostone Alloy", "Paduan Ferrostone")),
+    # Worn on the head (a leather cap's slot), or held: a part's speed shows
+    # when looked at.
+    "engineers_goggles": ("minecraft:leather_helmet", "item/engineers_goggles",
+                          ("Engineer's Goggles", "Kacamata Insinyur")),
+}
+
+# The goggles' corner line: "Cogwheel: 32 RPM".
+HUD = {
+    "kinetica.hud.still": ("still", "diam"),
+    "kinetica.hud.jammed": ("jammed", "macet"),
+    "kinetica.hud.rpm": ("%s RPM", "%s RPM"),
 }
 
 
@@ -553,6 +585,8 @@ RECIPES = {
     "gearshift": recipe_shapeless([t("ferrostone_casing"), t("cogwheel"), "minecraft:redstone"], "gearshift"),
     "water_wheel": recipe_shaped(["PPP", "PSP", "PPP"], {"P": "#minecraft:planks", "S": t("shaft")}, "water_wheel"),
     "windmill": recipe_shaped(["W W", " S ", "W W"], {"W": "#minecraft:wool", "S": t("shaft")}, "windmill"),
+    "engineers_goggles": recipe_shaped([" L ", "GAG"], {"L": "minecraft:leather", "G": "minecraft:glass",
+                                                         "A": t("ferrostone_alloy")}, "engineers_goggles"),
 }
 
 
@@ -597,6 +631,8 @@ def main():
         write(data / NS / "horizon" / "item" / f"{item}.json", {"template": template})
         write(assets / "items" / f"{item}.json", {"model": {"type": "minecraft:model", "model": t(item_model)}})
         en[f"item.{NS}.{item}"], idn[f"item.{NS}.{item}"] = name_en, name_id
+    for key, (name_en, name_id) in HUD.items():
+        en[key], idn[key] = name_en, name_id
     for name, r in RECIPES.items():
         write(data / NS / "recipe" / f"{name}.json", r)
     wooden = ("cogwheel", "large_cogwheel", "hand_crank", "water_wheel", "windmill")

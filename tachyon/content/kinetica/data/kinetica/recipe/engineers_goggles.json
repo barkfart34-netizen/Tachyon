@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    " L ",
+    "GAG"
+  ],
+  "key": {
+    "L": "minecraft:leather",
+    "G": "minecraft:glass",
+    "A": "kinetica:ferrostone_alloy"
+  },
+  "result": {
+    "id": "kinetica:engineers_goggles",
+    "count": 1
+  }
+}

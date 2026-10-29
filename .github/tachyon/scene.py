@@ -109,7 +109,10 @@ def kinetica(control, out):
     good = True
     commands = [f"{c[0]} {at(c[1])} {at(c[2])} {c[3]}" if c[0] == "fill" else f"{c[0]} {at(c[1])} {c[2]}"
                 for c in SHOWCASE]
-    for command in commands + [f"give @s kinetica:{item}" for item in ITEMS]:
+    gives = [f"give @s kinetica:{item}" for item in ITEMS]
+    # Goggles on: a part's speed shows when looked at.
+    wear = ["item replace entity @s armor.head with kinetica:engineers_goggles"]
+    for command in commands + gives + wear:
         if "error" in control.send("chat /" + command):
             good = False
     time.sleep(2)

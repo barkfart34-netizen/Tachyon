@@ -10,5 +10,9 @@
   "block.kinetica.gearshift": "Pemindah Gigi",
   "block.kinetica.water_wheel": "Kincir Air",
   "block.kinetica.windmill": "Kincir Angin",
-  "item.kinetica.ferrostone_alloy": "Paduan Ferrostone"
+  "item.kinetica.ferrostone_alloy": "Paduan Ferrostone",
+  "item.kinetica.engineers_goggles": "Kacamata Insinyur",
+  "kinetica.hud.still": "diam",
+  "kinetica.hud.jammed": "macet",
+  "kinetica.hud.rpm": "%s RPM"
 }

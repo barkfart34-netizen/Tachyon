@@ -10,5 +10,9 @@
   "block.kinetica.gearshift": "Gearshift",
   "block.kinetica.water_wheel": "Water Wheel",
   "block.kinetica.windmill": "Windmill",
-  "item.kinetica.ferrostone_alloy": "Ferrostone Alloy"
+  "item.kinetica.ferrostone_alloy": "Ferrostone Alloy",
+  "item.kinetica.engineers_goggles": "Engineer's Goggles",
+  "kinetica.hud.still": "still",
+  "kinetica.hud.jammed": "jammed",
+  "kinetica.hud.rpm": "%s RPM"
 }

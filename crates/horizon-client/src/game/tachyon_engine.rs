@@ -39,6 +39,8 @@ const KINETIC: &str = "tachyon:kinetic";
 /// A creative motor's speed (RPM) until a player sets it, and a hand
 /// crank's.
 const MOTOR_SPEED: f32 = 32.0;
+/// What shows a part's speed when worn, or held in either hand.
+const GOGGLES: &str = "kinetica:engineers_goggles";
 /// Ticks a hand crank turns after each use (holding use repeats it).
 const CRANK_TICKS: u64 = 10;
 /// Ticks between looks at the water round the wheels and the sky above
@@ -574,6 +576,14 @@ impl Game<'_> {
         }
     }
 
+    /// Whether the player wears engineer's goggles, or holds them.
+    fn tachyon_goggles(&self) -> bool {
+        [self.armor[0].as_ref(), self.held(), self.offhand.as_ref()]
+            .into_iter()
+            .flatten()
+            .any(|s| &*s.item == GOGGLES)
+    }
+
     /// The speeds of the water wheels and windmills among `parts`, each
     /// about its axis: a wheel from the water flowing past its sides (its
     /// turn about the axis), sails from the open sky above them, faster
@@ -808,39 +818,46 @@ impl Game<'_> {
     /// What the part the player looks at does, in the top-left corner (as
     /// Create's goggles tell).
     pub(super) fn tachyon_engine_hud(&mut self, batch: &mut HudBatch, corners: &mut Corners) {
-        if !self.native_corner_shown(Corner::TopLeft) || self.tachyon_kinds().is_none() {
+        if !self.native_corner_shown(Corner::TopLeft)
+            || self.tachyon_kinds().is_none()
+            || !self.tachyon_goggles()
+        {
             return;
         }
         let Some(hit) = self.pick() else {
             return;
         };
-        let line = self.tachyon_view(|index, speeds, jammed| {
-            let part = index.parts.get(&hit.pos)?;
+        let seen = self.tachyon_view(|index, speeds, jammed| {
+            let part = *index.parts.get(&hit.pos)?;
             let [a, b] = speeds.get(&hit.pos).copied().unwrap_or([0.0; 2]);
             let speed = if a.abs() >= b.abs() { a } else { b };
-            let what = match part {
-                Part::Shaft(_) => "Shaft",
-                Part::Cog(_) => "Cogwheel",
-                Part::LargeCog(_) => "Large Cogwheel",
-                Part::Gearbox(_) => "Gearbox",
-                Part::Motor(_) => "Creative Motor",
-                Part::Crank(_) => "Hand Crank",
-                Part::Clutch(_) => "Clutch",
-                Part::Gearshift(_) => "Gearshift",
-                Part::WaterWheel(_) => "Water Wheel",
-                Part::Windmill(_) => "Windmill",
-            };
-            Some(if jammed.contains(&hit.pos) {
-                format!("{what}: jammed")
-            } else if speed == 0.0 {
-                format!("{what}: still")
-            } else {
-                format!("{what}: {} RPM", speed.abs().round())
-            })
+            Some((part, speed, jammed.contains(&hit.pos)))
         });
-        let Some(line) = line else {
+        let Some((part, speed, jammed)) = seen else {
             return;
         };
+        let (block, english) = match part {
+            Part::Shaft(_) => ("shaft", "Shaft"),
+            Part::Cog(_) => ("cogwheel", "Cogwheel"),
+            Part::LargeCog(_) => ("large_cogwheel", "Large Cogwheel"),
+            Part::Gearbox(_) => ("gearbox", "Gearbox"),
+            Part::Motor(_) => ("creative_motor", "Creative Motor"),
+            Part::Crank(_) => ("hand_crank", "Hand Crank"),
+            Part::Clutch(_) => ("clutch", "Clutch"),
+            Part::Gearshift(_) => ("gearshift", "Gearshift"),
+            Part::WaterWheel(_) => ("water_wheel", "Water Wheel"),
+            Part::Windmill(_) => ("windmill", "Windmill"),
+        };
+        let what = self.translate(&format!("block.kinetica.{block}"), english);
+        let state = if jammed {
+            self.translate("kinetica.hud.jammed", "jammed")
+        } else if speed == 0.0 {
+            self.translate("kinetica.hud.still", "still")
+        } else {
+            self.translate("kinetica.hud.rpm", "%s RPM")
+                .replace("%s", &speed.abs().round().to_string())
+        };
+        let line = format!("{what}: {state}");
         let w = self.native_text_width(&line) + 4.0;
         let (x, y) = corners.place(Corner::TopLeft, w, 12.0);
         self.native_fill(batch, [x, y, w, 12.0], 0x7800_0000);
