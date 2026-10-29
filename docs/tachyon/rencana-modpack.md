@@ -1,6 +1,6 @@
 # Rencana modpack Tachyon: fantasi + era mesin
 
-Status: **disetujui, Tahap 0 berjalan** (keputusan di bagian terakhir). Ditulis 29 Oktober 2026.
+Status: **Tahap 0 selesai, Tahap 1–2 berjalan** (kemajuan di bagian 10). Ditulis 29 Oktober 2026.
 
 Nama modpack: **Tachyon: Aether & Gears**.
 
@@ -225,3 +225,19 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
 3. **Urutan:** mesin dulu, sesuai saran di bagian 4.
 4. **Ruang disk:** belum bisa dikosongkan. Untuk sementara semua tes lewat CI; tes di laptop
    menyusul setelah E: punya minimal 15 GB kosong.
+
+## 10. Kemajuan
+
+- **29 Oktober 2026, Tahap 0 selesai.**
+  - Mod resmi Horizon sudah tertanam di Tachyon: Minimap, Recipes, Zoom, Coordinates HUD,
+    FPS Counter, dan Keystrokes. FPS dan Keystrokes mati secara bawaan.
+  - CI Linux menjalankan tes. CI Windows mengendalikan game lewat control socket dan mengambil
+    screenshot (`.github/tachyon/scene.py`).
+- **29 Oktober 2026, Tahap 1–2 dimulai.**
+  - Konten bawaan (`tachyon/content`) selalu aktif dan ikut terpasang di Windows maupun APK.
+  - Kinetica 0.1 berisi Shaft, Cogwheel, Large Cogwheel, Gearbox, Ferrostone Casing,
+    Creative Motor, dan Ferrostone Alloy, lengkap dengan resep dan nama Inggris/Indonesia.
+  - Bagian-bagian itu berputar sesuai aturan Create, dan kecepatannya dikirim server ke pemain
+    (juga lewat LAN). Melihat sebuah bagian menampilkan RPM-nya.
+  - Kecepatan motor diatur dengan klik kanan dan disimpan di dunia.
+  - Cara kerjanya dijelaskan di [tce.md](tce.md).
