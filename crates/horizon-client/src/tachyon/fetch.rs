@@ -77,7 +77,12 @@ pub fn get(f: &Fetch, home: &Path, cache: &Path, report: &dyn Fn(String)) -> Res
     let taken = cache.join(format!("{}-content.jar", f.id));
     let result = take(&jar, &taken, f.take).and_then(|()| import::import(&taken, f.file, home, report));
     let _ = fs::remove_file(&taken);
-    result
+    let imported = result?;
+    // Create's machines, for Kinetica's engine to turn.
+    if f.id == CREATE.id {
+        super::create_port::fix(&home.join(horizon_client::mod_list::DIR).join(f.id))?;
+    }
+    Ok(imported)
 }
 
 fn agent() -> ureq::Agent {

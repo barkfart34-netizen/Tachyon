@@ -219,7 +219,8 @@ impl Part {
         match self {
             Part::Cog(a) => Some((a, false)),
             Part::LargeCog(a) => Some((a, true)),
-            Part::Millstone => Some((Axis::Y, false)),
+            // A mixer meshes as one too (Create's).
+            Part::Millstone | Part::Mixer => Some((Axis::Y, false)),
             _ => None,
         }
     }

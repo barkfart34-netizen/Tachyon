@@ -318,3 +318,24 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
   - Corong memasukkan barang ke peti, tungku, atau mesin. Bila diklik, corong berganti mengeluarkan
     isi wadah ke sabuk.
   - Quest baru *Ban Berjalan*, sehingga total ada 20 quest.
+- **31 Oktober 2026, Create dari Modrinth (tahap 1 dan 2a, belum dicek CI).**
+  - Keputusan pengguna: Create asli diunduh dari Modrinth di perangkat pemain, lalu mesin Kinetica
+    menggerakkan blok `create:*`. Kinetica tetap ada sebagai cadangan offline. Hanya untuk Tachyon,
+    tidak diusulkan ke Horizon.
+  - Lisensi Create: hanya `assets/` (tekstur, model, suara) yang All Rights Reserved; kode dan
+    `data/` MIT. Repo dan rilis Tachyon tidak pernah memuat aset Create.
+  - Tahap 1 (`tachyon/fetch.rs`): tombol "Get Create" di launcher desktop (halaman Installations)
+    dan Android (baris 05). Pemain ditanya dulu ("about 19 MB, Download?").
+  - File diambil dari CDN Modrinth berdasarkan SHA-512 yang dikunci, ditolak bila hash berbeda, dan
+    disimpan di `cache` untuk dipakai offline.
+  - Hanya `assets/create/`, `data/create/`, `data/c/`, `data/minecraft/`, dan metadata yang diambil
+    dari jar (kodenya tidak), lalu diporting dengan importer yang sudah ada. CI memakai jalur yang
+    sama (`TACHYON_FETCH=create`).
+  - Tahap 2a (`tachyon/create_port.rs` dan `create_part` di TCE):
+    - template yang sesuai bentuk untuk blok kinetik Create;
+    - poros dan roda gigi keluar dari mesh chunk, lalu digambar berputar oleh mesin dengan model
+      parsial Create sendiri (shaft_half, cogwheel, millstone/inner, press head, mixer head/pole,
+      propeller);
+    - kacamata memakai nama blok Create.
+  - Berikutnya (2b): resep Create (`create:milling`, `pressing`, `mixing`, `splashing`) untuk
+    mesinnya, sabuk Create (belt connector), dan kincir air (model OBJ).

@@ -64,32 +64,45 @@ const VIEW: f64 = 64.0;
 struct Kinds {
     registry: usize,
     parts: Vec<Option<Part>>,
+    /// The states of Create's blocks (ported from its own file), drawn with
+    /// its models.
+    create: Vec<bool>,
     any: bool,
 }
 
 impl Kinds {
     fn new(registry: &BlockRegistry) -> Self {
         let mut parts = Vec::with_capacity(registry.len());
+        let mut create = Vec::with_capacity(registry.len());
         for id in 0..registry.len() {
-            let part = registry
-                .state(BlockStateId(id as u32))
+            let state = registry.state(BlockStateId(id as u32));
+            let part = state
                 .and_then(|s| part_of(&s.name, |k| s.properties.get(k).map(String::as_str)));
             parts.push(part);
+            create.push(state.is_some_and(|s| s.name.starts_with("create:")));
         }
         let any = parts.iter().any(Option::is_some);
         Self {
             registry: std::ptr::from_ref(registry) as usize,
             parts,
+            create,
             any,
         }
     }
     fn part(&self, state: u32) -> Option<Part> {
         self.parts.get(state as usize).copied().flatten()
     }
+    /// Whether the state is a block of Create's.
+    fn create(&self, state: u32) -> bool {
+        self.create.get(state as usize).copied().unwrap_or(false)
+    }
 }
 
 /// The part a block state is: Kinetica's blocks by name and properties.
 fn part_of<'a>(name: &str, property: impl Fn(&str) -> Option<&'a str>) -> Option<Part> {
+    if let Some(block) = name.strip_prefix("create:") {
+        return create_part(block, property);
+    }
     let axis = || property("axis").and_then(Axis::parse);
     match name.strip_prefix("kinetica:")? {
         "shaft" => Some(Part::Shaft(axis()?)),
@@ -122,6 +135,35 @@ fn part_of<'a>(name: &str, property: impl Fn(&str) -> Option<&'a str>) -> Option
         "funnel" => Some(Part::Funnel(property("facing").and_then(Dir::parse)?)),
         _ => None,
     }
+}
+
+/// The part a block of Create's is (ported from its own file on the
+/// player's device, `tachyon/create_port.rs` choosing its templates), by
+/// the properties those templates give it.
+fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> Option<Part> {
+    let axis = || property("axis").and_then(Axis::parse);
+    let facing = || property("facing").and_then(Dir::parse);
+    Some(match block {
+        "shaft" | "andesite_encased_shaft" | "brass_encased_shaft" => Part::Shaft(axis()?),
+        "cogwheel" => Part::Cog(axis()?),
+        "large_cogwheel" => Part::LargeCog(axis()?),
+        "gearbox" => Part::Gearbox(axis()?),
+        "clutch" => Part::Clutch(axis()?),
+        "gearshift" => Part::Gearshift(axis()?),
+        // Its facing is where its shaft points.
+        "creative_motor" => Part::Motor(facing()?),
+        // Its facing points out of the block it turns.
+        "hand_crank" => Part::Crank(facing()?.opposite()),
+        "millstone" => Part::Millstone,
+        "depot" => Part::Depot,
+        // Its shaft goes through it the way it faces.
+        "mechanical_press" => Part::Press(facing()?.axis()),
+        "mechanical_mixer" => Part::Mixer,
+        "basin" => Part::Basin,
+        "encased_fan" => Part::Fan(axis()?),
+        "andesite_funnel" | "brass_funnel" => Part::Funnel(facing()?),
+        _ => return None,
+    })
 }
 
 /// The kinetic parts of a world's loaded chunks.
@@ -571,9 +613,53 @@ fn decode(data: &[u8]) -> Option<Shown> {
     })
 }
 
-/// A turning piece of a part: its model, where its shaft points (+Y in
-/// the model), its speed for each turn of its half's, and the half.
-fn pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
+/// A turning piece of a part: its model, where its shaft points, its speed
+/// for each turn of its half's, the half, and where its shaft points in the
+/// model. Create's blocks are drawn with Create's own models.
+fn pieces(part: Part, create: bool) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
+    if create {
+        return create_pieces(part);
+    }
+    (kinetica_pieces(part).into_iter())
+        .map(|(model, toward, factor, half)| (model, toward, factor, half, Dir::Up))
+        .collect()
+}
+
+/// Create's partial models: a half shaft points south, a propeller turns
+/// about Z, the others about Y.
+fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
+    const HALF: &str = "create:block/shaft_half";
+    const SHAFT: &str = "create:block/shaft";
+    match part {
+        Part::Shaft(a) | Part::Press(a) => vec![(SHAFT, positive(a), 1.0, 0, Dir::Up)],
+        Part::Cog(a) => vec![("create:block/cogwheel", positive(a), 1.0, 0, Dir::Up)],
+        Part::LargeCog(a) => vec![("create:block/large_cogwheel", positive(a), 1.0, 0, Dir::Up)],
+        Part::Gearbox(_) => Dir::ALL
+            .into_iter()
+            .filter(|d| part.shaft_toward(*d))
+            .map(|d| (HALF, d, part.side_factor(d), 0, Dir::South))
+            .collect(),
+        Part::Motor(out) => vec![(HALF, out, 1.0, 0, Dir::South)],
+        Part::Crank(out) => vec![("create:block/hand_crank/handle", out.opposite(), 1.0, 0, Dir::Up)],
+        Part::Clutch(a) | Part::Gearshift(a) => {
+            let [neg, pos] = a.dirs();
+            vec![(HALF, neg, 1.0, 0, Dir::South), (HALF, pos, 1.0, 1, Dir::South)]
+        }
+        Part::Millstone => vec![("create:block/millstone/inner", Dir::Up, 1.0, 0, Dir::Up)],
+        // Its cogwheel; the head is drawn as it mixes.
+        Part::Mixer => vec![("create:block/cogwheel_shaftless", Dir::Up, 1.0, 0, Dir::Up)],
+        Part::Fan(a) => vec![("create:block/encased_fan/propeller", positive(a), 1.0, 0, Dir::South)],
+        Part::WaterWheel(_)
+        | Part::Windmill(_)
+        | Part::Belt(_)
+        | Part::Depot
+        | Part::Basin
+        | Part::Funnel(_) => Vec::new(),
+    }
+}
+
+/// Kinetica's pieces, their shafts +Y in their models.
+fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
     const HALF: &str = "kinetica:block/shaft_half";
     // Out of a casing's face a hair, not in it.
     const CASED: &str = "kinetica:block/shaft_half_cased";
@@ -1270,14 +1356,15 @@ impl Game<'_> {
 
     /// The turning parts near the camera, with the block entities.
     pub(super) fn tachyon_render(&self, camera: DVec3, alpha: f64, out: &mut Vec<Vertex>) {
-        if self.tachyon_kinds().is_none() {
+        let Some(kinds) = self.tachyon_kinds() else {
             return;
-        }
+        };
         let ticks = self.world.game_time as f64 + alpha;
         let view = self.view_frustum;
-        let mut draws: Vec<([i32; 3], Part, [f32; 2])> = Vec::new();
-        let mut heads: Vec<([i32; 3], Part, f32, f32)> = Vec::new();
-        let mut trays: Vec<([i32; 3], Part, Vec<ItemStack>)> = Vec::new();
+        // Each with whether it is Create's block.
+        let mut draws: Vec<([i32; 3], Part, [f32; 2], bool)> = Vec::new();
+        let mut heads: Vec<([i32; 3], Part, f32, f32, bool)> = Vec::new();
+        let mut trays: Vec<([i32; 3], Part, Vec<ItemStack>, bool)> = Vec::new();
         self.tachyon_view(|index, shown| {
             for (pos, part) in &index.parts {
                 let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
@@ -1290,38 +1377,40 @@ impl Game<'_> {
                     continue;
                 }
                 let speed = shown.speeds.get(pos).copied().unwrap_or([0.0; 2]);
+                let create = kinds.create(self.world.block(pos[0], pos[1], pos[2]).0);
                 if shown.work.contains_key(pos) {
                     match part {
                         Part::Press(_) => {
                             let drop = reach(&index.parts, *pos, Part::Depot);
-                            heads.push((*pos, *part, speed[0], drop));
+                            heads.push((*pos, *part, speed[0], drop, create));
                         }
                         Part::Mixer => {
                             let drop = reach(&index.parts, *pos, Part::Basin);
-                            heads.push((*pos, *part, speed[0], drop));
+                            heads.push((*pos, *part, speed[0], drop, create));
                         }
                         _ => {}
                     }
                 }
                 if let Some(stacks) = shown.held.get(pos) {
                     let stacks = stacks.iter().map(|(item, n)| ItemStack::new(item, *n));
-                    trays.push((*pos, *part, stacks.collect()));
+                    trays.push((*pos, *part, stacks.collect(), create));
                 }
-                draws.push((*pos, *part, speed));
+                draws.push((*pos, *part, speed, create));
             }
         });
-        for (pos, part, speed) in draws {
+        for (pos, part, speed, create) in draws {
             let packed = self.world.light(pos[0], pos[1], pos[2]);
             let light = horizon_client::block_entity_render::vertex_light(packed);
             let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
             let origin = (at - camera).as_vec3();
-            for (model, toward, factor, half) in pieces(part) {
+            for (model, toward, factor, half, native) in pieces(part, create) {
                 let speed = speed[half] * factor;
                 let axis = toward.axis();
                 let degrees = kinetic::angle(part, pos, speed, ticks);
                 let pose = Mat4::from_translation(origin + Vec3::splat(0.5))
                     * spin(axis, degrees)
                     * point(toward)
+                    * point(native).inverse()
                     * Mat4::from_translation(Vec3::splat(-0.5));
                 let state = self.tachyon_model(model);
                 self.submit_item_world(&state, pose, light, out);
@@ -1331,11 +1420,15 @@ impl Game<'_> {
         // it (`drop` blocks down) and up, once for each 100 work (5 seconds
         // at 16 RPM). A mixer at work: its whisk down in the basin, turning.
         // Each on a stem up into its block, as long as the head is low.
-        for (pos, part, speed, drop) in heads {
+        for (pos, part, speed, drop, create) in heads {
             let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
             let origin = (at - camera).as_vec3();
             let packed = self.world.light(pos[0], pos[1] - 1, pos[2]);
             let light = horizon_client::block_entity_render::vertex_light(packed);
+            if create {
+                self.tachyon_create_head(part, origin, speed, drop, ticks, light, out);
+                continue;
+            }
             // The head's bottom (blocks from the machine's), its height,
             // its turn.
             let (bottom, height, turn, head, stem) = if part == Part::Mixer {
@@ -1377,7 +1470,7 @@ impl Game<'_> {
         // over the tray's. What a basin holds, smaller, on its floor, a
         // stack in each quarter.
         const QUARTERS: [(f32, f32); 4] = [(-0.2, -0.2), (0.2, 0.2), (0.2, -0.2), (-0.2, 0.2)];
-        for (pos, part, stacks) in trays {
+        for (pos, part, stacks, create) in trays {
             let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
             let packed = self.world.light(pos[0], pos[1], pos[2]);
             let light = horizon_client::block_entity_render::vertex_light(packed);
@@ -1396,7 +1489,9 @@ impl Game<'_> {
                     let (x, z) = QUARTERS[i];
                     (Vec3::new(0.5 + x, 2.0 / 16.0 + i as f32 / 64.0, 0.5 + z), 0.75)
                 } else {
-                    (Vec3::new(0.5, 9.0 / 16.0, 0.5), 1.0)
+                    // Create's depot is 13 high, Kinetica's 9.
+                    let top = if create { 13.0 } else { 9.0 } / 16.0;
+                    (Vec3::new(0.5, top, 0.5), 1.0)
                 };
                 // Face up: (x, y, z) to (x, z, -y).
                 let lift = Vec3::new(-(lo.x + hi.x) / 2.0, -lo.z, (lo.y + hi.y) / 2.0) * scale;
@@ -1406,6 +1501,55 @@ impl Game<'_> {
                 self.submit_item_world(&state, pose, light, out);
             }
         }
+    }
+
+    /// A Create press's head at work, down onto what lies on the depot
+    /// under it and up (its pole flush with the press's top when up), or a
+    /// Create mixer's whisk down in the basin, turning, on its pole: Create's
+    /// own models, moved as Kinetica's are.
+    #[allow(clippy::too_many_arguments)]
+    fn tachyon_create_head(
+        &self,
+        part: Part,
+        origin: Vec3,
+        speed: f32,
+        drop: f32,
+        ticks: f64,
+        light: u32,
+        out: &mut Vec<Vertex>,
+    ) {
+        if part == Part::Mixer {
+            let degrees = kinetic::angle(part, [0; 3], speed, ticks);
+            let turn = Mat4::from_translation(Vec3::new(0.5, 0.0, 0.5))
+                * spin(Axis::Y, degrees)
+                * Mat4::from_translation(Vec3::new(-0.5, 0.0, -0.5));
+            // The whisk's blades (4 under its origin) a quarter block over
+            // the basin's floor; the pole (2 blocks long) no higher than
+            // the mixer's top.
+            let head = 8.0 / 16.0 - drop;
+            let pose = Mat4::from_translation(origin + Vec3::new(0.0, head, 0.0)) * turn;
+            let state = self.tachyon_model("create:block/mechanical_mixer/head");
+            self.submit_item_world(&state, pose, light, out);
+            let pole = Mat4::from_translation(origin + Vec3::new(0.0, head.min(-1.0), 0.0));
+            let state = self.tachyon_model("create:block/mechanical_mixer/pole");
+            self.submit_item_world(&state, pole, light, out);
+            return;
+        }
+        let period = f64::from((1600.0 / speed.abs().max(1.0)).max(6.0));
+        let phase = (ticks / period).fract() as f32;
+        let down = if phase < 0.35 {
+            phase / 0.35
+        } else {
+            (1.0 - phase) / 0.65
+        };
+        // Its pole is 27 high over the plate's bottom: up, flush with the
+        // press's top; down, on what lies on the depot (13 high).
+        let rest = 1.0 - 27.0 / 16.0;
+        let lowest = 13.0 / 16.0 + 1.0 / 32.0 - drop;
+        let bottom = rest + down * (lowest - rest);
+        let pose = Mat4::from_translation(origin + Vec3::new(0.0, bottom, 0.0));
+        let state = self.tachyon_model("create:block/mechanical_press/head");
+        self.submit_item_world(&state, pose, light, out);
     }
 
     /// A model to draw as an item draws one, baked once.
@@ -1488,7 +1632,13 @@ impl Game<'_> {
             Part::Belt(_) => ("belt", "Mechanical Belt"),
             Part::Funnel(_) => ("funnel", "Funnel"),
         };
-        let what = self.translate(&format!("block.kinetica.{block}"), english);
+        // Create's blocks by Create's names.
+        let state = self.world.block(hit.pos[0], hit.pos[1], hit.pos[2]);
+        let name = self.pack.assets.registry.state(state).map(|s| s.name.clone());
+        let what = match name.as_deref().and_then(|n| n.strip_prefix("create:")) {
+            Some(create) => self.translate(&format!("block.create.{create}"), english),
+            None => self.translate(&format!("block.kinetica.{block}"), english),
+        };
         let mut state = if jammed {
             self.translate("kinetica.hud.jammed", "jammed")
         } else if stress.is_some_and(kinetic::Stress::over) {
@@ -1626,6 +1776,12 @@ mod tests {
             Some(Part::Fan(Axis::X))
         );
         assert_eq!(part_of("kinetica:belt", facing), Some(Part::Belt(Axis::Z)));
+        // Create's, by the properties of the templates create_port.rs gives.
+        assert_eq!(part_of("create:shaft", props("y")), Some(Part::Shaft(Axis::Y)));
+        assert_eq!(part_of("create:creative_motor", facing), Some(Part::Motor(Dir::North)));
+        assert_eq!(part_of("create:hand_crank", facing), Some(Part::Crank(Dir::South)));
+        assert_eq!(part_of("create:mechanical_press", facing), Some(Part::Press(Axis::Z)));
+        assert_eq!(part_of("create:andesite_casing", facing), None);
         assert_eq!(
             part_of("kinetica:funnel", facing),
             Some(Part::Funnel(Dir::North))
@@ -1638,10 +1794,14 @@ mod tests {
 
     #[test]
     fn a_gearbox_shows_four_turning_shafts_a_shaft_one() {
-        assert_eq!(pieces(Part::Gearbox(Axis::Y)).len(), 4);
-        assert_eq!(pieces(Part::Shaft(Axis::Z)).len(), 1);
-        assert_eq!(pieces(Part::Motor(Dir::East)).len(), 1);
-        let halves: Vec<usize> = pieces(Part::Clutch(Axis::X)).iter().map(|p| p.3).collect();
+        assert_eq!(pieces(Part::Gearbox(Axis::Y), false).len(), 4);
+        assert_eq!(pieces(Part::Shaft(Axis::Z), false).len(), 1);
+        assert_eq!(pieces(Part::Motor(Dir::East), false).len(), 1);
+        // Create's gearbox: four half shafts pointing south in the model.
+        let create = pieces(Part::Gearbox(Axis::Y), true);
+        assert_eq!(create.len(), 4);
+        assert!(create.iter().all(|p| p.0 == "create:block/shaft_half" && p.4 == Dir::South));
+        let halves: Vec<usize> = pieces(Part::Clutch(Axis::X), false).iter().map(|p| p.3).collect();
         assert_eq!(halves, [0, 1]);
     }
 
