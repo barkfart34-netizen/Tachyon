@@ -237,22 +237,22 @@ def kinetica(control, out):
     for _ in range(2):
         control.send("mouse right click")
         time.sleep(0.5)
+    # The press's head coming down on the iron, from two blocks north (the
+    # whole tray shows under the press; the goggles tell what it holds):
+    # 8 ingots take it about 5 seconds at 128 RPM.
+    visit((-2, 0, 11), (-2, 0, 13))
     control.send(f"chat /item replace block {at((-1, 0, 13))} container.0 with minecraft:iron_ingot 8")
-    # The depot alone: five ingots put on it with a use, lying on its tray
-    # (the goggles tell what it holds).
+    time.sleep(1.2)
+    for name in ["kinetica-press", "kinetica-press-2"]:
+        control.send("screenshot " + os.path.join(out, f"{name}.png"))
+        time.sleep(0.3)
+    # The depot alone: five ingots put on it with a use, lying on its tray.
     control.send("chat /item replace entity @s weapon.mainhand with minecraft:iron_ingot 5")
     visit((-4, 0, 13), (-4, 0, 11))
     control.send("mouse right click")
     time.sleep(1.5)
     control.send("screenshot " + os.path.join(out, "kinetica-depot.png"))
-    # The press's head coming down on the iron, from two blocks north (the
-    # whole tray shows under the press; the goggles tell what it holds).
-    visit((-2, 0, 11), (-2, 0, 13))
-    for name in ["kinetica-press", "kinetica-press-2"]:
-        control.send("screenshot " + os.path.join(out, f"{name}.png"))
-        time.sleep(0.3)
-    time.sleep(12)
-    control.send("screenshot " + os.path.join(out, "kinetica-press-done.png"))
+    time.sleep(6)
     control.send(f"chat /item replace entity @s weapon.mainhand from block {at((-2, -1, 13))} container.0")
     time.sleep(1)
     control.send("chat /clear @s kinetica:iron_sheet 0")
