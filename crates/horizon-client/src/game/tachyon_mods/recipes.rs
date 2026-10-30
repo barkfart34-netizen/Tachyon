@@ -27,7 +27,7 @@ pub const MAX_STACKS: usize = 64;
 /// A right click's gift in creative mode (cut to one stack by the game).
 pub const STACK: u32 = 99;
 /// The stations, in the order of their tabs, with each one's icon.
-pub const STATIONS: [&str; 11] = [
+pub const STATIONS: [&str; 12] = [
     "minecraft:crafting_table",
     "minecraft:furnace",
     "minecraft:blast_furnace",
@@ -36,10 +36,11 @@ pub const STATIONS: [&str; 11] = [
     "minecraft:stonecutter",
     "minecraft:smithing_table",
     "minecraft:brewing_stand",
-    // Tachyon: Kinetica's millstone, press and mixer.
+    // Tachyon: Kinetica's millstone, press, mixer and fan.
     "kinetica:millstone",
     "kinetica:mechanical_press",
     "kinetica:mechanical_mixer",
+    "kinetica:encased_fan",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,6 +61,8 @@ pub enum Kind {
     /// Tachyon: a mechanical mixer's, in a basin (`slots` each an item and
     /// its count).
     Mixing,
+    /// Tachyon: an encased fan's, its air through water.
+    Washing,
 }
 
 fn station(kind: Kind) -> usize {
@@ -75,6 +78,7 @@ fn station(kind: Kind) -> usize {
         Kind::Milling => 8,
         Kind::Pressing => 9,
         Kind::Mixing => 10,
+        Kind::Washing => 11,
     }
 }
 
@@ -358,10 +362,15 @@ impl Viewer {
         let results = (r.results.iter().take(MAX_STACKS))
             .map(|s| self.convert(s))
             .collect();
-        // A machine's: its work at 16 RPM (a tick's 1), the results past the
-        // first and their chances.
+        // A machine's: its work at 16 RPM (a tick's 1), or a fan's time in
+        // the air, the results past the first and their chances.
         let worked = || {
-            let mut note = format!("{} s at 16 RPM", r.cooking_time as f32 / 20.0);
+            let seconds = r.cooking_time as f32 / 20.0;
+            let mut note = if r.kind == Kind::Washing {
+                format!("{seconds} s in a fan's air through water")
+            } else {
+                format!("{seconds} s at 16 RPM")
+            };
             for (i, s) in r.results.iter().enumerate().skip(1) {
                 let chance = r.chances.get(i).copied().unwrap_or(1.0);
                 let name = self.name(self.id(s));
@@ -395,7 +404,7 @@ impl Viewer {
             Kind::Brewing => (Layout::Brewing, 2, 1, String::new()),
             // The first result in its slot; the others, and their chances,
             // in the note. A millstone's work is a tick's at 16 RPM.
-            Kind::Milling | Kind::Pressing => (Layout::Single, 1, 1, worked()),
+            Kind::Milling | Kind::Pressing | Kind::Washing => (Layout::Single, 1, 1, worked()),
             Kind::Mixing => {
                 let n = slots.len() as u32;
                 let width = match n {

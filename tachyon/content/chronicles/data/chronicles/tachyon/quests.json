@@ -193,6 +193,29 @@
           ]
         },
         {
+          "id": "bulk_washing",
+          "icon": "kinetica:encased_fan",
+          "after": [
+            "pressing"
+          ],
+          "tasks": [
+            {
+              "item": "kinetica:encased_fan",
+              "count": 1
+            }
+          ],
+          "rewards": [
+            {
+              "item": "kinetica:crushed_iron",
+              "count": 8
+            },
+            {
+              "item": "minecraft:water_bucket",
+              "count": 1
+            }
+          ]
+        },
+        {
           "id": "goggles",
           "icon": "kinetica:engineers_goggles",
           "after": [

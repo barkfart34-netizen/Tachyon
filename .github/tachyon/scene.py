@@ -109,13 +109,21 @@ SHOWCASE = [
     ("setblock", (5, 2, 14), "kinetica:mechanical_mixer"),
     ("setblock", (5, 3, 14), "kinetica:gearbox[axis=x]"),
     ("setblock", (5, 3, 13), "kinetica:creative_motor[facing=north]"),
+    # A fan blowing east (a motor drives it from the west) through water,
+    # walled in glass, to a stone wall: it washes what it blows there.
+    ("setblock", (-6, 0, -1), "kinetica:creative_motor[facing=west]"),
+    ("setblock", (-5, 0, -1), "kinetica:encased_fan[axis=x]"),
+    ("fill", (-4, 0, -2), (-2, 0, -2), "minecraft:glass"),
+    ("fill", (-4, 0, 0), (-2, 0, 0), "minecraft:glass"),
+    ("setblock", (-1, 0, -1), "minecraft:stone"),
+    ("setblock", (-4, 0, -1), "minecraft:water"),
 ]
 # Given to the player: with the goggles on and the motor at 128 RPM, enough
 # for Chronicles' machine quests (the counts some ask to hold).
 ITEMS = ["shaft 8", "cogwheel 2", "large_cogwheel", "gearbox", "hand_crank", "clutch", "gearshift",
          "water_wheel", "windmill", "creative_motor", "ferrostone_alloy 4", "raw_tin", "tin_ingot",
          "bronze_ingot", "millstone", "wheat_flour", "depot", "mechanical_press", "crushed_iron 4",
-         "basin", "mechanical_mixer"]
+         "basin", "mechanical_mixer", "encased_fan", "propeller"]
 
 
 def look_at(control, eye, target):
@@ -291,6 +299,28 @@ def kinetica(control, out):
     bronze = re.search(r"Found (\d+)", lines)
     if not bronze or int(bronze.group(1)) < 5:
         good = False
+    # The fan: four crushed iron dropped in its air, washed into forty
+    # nuggets at the wall, picked up and counted.
+    x, y, z = base[0] - 4 + 0.5, base[1] + 0.5, base[2] - 1 + 0.5
+    item = '{Item:{id:"kinetica:crushed_iron",count:4},PickupDelay:0s}'
+    control.send(f"chat /summon minecraft:item {x} {y} {z} {item}")
+    visit((-5, 0, 2), (-5, 0, -1))
+    time.sleep(3)
+    control.send("screenshot " + os.path.join(out, "kinetica-fan.png"))
+    time.sleep(8)
+    control.send("screenshot " + os.path.join(out, "kinetica-fan-done.png"))
+    # At the wall, or by the fan should it pull.
+    visit((-2, 0, -1), (-1, 0, -1))
+    time.sleep(2)
+    visit((-4, 0, -1), (-5, 0, -1))
+    time.sleep(2)
+    control.send("chat /clear @s minecraft:iron_nugget 0")
+    time.sleep(1)
+    lines = " ".join(str(line) for line in control.send("chat-log 2").get("chat", []))
+    print("nuggets:", lines)
+    nuggets = re.search(r"Found (\d+)", lines)
+    if not nuggets or int(nuggets.group(1)) < 40:
+        good = False
     # The creative inventory: Tachyon's tab of the mods' items (the
     # cogwheel, top row) beside vanilla's.
     control.send("key e tap")
@@ -438,8 +468,8 @@ def main():
         failed.append("quest claimed")
     # Done by the motor turning near the player, and by standing in the
     # structures the world made.
-    for quest in ["in_motion", "full_speed", "millstone", "crushed_ore", "pressing", "mixing", "lost_workshop",
-                  "watchtower"]:
+    for quest in ["in_motion", "full_speed", "millstone", "crushed_ore", "pressing", "mixing", "bulk_washing",
+                  "lost_workshop", "watchtower"]:
         if not any(quest in p.get("done", []) for p in progress):
             failed.append("quest " + quest)
     if failed:

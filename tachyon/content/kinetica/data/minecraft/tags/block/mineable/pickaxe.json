@@ -14,6 +14,7 @@
     "kinetica:depot",
     "kinetica:mechanical_press",
     "kinetica:basin",
-    "kinetica:mechanical_mixer"
+    "kinetica:mechanical_mixer",
+    "kinetica:encased_fan"
   ]
 }

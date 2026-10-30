@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "S",
+    "C",
+    "P"
+  ],
+  "key": {
+    "S": "kinetica:shaft",
+    "C": "kinetica:ferrostone_casing",
+    "P": "kinetica:propeller"
+  },
+  "result": {
+    "id": "kinetica:encased_fan",
+    "count": 1
+  }
+}

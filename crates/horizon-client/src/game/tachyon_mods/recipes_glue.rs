@@ -67,10 +67,11 @@ fn processing(items: &[NativeItem]) -> Vec<m::Recipe> {
         })
     };
     let mut out = Vec::new();
-    let [milling, pressing, mixing] = crate::game::tachyon_engine::processing();
+    let [milling, pressing, mixing, washing] = crate::game::tachyon_engine::processing();
     let kinds = (milling.into_iter().map(|r| (m::Kind::Milling, r)))
         .chain(pressing.into_iter().map(|r| (m::Kind::Pressing, r)))
-        .chain(mixing.into_iter().map(|r| (m::Kind::Mixing, r)));
+        .chain(mixing.into_iter().map(|r| (m::Kind::Mixing, r)))
+        .chain(washing.into_iter().map(|r| (m::Kind::Washing, r)));
     for (kind, (inputs, time, outputs)) in kinds {
         let slots: Option<Vec<Vec<m::Ingredient>>> = (inputs.iter())
             .map(|(item, count)| one(item, *count).map(|s| vec![s]))

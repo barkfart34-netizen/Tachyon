@@ -18,6 +18,7 @@
 pub(super) mod chronicles;
 pub(crate) mod kinetic;
 mod basin;
+mod fan;
 mod millstone;
 
 use super::Game;
@@ -113,6 +114,7 @@ fn part_of<'a>(name: &str, property: impl Fn(&str) -> Option<&'a str>) -> Option
         "depot" => Some(Part::Depot),
         "mechanical_mixer" => Some(Part::Mixer),
         "basin" => Some(Part::Basin),
+        "encased_fan" => Some(Part::Fan(axis()?)),
         _ => None,
     }
 }
@@ -245,6 +247,12 @@ struct Owner {
     basins: HashMap<[i32; 3], basin::Basin>,
     /// `mills` or `basins` changed since the file was written.
     mills_changed: bool,
+    /// What each fan turning does, for the goggles ("washing", "pull:air").
+    fan_work: HashMap<[i32; 3], String>,
+    /// The dropped items and the depots where a fan's air works them: for
+    /// how many ticks, and how.
+    fan_items: HashMap<u32, (fan::Process, u32)>,
+    fan_depots: HashMap<[i32; 3], (fan::Process, u32)>,
 }
 
 impl Owner {
@@ -371,9 +379,9 @@ thread_local! {
 /// work, and its outputs (item, count, chance).
 pub(in crate::game) type Processing = (Vec<(String, u32)>, f32, Vec<(String, u32, f32)>);
 
-/// The millstone's recipes, the press's and the mixer's, for the recipe
-/// viewer.
-pub(in crate::game) fn processing() -> [Vec<Processing>; 3] {
+/// The millstone's recipes, the press's, the mixer's and a fan's washing,
+/// for the recipe viewer.
+pub(in crate::game) fn processing() -> [Vec<Processing>; 4] {
     let outputs = |list: &[millstone::Output]| -> Vec<(String, u32, f32)> {
         (list.iter())
             .map(|o| (o.item.clone(), o.count, o.chance))
@@ -391,7 +399,11 @@ pub(in crate::game) fn processing() -> [Vec<Processing>; 3] {
             (inputs, r.time, outputs(&r.outputs))
         })
         .collect();
-    [list(millstone::recipes()), list(millstone::pressing()), mixing]
+    // A fan's air works an item in TIME ticks, whatever its speed.
+    let washing = (fan::washing().iter())
+        .map(|r| (vec![(r.input.clone(), 1)], fan::TIME as f32, outputs(&r.outputs)))
+        .collect();
+    [list(millstone::recipes()), list(millstone::pressing()), mixing, washing]
 }
 
 /// What a game shows of the parts: their speeds, the jammed ones, their
@@ -579,6 +591,12 @@ fn pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
             .collect(),
         // The whisk is drawn as it mixes (`tachyon_render`).
         Part::Mixer => vec![(CASED, Dir::Up, 1.0, 0)],
+        // Its blades, in each end's grille.
+        Part::Fan(a) => {
+            let [neg, pos] = a.dirs();
+            const BLADES: &str = "kinetica:block/fan_blades";
+            vec![(BLADES, neg, 1.0, 0), (BLADES, pos, 1.0, 0)]
+        }
         Part::Depot | Part::Basin => Vec::new(),
     }
 }
@@ -703,6 +721,8 @@ impl Game<'_> {
                     .collect()
             })
         };
+        // The fans' air on the items in it.
+        self.tachyon_fans();
         let random = &mut self.world.random;
         let send = OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
@@ -813,6 +833,7 @@ impl Game<'_> {
                     work.insert(at, into);
                 }
             }
+            work.extend(owner.fan_work.iter().map(|(p, w)| (*p, w.clone())));
             if work != owner.shown.work {
                 owner.shown.work = work;
                 send = true;
@@ -1143,6 +1164,7 @@ impl Game<'_> {
     /// Each tick of every game: a client's index follows its world.
     pub(super) fn tachyon_tick(&mut self) {
         self.tachyon_quests_tick();
+        self.tachyon_fan_particles();
         if self.remote.is_none() {
             return;
         }
@@ -1407,6 +1429,7 @@ impl Game<'_> {
             Part::Depot => ("depot", "Depot"),
             Part::Mixer => ("mechanical_mixer", "Mechanical Mixer"),
             Part::Basin => ("basin", "Basin"),
+            Part::Fan(_) => ("encased_fan", "Encased Fan"),
         };
         let what = self.translate(&format!("block.kinetica.{block}"), english);
         let mut state = if jammed {
@@ -1429,7 +1452,16 @@ impl Game<'_> {
             state = format!("{state} | {su}");
         }
         if let Some(item) = work {
-            state = format!("{state} | {}", self.tachyon_item_name(&item));
+            // A fan: what its air does ("pulling, washing").
+            let what = if matches!(part, Part::Fan(_)) {
+                (item.split(':'))
+                    .map(|w| self.translate(&format!("kinetica.hud.{w}"), w))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            } else {
+                self.tachyon_item_name(&item)
+            };
+            state = format!("{state} | {what}");
         }
         // A depot, a basin: what it holds.
         if matches!(part, Part::Depot | Part::Basin) {
@@ -1529,6 +1561,10 @@ mod tests {
         assert_eq!(part_of("kinetica:depot", facing), Some(Part::Depot));
         assert_eq!(part_of("kinetica:basin", facing), Some(Part::Basin));
         assert_eq!(part_of("kinetica:mechanical_mixer", facing), Some(Part::Mixer));
+        assert_eq!(
+            part_of("kinetica:encased_fan", props("x")),
+            Some(Part::Fan(Axis::X))
+        );
         assert_eq!(
             part_of("kinetica:mechanical_press", props("z")),
             Some(Part::Press(Axis::Z))

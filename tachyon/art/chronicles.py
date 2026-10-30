@@ -100,6 +100,18 @@ CHAPTERS = [
                "tembaga dan timah jadi perunggu, dan lainnya. Hopper di bawah baskom mengambil hasilnya."),
               tasks=[stack("kinetica:mechanical_mixer"), stack("kinetica:basin")],
               rewards=[stack("minecraft:andesite", 16), stack("minecraft:iron_nugget", 16)], after=["pressing"]),
+        quest("bulk_washing", "kinetica:encased_fan",
+              ("Fresh Air", "Angin Segar"),
+              ("An encased fan blows out of the end no shaft drives it from, further the faster it turns; "
+               "turned the other way, it pulls. Its air pushes dropped items and works what stays in it: through "
+               "water it washes them (crushed ore into nuggets, concrete powder into concrete), through fire it "
+               "smokes them, through lava it smelts them. Items on a depot in the air are worked too.",
+               "Kipas terselubung meniup dari ujung yang tidak tersambung poros, makin jauh bila makin cepat; "
+               "putarannya dibalik, ia menyedot. Anginnya mendorong barang yang tergeletak dan mengolah yang "
+               "tertahan di dalamnya: lewat air dicuci (bijih hancur jadi butiran, bubuk beton jadi beton), lewat "
+               "api diasapi, lewat lava dilebur. Barang di atas depot dalam aliran angin ikut diolah."),
+              tasks=[stack("kinetica:encased_fan")],
+              rewards=[stack("kinetica:crushed_iron", 8), stack("minecraft:water_bucket")], after=["pressing"]),
         quest("goggles", "kinetica:engineers_goggles",
               ("Seeing Speed", "Melihat Kecepatan"),
               ("Engineer's Goggles show how fast a part turns when you look at it.",
@@ -169,7 +181,7 @@ def main():
     ROOT.mkdir(parents=True)
     (ROOT / "horizon-mod.toml").write_text(
         "# Tachyon: Aether & Gears. Chronicles, the quests: written by tachyon/art/chronicles.py.\n"
-        'id = "chronicles"\nname = "Chronicles"\nversion = "0.5.0"\napi = "0.2"\nside = "both"\n'
+        'id = "chronicles"\nname = "Chronicles"\nversion = "0.6.0"\napi = "0.2"\nside = "both"\n'
         'capabilities = ["registries"]\n', encoding="utf-8")
     en = {"chronicles.title": "Chronicles", "chronicles.claim": "Claim", "chronicles.claimed": "Claimed",
           "chronicles.locked": "Finish the quests before it first", "chronicles.tasks": "Hold at once:",

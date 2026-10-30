@@ -93,6 +93,25 @@ Lapisan yang memberi blok modpack perilaku di luar template vanilla-nya. Rencana
   - Kocokannya berputar di dalam baskom selama bekerja, pada tiang yang memanjang ke atas.
     Isi baskom (sampai 4 tumpukan) tergambar di dasarnya. Kacamata menampilkan isinya.
   - Penampil resep punya tab mesin pengaduk; bahan tampil dalam grid beserta jumlahnya.
+- **Kipas terselubung** (`game/tachyon_engine/fan.rs`):
+  - Template pilar kuarsa (berporos). Kipas menerima putaran dari poros di sepanjang porosnya
+    (beban 2 SU per RPM). Ia meniup dari ujung yang tidak tersambung poros; kalau kedua ujung
+    tersambung atau tidak ada yang tersambung, arahnya mengikuti arah putaran. Putaran dibalik
+    membuatnya menyedot.
+  - Jangkauan angin 3 blok, makin jauh bila makin cepat (20 blok pada 256 RPM), sampai terhenti
+    blok bertabrakan penuh. Angin mendorong barang yang tergeletak, dan bisa mengangkatnya bila
+    kipas menghadap ke atas.
+  - Blok yang dilewati angin menentukan pengolahan di sel itu dan sesudahnya:
+    - air atau blok waterlogged: mencuci, dengan resep `washing.json`;
+    - api atau campfire menyala: mengasapi, dengan resep smoker;
+    - lava: melebur, dengan resep blast furnace, atau furnace bila tidak ada.
+  - Barang yang tertahan 150 tick (7,5 detik) di sel pengolahan diolah sekaligus satu tumpukan.
+    Ini berlaku untuk barang tergeletak maupun isi depot.
+  - Resep cuci: bijih hancur jadi 10 butiran ditambah hasil sampingan berpeluang; kerikil, pasir,
+    pasir merah, dan pasir jiwa jadi temuan kecil; blok magma jadi obsidian; bubuk beton jadi beton;
+    wol dan karpet berwarna jadi putih.
+  - Kacamata menampilkan kerja kipas ("udara", "mencuci", "menyedot"). Pemain melihat partikel
+    angin, serta cipratan, asap, atau api di tempat pengolahan.
 - **Inventaris kreatif:** semua barang mod konten (urutan registri) ada di tab sendiri. Mod bawaan
   Tachyon ada di tab "Tachyon" pada tempat hotbar tersimpan vanilla (baris atas). Mod lain, misalnya
   hasil impor, ada di tab "Mods" pada tempat blok operator (baris bawah). Pencarian juga
@@ -169,6 +188,5 @@ Satu baris per titik, supaya merge dari upstream tetap mudah:
 ## Belum ada
 
 - Kacamata yang terlihat di kepala (sekarang tampilannya masih topi kulit dari template).
-- Mesin pemroses lain (kipas, gergaji), panas (blaze burner), fluida, dan logistik (belt, funnel):
-  sisa Kinetica II.
+- Gergaji, panas (blaze burner), fluida, dan logistik (belt, funnel): sisa Kinetica II.
 - Instancing GPU untuk jaringan yang sangat besar.

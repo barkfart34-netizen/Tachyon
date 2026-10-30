@@ -161,6 +161,9 @@ pub enum Part {
     Mixer,
     /// A basin: the items to mix, which doesn't turn.
     Basin,
+    /// An encased fan, on a shaft along its axis; it blows out of one end
+    /// (tachyon_engine/fan.rs).
+    Fan(Axis),
 }
 
 impl Part {
@@ -173,7 +176,8 @@ impl Part {
             | Part::Clutch(a)
             | Part::Gearshift(a)
             | Part::WaterWheel(a)
-            | Part::Windmill(a) => d.axis() == a,
+            | Part::Windmill(a)
+            | Part::Fan(a) => d.axis() == a,
             Part::Gearbox(a) => d.axis() != a,
             Part::Motor(out) | Part::Crank(out) => d == out,
             Part::Millstone => d == Dir::Down,
@@ -189,6 +193,7 @@ impl Part {
             Part::Millstone => 4.0,
             Part::Press(_) => 8.0,
             Part::Mixer => 4.0,
+            Part::Fan(_) => 2.0,
             _ => 0.0,
         }
     }

@@ -78,7 +78,7 @@ struct Recipes {
 }
 
 /// The recipes of `file` in Kinetica's `data/kinetica/tachyon/`.
-fn read(file: &str) -> Vec<Milling> {
+pub(super) fn read(file: &str) -> Vec<Milling> {
     let Some(root) = horizon_client::brand::content() else {
         return Vec::new();
     };
@@ -157,6 +157,15 @@ impl Mill {
             None if input => self.input = Some(h),
             _ => add_all(&mut self.outputs, &[h]),
         }
+    }
+    /// Adds what was made elsewhere (a fan's air working the stack) to
+    /// what it made, if it fits. Whether it did.
+    pub fn add_made(&mut self, made: &[Held]) -> bool {
+        if !self.fits(made) {
+            return false;
+        }
+        add_all(&mut self.outputs, made);
+        true
     }
     /// What was ground, or else the items to grind.
     pub fn take(&mut self) -> Vec<Held> {

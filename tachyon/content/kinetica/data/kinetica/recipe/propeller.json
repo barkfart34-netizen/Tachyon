@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    " S ",
+    "SAS",
+    " S "
+  ],
+  "key": {
+    "S": "kinetica:iron_sheet",
+    "A": "kinetica:ferrostone_alloy"
+  },
+  "result": {
+    "id": "kinetica:propeller",
+    "count": 1
+  }
+}

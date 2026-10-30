@@ -19,6 +19,7 @@
   "block.kinetica.mechanical_press": "Mesin Press",
   "block.kinetica.basin": "Baskom",
   "block.kinetica.mechanical_mixer": "Mesin Pengaduk",
+  "block.kinetica.encased_fan": "Kipas Terselubung",
   "item.kinetica.ferrostone_alloy": "Paduan Ferrostone",
   "item.kinetica.raw_tin": "Timah Mentah",
   "item.kinetica.tin_ingot": "Batangan Timah",
@@ -34,11 +35,17 @@
   "item.kinetica.crushed_copper": "Tembaga Hancur",
   "item.kinetica.crushed_gold": "Emas Hancur",
   "item.kinetica.crushed_tin": "Timah Hancur",
+  "item.kinetica.propeller": "Baling-Baling",
   "item.kinetica.engineers_goggles": "Kacamata Insinyur",
   "kinetica.hud.still": "diam",
   "kinetica.hud.jammed": "macet",
   "kinetica.hud.rpm": "%s RPM",
   "kinetica.hud.overstressed": "kelebihan beban",
   "kinetica.hud.stress": "%s / %s SU",
-  "kinetica.hud.pressing": "Penekanan"
+  "kinetica.hud.pressing": "Penekanan",
+  "kinetica.hud.air": "udara",
+  "kinetica.hud.pull": "menyedot",
+  "kinetica.hud.washing": "mencuci",
+  "kinetica.hud.smoking": "mengasapi",
+  "kinetica.hud.blasting": "melebur"
 }

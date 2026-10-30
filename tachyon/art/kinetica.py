@@ -540,6 +540,34 @@ def mixer_side():
     return img
 
 
+def fan_back():
+    """A fan's grille, deep in its end: dark iron bars."""
+    rng = random.Random(54)
+    img = image()
+    noise(img, IRON, rng, 0, 1)
+    for i in range(1, 16, 3):
+        for j in range(16):
+            img.putpixel((i, j), IRON[2] + (255,))
+            img.putpixel((j, i), IRON[2] + (255,))
+    return img
+
+
+def propeller():
+    """A propeller: four iron blades round a hub."""
+    img = image()
+    blade = [(7, 1), (8, 1), (7, 2), (8, 2), (6, 3), (7, 3), (8, 3), (6, 4), (7, 4), (8, 4), (7, 5), (8, 5), (7, 6)]
+    for turn in range(4):
+        for x, y in blade:
+            for _ in range(turn):
+                x, y = 15 - y, x
+            img.putpixel((x, y), IRON[4 if (x + y) % 3 else 3] + (255,))
+    for x in range(6, 10):
+        for y in range(6, 10):
+            img.putpixel((x, y), BRONZE[2 if x in (6, 9) or y in (6, 9) else 3] + (255,))
+    outline(img, IRON[0])
+    return img
+
+
 TEXTURES = {
     "block/ferrostone_casing": casing,
     "block/gearbox_side": casing_hole,
@@ -570,6 +598,8 @@ TEXTURES = {
     "block/mechanical_press_head": press_head,
     "block/basin_inside": basin_inside,
     "block/mechanical_mixer_side": mixer_side,
+    "block/encased_fan_back": fan_back,
+    "item/propeller": propeller,
     **{f"item/{m}_sheet": sheet(pal) for m, pal in
        [("iron", IRON), ("copper", COPPER), ("gold", GOLD), ("bronze", BRONZE), ("tin", TIN)]},
     **{f"item/crushed_{m}": crushed(pal, 60 + i) for i, (m, pal) in
@@ -748,6 +778,38 @@ DEPOT = box([0, 0, 0], [16, 9, 16], {
 })
 PRESS_TEX = {"head": t("block/mechanical_press_head"), "particle": t("block/mechanical_press_head")}
 
+FAN_TEX = {"side": t("block/ferrostone_casing"), "back": t("block/encased_fan_back"),
+           "blade": t("block/mechanical_press_head"), "particle": t("block/ferrostone_casing")}
+
+
+def fan_ring(y0, y1, face):
+    """A fan end's rim, two pixels wide and `y1 - y0` deep, round its grille."""
+    v = [0, 0, 16, y1 - y0]
+    return [
+        box([0, y0, 0], [16, y1, 2], {"north": ("#side", v), "south": ("#side", v),
+                                      "east": ("#side", [14, 0, 16, v[3]]), "west": ("#side", [0, 0, 2, v[3]]),
+                                      face: ("#side", [0, 0, 16, 2])}),
+        box([0, y0, 14], [16, y1, 16], {"north": ("#side", v), "south": ("#side", v),
+                                        "east": ("#side", [0, 0, 2, v[3]]), "west": ("#side", [14, 0, 16, v[3]]),
+                                        face: ("#side", [0, 14, 16, 16])}),
+        box([0, y0, 2], [2, y1, 14], {"west": ("#side", [2, 0, 14, v[3]]), "east": ("#side", [2, 0, 14, v[3]]),
+                                      face: ("#side", [0, 2, 2, 14])}),
+        box([14, y0, 2], [16, y1, 14], {"east": ("#side", [2, 0, 14, v[3]]), "west": ("#side", [2, 0, 14, v[3]]),
+                                        face: ("#side", [14, 2, 16, 14])}),
+    ]
+
+
+# An encased fan along Y: a casing, each end's grille three pixels deep
+# behind a rim (its blades turn there: the content engine's `pieces`).
+FAN = [
+    box([0, 3, 0], [16, 13, 16], {
+        "north": ("#side", [0, 3, 16, 13]), "south": ("#side", [0, 3, 16, 13]),
+        "east": ("#side", [0, 3, 16, 13]), "west": ("#side", [0, 3, 16, 13]),
+        "up": ("#back", [0, 0, 16, 16]), "down": ("#back", [0, 0, 16, 16])}),
+    *fan_ring(13, 16, "up"),
+    *fan_ring(0, 3, "down"),
+]
+
 BASIN_TEX = {"side": t("block/ferrostone_casing"), "inside": t("block/basin_inside"),
              "particle": t("block/ferrostone_casing")}
 # A basin: a floor and four walls, two pixels thick (its template's shape, a
@@ -873,6 +935,14 @@ MODELS = {
     "block/mechanical_mixer_pole": model(textures=PRESS_TEX, elements=[
         all_faces("#head", [7, 0, 7], [9, 16, 9]),
     ]),
+    "block/encased_fan": model(textures=FAN_TEX, elements=FAN),
+    # Its blades, drawn turning in the +Y end's grille.
+    "block/fan_blades": model(textures=FAN_TEX, elements=[
+        all_faces("#blade", [7, 13, 7], [9, 15.5, 9]),
+        all_faces("#blade", [2, 14, 7], [14, 15, 9]),
+        all_faces("#blade", [7, 14.2, 2], [9, 14.8, 14]),
+    ]),
+    "item/propeller": model("minecraft:item/generated", {"layer0": t("item/propeller")}),
     **{f"item/{m}_sheet": model("minecraft:item/generated", {"layer0": t(f"item/{m}_sheet")})
        for m in ["iron", "copper", "gold", "bronze", "tin"]},
     **{f"item/crushed_{m}": model("minecraft:item/generated", {"layer0": t(f"item/crushed_{m}")})
@@ -990,6 +1060,11 @@ BLOCKS = {
                                                          "map_color": 11},
                          {"variants": {"": {"model": t("block/mechanical_mixer")}}}, "block/mechanical_mixer",
                          ("Mechanical Mixer", "Mesin Pengaduk")),
+    # A quartz pillar's axis: its shaft; it blows out of the end no shaft
+    # drives it from.
+    "encased_fan": ("minecraft:quartz_pillar", {"hardness": 2.0, "sounds": "minecraft:copper_block",
+                                                "map_color": 11},
+                    states(AXIS, "block/encased_fan"), "block/encased_fan", ("Encased Fan", "Kipas Terselubung")),
 }
 
 ITEMS = {
@@ -1005,6 +1080,7 @@ ITEMS = {
     **{f"crushed_{m}": ("minecraft:brick", f"item/crushed_{m}", (f"Crushed {en}", f"{idn} Hancur"))
        for m, en, idn in [("iron", "Iron", "Besi"), ("copper", "Copper", "Tembaga"), ("gold", "Gold", "Emas"),
                           ("tin", "Tin", "Timah")]},
+    "propeller": ("minecraft:brick", "item/propeller", ("Propeller", "Baling-Baling")),
     # Worn on the head (a leather cap's slot), or held: a part's speed shows
     # when looked at.
     "engineers_goggles": ("minecraft:leather_helmet", "item/engineers_goggles",
@@ -1019,6 +1095,12 @@ HUD = {
     "kinetica.hud.overstressed": ("overstressed", "kelebihan beban"),
     "kinetica.hud.stress": ("%s / %s SU", "%s / %s SU"),
     "kinetica.hud.pressing": ("Pressing", "Penekanan"),
+    # What a fan's air does.
+    "kinetica.hud.air": ("air", "udara"),
+    "kinetica.hud.pull": ("pulling", "menyedot"),
+    "kinetica.hud.washing": ("washing", "mencuci"),
+    "kinetica.hud.smoking": ("smoking", "mengasapi"),
+    "kinetica.hud.blasting": ("blasting", "melebur"),
 }
 
 
@@ -1082,6 +1164,10 @@ RECIPES = {
     "mechanical_press": recipe_shaped(["S", "X", "I"], {"S": t("shaft"), "X": t("ferrostone_casing"),
                                                        "I": "minecraft:iron_block"}, "mechanical_press"),
     "basin": recipe_shaped(["A A", "AAA"], {"A": t("ferrostone_alloy")}, "basin"),
+    "propeller": recipe_shaped([" S ", "SAS", " S "], {"S": t("iron_sheet"), "A": t("ferrostone_alloy")},
+                               "propeller"),
+    "encased_fan": recipe_shaped(["S", "C", "P"], {"S": t("shaft"), "C": t("ferrostone_casing"),
+                                                  "P": t("propeller")}, "encased_fan"),
     "mechanical_mixer": recipe_shaped(["C", "X", "W"], {"C": t("cogwheel"), "X": t("ferrostone_casing"),
                                                        "W": t("iron_sheet")}, "mechanical_mixer"),
     # Crushed ore smelts into an ingot.
@@ -1170,6 +1256,26 @@ MIXING = [
 ]
 
 
+# A fan's washing, its air through water (read by the content engine's
+# fan.rs, in millstone.rs's form): crushed ore into ten nuggets and now
+# and then something more, dye washed out, concrete powder set.
+WASHING = [
+    *[mill(t(f"crushed_{m}"), [(nugget, 10, 1.0), *extra])
+      for m, nugget, extra in [("iron", "minecraft:iron_nugget", [("minecraft:redstone", 1, 0.25)]),
+                               ("copper", "minecraft:copper_nugget", [("minecraft:clay_ball", 1, 0.25)]),
+                               ("gold", "minecraft:gold_nugget", [("minecraft:quartz", 1, 0.25)]),
+                               ("tin", t("tin_nugget"), [])]],
+    mill("minecraft:gravel", [("minecraft:flint", 1, 0.25), ("minecraft:iron_nugget", 1, 0.125)]),
+    mill("minecraft:sand", [("minecraft:clay_ball", 1, 0.25)]),
+    mill("minecraft:red_sand", [("minecraft:gold_nugget", 3, 0.125), ("minecraft:dead_bush", 1, 0.05)]),
+    mill("minecraft:soul_sand", [("minecraft:quartz", 1, 0.125), ("minecraft:gold_nugget", 1, 0.02)]),
+    mill("minecraft:magma_block", [("minecraft:obsidian", 1, 1.0)]),
+    *[mill(f"minecraft:{c}_concrete_powder", [(f"minecraft:{c}_concrete", 1, 1.0)]) for c in COLORS],
+    *[mill(f"minecraft:{c}_{kind}", [(f"minecraft:white_{kind}", 1, 1.0)])
+      for c in COLORS if c != "white" for kind in ("wool", "carpet")],
+]
+
+
 def ore_loot(block, drop):
     """An ore's drops: itself with silk touch, else its raw metal (more with fortune)."""
     return {"type": "minecraft:block", "pools": [{
@@ -1244,7 +1350,7 @@ def main():
     (ROOT).mkdir(parents=True)
     (ROOT / "horizon-mod.toml").write_text(
         "# Tachyon: Aether & Gears. Kinetica, the machines: written by tachyon/art/kinetica.py.\n"
-        'id = "kinetica"\nname = "Kinetica"\nversion = "0.5.0"\napi = "0.2"\nside = "both"\n'
+        'id = "kinetica"\nname = "Kinetica"\nversion = "0.6.0"\napi = "0.2"\nside = "both"\n'
         'capabilities = ["registries"]\n', encoding="utf-8")
     for name, draw in TEXTURES.items():
         write(assets / "textures" / f"{name}.png", draw())
@@ -1275,6 +1381,9 @@ def main():
     assert len(inputs) == len(set(inputs)), "one pressing recipe an item"
     write(data / NS / "tachyon" / "pressing.json", {"recipes": PRESSING})
     write(data / NS / "tachyon" / "mixing.json", {"recipes": MIXING})
+    inputs = [m["input"] for m in WASHING]
+    assert len(inputs) == len(set(inputs)), "one washing recipe an item"
+    write(data / NS / "tachyon" / "washing.json", {"recipes": WASHING})
     wooden = ("cogwheel", "large_cogwheel", "hand_crank", "water_wheel", "windmill")
     pickaxe = [t(b) for b in BLOCKS if b not in wooden]
     axe = [t(b) for b in wooden]

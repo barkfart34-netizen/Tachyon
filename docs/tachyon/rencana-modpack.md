@@ -305,3 +305,11 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
   - Semua blok dan barang mod ada di tab kreatif "Tachyon", jadi tidak perlu lagi memakai perintah
     `/give`.
   - Android: blur latar menu kini mati secara bawaan, karena membuka menu jeda membuat HP lag.
+- **30 Oktober 2026, Kinetica 0.6: kipas terselubung.**
+  - Angin kipas mendorong barang. Lewat air, angin mencuci barang (4 bijih hancur jadi 40 butiran
+    besi); lewat api atau campfire mengasapi; lewat lava melebur. Barang di depot dalam aliran angin
+    ikut diolah.
+  - Item baru *Baling-Baling* untuk resep kipas.
+  - Quest baru *Angin Segar*, sehingga total ada 19 quest.
+  - Lini bijih → hancur → cuci → lebur → lembaran kini bisa dibuat. Yang masih kurang tinggal belt
+    supaya lini itu sepenuhnya tanpa pemain.

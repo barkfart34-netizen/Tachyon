@@ -19,6 +19,7 @@
   "block.kinetica.mechanical_press": "Mechanical Press",
   "block.kinetica.basin": "Basin",
   "block.kinetica.mechanical_mixer": "Mechanical Mixer",
+  "block.kinetica.encased_fan": "Encased Fan",
   "item.kinetica.ferrostone_alloy": "Ferrostone Alloy",
   "item.kinetica.raw_tin": "Raw Tin",
   "item.kinetica.tin_ingot": "Tin Ingot",
@@ -34,11 +35,17 @@
   "item.kinetica.crushed_copper": "Crushed Copper",
   "item.kinetica.crushed_gold": "Crushed Gold",
   "item.kinetica.crushed_tin": "Crushed Tin",
+  "item.kinetica.propeller": "Propeller",
   "item.kinetica.engineers_goggles": "Engineer's Goggles",
   "kinetica.hud.still": "still",
   "kinetica.hud.jammed": "jammed",
   "kinetica.hud.rpm": "%s RPM",
   "kinetica.hud.overstressed": "overstressed",
   "kinetica.hud.stress": "%s / %s SU",
-  "kinetica.hud.pressing": "Pressing"
+  "kinetica.hud.pressing": "Pressing",
+  "kinetica.hud.air": "air",
+  "kinetica.hud.pull": "pulling",
+  "kinetica.hud.washing": "washing",
+  "kinetica.hud.smoking": "smoking",
+  "kinetica.hud.blasting": "blasting"
 }
