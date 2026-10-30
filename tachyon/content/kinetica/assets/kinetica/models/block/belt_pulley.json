@@ -1,0 +1,79 @@
+{
+  "parent": "minecraft:block/block",
+  "textures": {
+    "belt": "kinetica:block/belt",
+    "side": "kinetica:block/ferrostone_casing",
+    "hub": "kinetica:block/mechanical_press_head",
+    "particle": "kinetica:block/belt"
+  },
+  "elements": [
+    {
+      "from": [
+        5,
+        16,
+        5
+      ],
+      "to": [
+        11,
+        16.5,
+        11
+      ],
+      "faces": {
+        "north": {
+          "texture": "#hub",
+          "uv": [
+            5,
+            0,
+            11,
+            0
+          ]
+        },
+        "south": {
+          "texture": "#hub",
+          "uv": [
+            5,
+            0,
+            11,
+            0
+          ]
+        },
+        "east": {
+          "texture": "#hub",
+          "uv": [
+            5,
+            0,
+            11,
+            0
+          ]
+        },
+        "west": {
+          "texture": "#hub",
+          "uv": [
+            5,
+            0,
+            11,
+            0
+          ]
+        },
+        "up": {
+          "texture": "#hub",
+          "uv": [
+            5,
+            5,
+            11,
+            11
+          ]
+        },
+        "down": {
+          "texture": "#hub",
+          "uv": [
+            5,
+            5,
+            11,
+            11
+          ]
+        }
+      }
+    }
+  ]
+}

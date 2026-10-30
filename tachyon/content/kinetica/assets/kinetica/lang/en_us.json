@@ -20,6 +20,8 @@
   "block.kinetica.basin": "Basin",
   "block.kinetica.mechanical_mixer": "Mechanical Mixer",
   "block.kinetica.encased_fan": "Encased Fan",
+  "block.kinetica.belt": "Mechanical Belt",
+  "block.kinetica.funnel": "Funnel",
   "item.kinetica.ferrostone_alloy": "Ferrostone Alloy",
   "item.kinetica.raw_tin": "Raw Tin",
   "item.kinetica.tin_ingot": "Tin Ingot",
@@ -47,5 +49,7 @@
   "kinetica.hud.pull": "pulling",
   "kinetica.hud.washing": "washing",
   "kinetica.hud.smoking": "smoking",
-  "kinetica.hud.blasting": "blasting"
+  "kinetica.hud.blasting": "blasting",
+  "kinetica.hud.inserting": "inserting",
+  "kinetica.hud.extracting": "extracting"
 }

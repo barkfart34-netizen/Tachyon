@@ -568,6 +568,21 @@ def propeller():
     return img
 
 
+RUBBER = [(20, 20, 23), (32, 32, 36), (44, 44, 49), (58, 58, 64), (74, 74, 81)]
+
+
+def belt():
+    """A belt's rubber, ribbed across the way it carries."""
+    rng = random.Random(61)
+    img = image()
+    noise(img, RUBBER, rng, 1, 2)
+    for y in range(0, 16, 4):
+        for x in range(16):
+            img.putpixel((x, y), RUBBER[3 if 1 < x < 14 else 2] + (255,))
+            img.putpixel((x, (y + 1) % 16), RUBBER[0] + (255,))
+    return img
+
+
 TEXTURES = {
     "block/ferrostone_casing": casing,
     "block/gearbox_side": casing_hole,
@@ -599,6 +614,7 @@ TEXTURES = {
     "block/basin_inside": basin_inside,
     "block/mechanical_mixer_side": mixer_side,
     "block/encased_fan_back": fan_back,
+    "block/belt": belt,
     "item/propeller": propeller,
     **{f"item/{m}_sheet": sheet(pal) for m, pal in
        [("iron", IRON), ("copper", COPPER), ("gold", GOLD), ("bronze", BRONZE), ("tin", TIN)]},
@@ -810,6 +826,33 @@ FAN = [
     *fan_ring(0, 3, "down"),
 ]
 
+BELT_TEX = {"belt": t("block/belt"), "side": t("block/ferrostone_casing"),
+            "hub": t("block/mechanical_press_head"), "particle": t("block/belt")}
+# A belt segment along Z (a stonecutter's facing turns it), as high as its
+# template's shape (9): the belt over its rollers between two rails.
+BELT = [
+    box([2, 0, 0], [14, 9, 16], {
+        "up": ("#belt", [2, 0, 14, 16]), "down": ("#belt", [2, 0, 14, 16]),
+        "north": ("#belt", [2, 7, 14, 16]), "south": ("#belt", [2, 7, 14, 16])}),
+    all_faces("#side", [0, 0, 0], [2, 10, 16]),
+    all_faces("#side", [14, 0, 0], [16, 10, 16]),
+]
+
+FUNNEL_TEX = {"side": t("block/ferrostone_casing"), "grille": t("block/encased_fan_back"),
+              "particle": t("block/ferrostone_casing")}
+# A funnel facing up (a lightning rod's facing turns it): a grille on the
+# container's face in a rim.
+FUNNEL = [
+    box([1, 0, 1], [15, 2, 15], {
+        "up": ("#grille", [1, 1, 15, 15]), "down": ("#side", [1, 1, 15, 15]),
+        "north": ("#side", [1, 14, 15, 16]), "south": ("#side", [1, 14, 15, 16]),
+        "east": ("#side", [1, 14, 15, 16]), "west": ("#side", [1, 14, 15, 16])}),
+    all_faces("#side", [0, 0, 0], [16, 6, 1]),
+    all_faces("#side", [0, 0, 15], [16, 6, 16]),
+    all_faces("#side", [0, 0, 1], [1, 6, 15]),
+    all_faces("#side", [15, 0, 1], [16, 6, 15]),
+]
+
 BASIN_TEX = {"side": t("block/ferrostone_casing"), "inside": t("block/basin_inside"),
              "particle": t("block/ferrostone_casing")}
 # A basin: a floor and four walls, two pixels thick (its template's shape, a
@@ -943,6 +986,13 @@ MODELS = {
         all_faces("#blade", [7, 14.2, 2], [9, 14.8, 14]),
     ]),
     "item/propeller": model("minecraft:item/generated", {"layer0": t("item/propeller")}),
+    "block/belt": model(textures=BELT_TEX, elements=BELT),
+    # A belt's pulley's hub, drawn turning out of each side (+Y here),
+    # wider than a shaft's end.
+    "block/belt_pulley": model(textures=BELT_TEX, elements=[
+        all_faces("#hub", [5, 16, 5], [11, 16.5, 11]),
+    ]),
+    "block/funnel": model(textures=FUNNEL_TEX, elements=FUNNEL),
     **{f"item/{m}_sheet": model("minecraft:item/generated", {"layer0": t(f"item/{m}_sheet")})
        for m in ["iron", "copper", "gold", "bronze", "tin"]},
     **{f"item/crushed_{m}": model("minecraft:item/generated", {"layer0": t(f"item/crushed_{m}")})
@@ -1065,6 +1115,14 @@ BLOCKS = {
     "encased_fan": ("minecraft:quartz_pillar", {"hardness": 2.0, "sounds": "minecraft:copper_block",
                                                 "map_color": 11},
                     states(AXIS, "block/encased_fan"), "block/encased_fan", ("Encased Fan", "Kipas Terselubung")),
+    # A stonecutter's facing: the line it carries along; a shaft beside it
+    # turns it.
+    "belt": ("minecraft:stonecutter", {"hardness": 0.8, "sounds": "minecraft:white_wool", "map_color": 21},
+             states(FACING, "block/belt"), "block/belt", ("Mechanical Belt", "Sabuk Mekanis")),
+    # A lightning rod's facing: out of the container it was put on.
+    "funnel": ("minecraft:waxed_lightning_rod", {"hardness": 1.0, "sounds": "minecraft:copper_block",
+                                                "map_color": 11},
+               states(SIX, "block/funnel"), "block/funnel", ("Funnel", "Corong")),
 }
 
 ITEMS = {
@@ -1101,6 +1159,9 @@ HUD = {
     "kinetica.hud.washing": ("washing", "mencuci"),
     "kinetica.hud.smoking": ("smoking", "mengasapi"),
     "kinetica.hud.blasting": ("blasting", "melebur"),
+    # What a funnel does.
+    "kinetica.hud.inserting": ("inserting", "memasukkan"),
+    "kinetica.hud.extracting": ("extracting", "mengeluarkan"),
 }
 
 
@@ -1168,6 +1229,8 @@ RECIPES = {
                                "propeller"),
     "encased_fan": recipe_shaped(["S", "C", "P"], {"S": t("shaft"), "C": t("ferrostone_casing"),
                                                   "P": t("propeller")}, "encased_fan"),
+    "belt": recipe_shaped(["KKK", "KKK"], {"K": "minecraft:dried_kelp"}, "belt", 6),
+    "funnel": recipe_shaped(["A", "K"], {"A": t("ferrostone_alloy"), "K": "minecraft:dried_kelp"}, "funnel", 2),
     "mechanical_mixer": recipe_shaped(["C", "X", "W"], {"C": t("cogwheel"), "X": t("ferrostone_casing"),
                                                        "W": t("iron_sheet")}, "mechanical_mixer"),
     # Crushed ore smelts into an ingot.
@@ -1350,7 +1413,7 @@ def main():
     (ROOT).mkdir(parents=True)
     (ROOT / "horizon-mod.toml").write_text(
         "# Tachyon: Aether & Gears. Kinetica, the machines: written by tachyon/art/kinetica.py.\n"
-        'id = "kinetica"\nname = "Kinetica"\nversion = "0.6.0"\napi = "0.2"\nside = "both"\n'
+        'id = "kinetica"\nname = "Kinetica"\nversion = "0.7.0"\napi = "0.2"\nside = "both"\n'
         'capabilities = ["registries"]\n', encoding="utf-8")
     for name, draw in TEXTURES.items():
         write(assets / "textures" / f"{name}.png", draw())

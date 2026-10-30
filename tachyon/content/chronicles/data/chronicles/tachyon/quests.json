@@ -216,6 +216,33 @@
           ]
         },
         {
+          "id": "conveyor",
+          "icon": "kinetica:belt",
+          "after": [
+            "bulk_washing"
+          ],
+          "tasks": [
+            {
+              "item": "kinetica:belt",
+              "count": 4
+            },
+            {
+              "item": "kinetica:funnel",
+              "count": 1
+            }
+          ],
+          "rewards": [
+            {
+              "item": "minecraft:chest",
+              "count": 2
+            },
+            {
+              "item": "minecraft:dried_kelp_block",
+              "count": 4
+            }
+          ]
+        },
+        {
           "id": "goggles",
           "icon": "kinetica:engineers_goggles",
           "after": [

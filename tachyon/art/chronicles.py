@@ -112,6 +112,17 @@ CHAPTERS = [
                "api diasapi, lewat lava dilebur. Barang di atas depot dalam aliran angin ikut diolah."),
               tasks=[stack("kinetica:encased_fan")],
               rewards=[stack("kinetica:crushed_iron", 8), stack("minecraft:water_bucket")], after=["pressing"]),
+        quest("conveyor", "kinetica:belt",
+              ("On the Move", "Ban Berjalan"),
+              ("Belts set in a line turn together, from a shaft beside any of them, and carry what lies on them; "
+               "use one with a stack in hand to put it on. A funnel on a chest, a furnace or a depot puts in what "
+               "comes into it; use it and it takes out instead, a stack at a time, onto the belt before it.",
+               "Sabuk yang dipasang berjajar berputar bersama dari poros di samping salah satunya, dan membawa "
+               "barang di atasnya; klik sabuk sambil memegang tumpukan untuk menaruhnya. Corong pada peti, "
+               "tungku, atau depot memasukkan barang yang masuk ke dalamnya; klik corong agar ia mengeluarkan "
+               "isi wadah, setumpuk demi setumpuk, ke sabuk di depannya."),
+              tasks=[stack("kinetica:belt", 4), stack("kinetica:funnel")],
+              rewards=[stack("minecraft:chest", 2), stack("minecraft:dried_kelp_block", 4)], after=["bulk_washing"]),
         quest("goggles", "kinetica:engineers_goggles",
               ("Seeing Speed", "Melihat Kecepatan"),
               ("Engineer's Goggles show how fast a part turns when you look at it.",
@@ -181,7 +192,7 @@ def main():
     ROOT.mkdir(parents=True)
     (ROOT / "horizon-mod.toml").write_text(
         "# Tachyon: Aether & Gears. Chronicles, the quests: written by tachyon/art/chronicles.py.\n"
-        'id = "chronicles"\nname = "Chronicles"\nversion = "0.6.0"\napi = "0.2"\nside = "both"\n'
+        'id = "chronicles"\nname = "Chronicles"\nversion = "0.7.0"\napi = "0.2"\nside = "both"\n'
         'capabilities = ["registries"]\n', encoding="utf-8")
     en = {"chronicles.title": "Chronicles", "chronicles.claim": "Claim", "chronicles.claimed": "Claimed",
           "chronicles.locked": "Finish the quests before it first", "chronicles.tasks": "Hold at once:",

@@ -117,13 +117,22 @@ SHOWCASE = [
     ("fill", (-4, 0, 0), (-2, 0, 0), "minecraft:glass"),
     ("setblock", (-1, 0, -1), "minecraft:stone"),
     ("setblock", (-4, 0, -1), "minecraft:water"),
+    # A belt along x a motor turns from the north, carrying west: a funnel
+    # on a chest at its east end takes the chest's iron out onto it (once
+    # used, below), one on a chest at its west end puts it in.
+    ("setblock", (2, 0, 17), "minecraft:chest[facing=west]"),
+    ("setblock", (1, 0, 17), "kinetica:funnel[facing=west]"),
+    ("fill", (-3, 0, 17), (0, 0, 17), "kinetica:belt[facing=east]"),
+    ("setblock", (-1, 0, 16), "kinetica:creative_motor[facing=north]"),
+    ("setblock", (-4, 0, 17), "kinetica:funnel[facing=east]"),
+    ("setblock", (-5, 0, 17), "minecraft:chest[facing=east]"),
 ]
 # Given to the player: with the goggles on and the motor at 128 RPM, enough
 # for Chronicles' machine quests (the counts some ask to hold).
 ITEMS = ["shaft 8", "cogwheel 2", "large_cogwheel", "gearbox", "hand_crank", "clutch", "gearshift",
          "water_wheel", "windmill", "creative_motor", "ferrostone_alloy 4", "raw_tin", "tin_ingot",
          "bronze_ingot", "millstone", "wheat_flour", "depot", "mechanical_press", "crushed_iron 4",
-         "basin", "mechanical_mixer", "encased_fan", "propeller"]
+         "basin", "mechanical_mixer", "encased_fan", "propeller", "belt 8", "funnel 2"]
 
 
 def look_at(control, eye, target):
@@ -321,6 +330,24 @@ def kinetica(control, out):
     nuggets = re.search(r"Found (\d+)", lines)
     if not nuggets or int(nuggets.group(1)) < 40:
         good = False
+    # The belt: 32 iron in the east chest, its funnel used (taking out),
+    # carried into the west one.
+    x, y, z = base[0] + 2, base[1], base[2] + 17
+    control.send(f"chat /item replace block {x} {y} {z} container.0 with minecraft:iron_ingot 32")
+    visit((1, 0, 19), (1, 0, 17))
+    control.send("mouse right click")
+    time.sleep(1)
+    control.send("screenshot " + os.path.join(out, "kinetica-funnel.png"))
+    visit((-1, 0, 20), (-1, 0, 17))
+    time.sleep(1)
+    control.send("screenshot " + os.path.join(out, "kinetica-belt.png"))
+    time.sleep(12)
+    control.send(f"chat /data get block {x - 7} {y} {z} Items")
+    time.sleep(1)
+    lines = " ".join(str(line) for line in control.send("chat-log 1").get("chat", []))
+    print("belt:", lines)
+    if sum(int(n) for n in re.findall(r"count: ?(\d+)", lines)) < 32:
+        good = False
     # The creative inventory: Tachyon's tab of the mods' items (the
     # cogwheel, top row) beside vanilla's.
     control.send("key e tap")
@@ -469,7 +496,7 @@ def main():
     # Done by the motor turning near the player, and by standing in the
     # structures the world made.
     for quest in ["in_motion", "full_speed", "millstone", "crushed_ore", "pressing", "mixing", "bulk_washing",
-                  "lost_workshop", "watchtower"]:
+                  "conveyor", "lost_workshop", "watchtower"]:
         if not any(quest in p.get("done", []) for p in progress):
             failed.append("quest " + quest)
     if failed:

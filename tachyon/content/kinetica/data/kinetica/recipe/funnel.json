@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "A",
+    "K"
+  ],
+  "key": {
+    "A": "kinetica:ferrostone_alloy",
+    "K": "minecraft:dried_kelp"
+  },
+  "result": {
+    "id": "kinetica:funnel",
+    "count": 2
+  }
+}

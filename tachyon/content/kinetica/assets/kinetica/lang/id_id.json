@@ -20,6 +20,8 @@
   "block.kinetica.basin": "Baskom",
   "block.kinetica.mechanical_mixer": "Mesin Pengaduk",
   "block.kinetica.encased_fan": "Kipas Terselubung",
+  "block.kinetica.belt": "Sabuk Mekanis",
+  "block.kinetica.funnel": "Corong",
   "item.kinetica.ferrostone_alloy": "Paduan Ferrostone",
   "item.kinetica.raw_tin": "Timah Mentah",
   "item.kinetica.tin_ingot": "Batangan Timah",
@@ -47,5 +49,7 @@
   "kinetica.hud.pull": "menyedot",
   "kinetica.hud.washing": "mencuci",
   "kinetica.hud.smoking": "mengasapi",
-  "kinetica.hud.blasting": "melebur"
+  "kinetica.hud.blasting": "melebur",
+  "kinetica.hud.inserting": "memasukkan",
+  "kinetica.hud.extracting": "mengeluarkan"
 }

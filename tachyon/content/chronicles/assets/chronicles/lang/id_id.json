@@ -29,6 +29,8 @@
   "chronicles.quest.mixing.text": "Mesin pengaduk yang berputar di atas baskom (langsung, atau dua blok di atasnya) mengaduk isi baskom begitu semua bahan resep lengkap: andesit dan butiran besi jadi paduan ferrostone, tembaga dan timah jadi perunggu, dan lainnya. Hopper di bawah baskom mengambil hasilnya.",
   "chronicles.quest.bulk_washing": "Angin Segar",
   "chronicles.quest.bulk_washing.text": "Kipas terselubung meniup dari ujung yang tidak tersambung poros, makin jauh bila makin cepat; putarannya dibalik, ia menyedot. Anginnya mendorong barang yang tergeletak dan mengolah yang tertahan di dalamnya: lewat air dicuci (bijih hancur jadi butiran, bubuk beton jadi beton), lewat api diasapi, lewat lava dilebur. Barang di atas depot dalam aliran angin ikut diolah.",
+  "chronicles.quest.conveyor": "Ban Berjalan",
+  "chronicles.quest.conveyor.text": "Sabuk yang dipasang berjajar berputar bersama dari poros di samping salah satunya, dan membawa barang di atasnya; klik sabuk sambil memegang tumpukan untuk menaruhnya. Corong pada peti, tungku, atau depot memasukkan barang yang masuk ke dalamnya; klik corong agar ia mengeluarkan isi wadah, setumpuk demi setumpuk, ke sabuk di depannya.",
   "chronicles.quest.goggles": "Melihat Kecepatan",
   "chronicles.quest.goggles.text": "Kacamata Insinyur menampilkan kecepatan bagian yang kamu lihat.",
   "chronicles.quest.water_power": "Air Mengalir",

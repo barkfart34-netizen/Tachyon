@@ -164,6 +164,12 @@ pub enum Part {
     /// An encased fan, on a shaft along its axis; it blows out of one end
     /// (tachyon_engine/fan.rs).
     Fan(Axis),
+    /// A belt segment carrying along its axis (level), on pulleys turned by
+    /// a shaft beside it; the segments in a line turn together
+    /// (tachyon_engine/belt.rs).
+    Belt(Axis),
+    /// A funnel on a container's face, facing out of it, which doesn't turn.
+    Funnel(Dir),
 }
 
 impl Part {
@@ -183,7 +189,9 @@ impl Part {
             Part::Millstone => d == Dir::Down,
             Part::Press(a) => d.axis() == a && d != Dir::Down,
             Part::Mixer => d == Dir::Up,
-            Part::Depot | Part::Basin => false,
+            // Its pulleys' shafts, out of its sides.
+            Part::Belt(a) => d.axis() != a && d.axis() != Axis::Y,
+            Part::Depot | Part::Basin | Part::Funnel(_) => false,
         }
     }
     /// The stress the part takes for each RPM it turns at (stress units):
@@ -260,6 +268,13 @@ pub fn link(from: Part, to: Part, diff: [i32; 3]) -> Option<(usize, usize, f32)>
         if from.shaft_toward(d) && to.shaft_toward(back) {
             let factor = from.side_factor(d) / to.side_factor(back);
             return Some((from.half(d), to.half(back), factor));
+        }
+        // Belt segments in a line, along it: the same speed.
+        if let (Part::Belt(a), Part::Belt(b)) = (from, to)
+            && a == b
+            && a.pick(diff) != 0
+        {
+            return Some((0, 0, 1.0));
         }
         // Small cogwheels side by side on parallel axes mesh, reversed.
         if let (Some((a, false)), Some((b, false))) = (from.cog(), to.cog())
@@ -689,6 +704,28 @@ mod tests {
         assert_eq!(s.speeds.get(&[0, 0, 0]), None);
         assert_eq!(s.speeds.get(&[1, 1, 0]), None);
         assert_eq!(s.stress[&[0, 1, 0]].load, 128.0);
+    }
+
+    #[test]
+    fn a_belt_turns_from_a_shaft_beside_it_and_along_its_line() {
+        let p = parts(&[
+            ([0, 0, 0], Part::Motor(Dir::East)),
+            ([1, 0, 0], Part::Belt(Axis::Z)),
+            ([1, 0, 1], Part::Belt(Axis::Z)),
+            ([1, 0, 2], Part::Belt(Axis::Z)),
+            // Across the line's end: not joined.
+            ([1, 0, 3], Part::Belt(Axis::X)),
+            // Nor a funnel.
+            ([1, 1, 2], Part::Funnel(Dir::Up)),
+        ]);
+        let s = solve1(&p, &[([0, 0, 0], 32.0)]);
+        assert_eq!(s.speeds[&[1, 0, 0]][0], 32.0);
+        assert_eq!(s.speeds[&[1, 0, 2]][0], 32.0);
+        assert_eq!(s.speeds.get(&[1, 0, 3]), None);
+        assert_eq!(s.speeds.get(&[1, 1, 2]), None);
+        // Not from a shaft at its end.
+        let p = parts(&[([0, 0, 0], Part::Motor(Dir::East)), ([1, 0, 0], Part::Belt(Axis::X))]);
+        assert_eq!(solve1(&p, &[([0, 0, 0], 32.0)]).speeds.get(&[1, 0, 0]), None);
     }
 
     #[test]

@@ -1,0 +1,30 @@
+{
+  "variants": {
+    "facing=up": {
+      "model": "kinetica:block/funnel"
+    },
+    "facing=down": {
+      "model": "kinetica:block/funnel",
+      "x": 180
+    },
+    "facing=north": {
+      "model": "kinetica:block/funnel",
+      "x": 90
+    },
+    "facing=south": {
+      "model": "kinetica:block/funnel",
+      "x": 90,
+      "y": 180
+    },
+    "facing=east": {
+      "model": "kinetica:block/funnel",
+      "x": 90,
+      "y": 90
+    },
+    "facing=west": {
+      "model": "kinetica:block/funnel",
+      "x": 90,
+      "y": 270
+    }
+  }
+}

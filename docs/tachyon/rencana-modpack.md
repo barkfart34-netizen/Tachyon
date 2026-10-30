@@ -313,3 +313,8 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
   - Quest baru *Angin Segar*, sehingga total ada 19 quest.
   - Lini bijih → hancur → cuci → lebur → lembaran kini bisa dibuat. Yang masih kurang tinggal belt
     supaya lini itu sepenuhnya tanpa pemain.
+- **30 Oktober 2026, Kinetica 0.7: sabuk mekanis dan corong.**
+  - Sabuk membawa barang di atasnya. Segmen yang berjajar berputar bersama dari poros di sampingnya.
+  - Corong memasukkan barang ke peti, tungku, atau mesin. Bila diklik, corong berganti mengeluarkan
+    isi wadah ke sabuk.
+  - Quest baru *Ban Berjalan*, sehingga total ada 20 quest.

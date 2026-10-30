@@ -720,6 +720,88 @@ impl Game<'_> {
             }
         }
     }
+    /// Tachyon: a funnel's `stack` into the container at `at` through its
+    /// `face`: a block's, or a machine's of the content engine's (one by
+    /// one, as a hopper's). What didn't go in.
+    pub(super) fn tachyon_container_put(
+        &mut self,
+        at: Pos,
+        mut stack: ItemStack,
+        face: Direction,
+    ) -> Option<ItemStack> {
+        let machine = [at.0, at.1, at.2];
+        if self.tachyon_machine(machine) {
+            while stack.count > 0 {
+                let one = ItemStack {
+                    count: 1,
+                    ..stack.clone()
+                };
+                if !self.tachyon_machine_put(machine, &one) {
+                    break;
+                }
+                stack.count -= 1;
+            }
+            return (stack.count > 0).then_some(stack);
+        }
+        let Some(target) = self.containers().view(at, false) else {
+            return Some(stack);
+        };
+        let count = stack.count;
+        let rest = self.add_item(None, &target, stack, Some(face));
+        if rest.as_ref().is_none_or(|r| r.count < count) {
+            self.view_changed(&target);
+        }
+        rest
+    }
+    /// Tachyon: up to `most` of one item out of the container at `at`
+    /// through its `face`, for a funnel: from the first slot that gives
+    /// through it, or what a machine of the content engine's made.
+    pub(super) fn tachyon_container_take(&mut self, at: Pos, face: Direction, most: u32) -> Option<ItemStack> {
+        let machine = [at.0, at.1, at.2];
+        if self.tachyon_machine(machine) {
+            let (mut got, _) = self.tachyon_machine_take(machine)?;
+            while got.count < most {
+                let Some((more, input)) = self.tachyon_machine_take(machine) else {
+                    break;
+                };
+                if more.item != got.item {
+                    self.tachyon_machine_return(machine, more, input);
+                    break;
+                }
+                got.count += more.count;
+            }
+            return Some(got);
+        }
+        let source = self.containers().view(at, false)?;
+        if let Kind::Composter(_) = source.kind {
+            return None;
+        }
+        for slot in source.slots_for_face(Some(face)) {
+            let n = {
+                let c = self.containers();
+                let Some(stack) = c.get(&source, slot) else {
+                    continue;
+                };
+                if !c.can_take(&source, slot, stack, face) {
+                    continue;
+                }
+                stack.count.min(most)
+            };
+            let cell = self.slot_mut_at(&source, slot)?;
+            let current = cell.as_mut()?;
+            let out = ItemStack {
+                count: n,
+                ..current.clone()
+            };
+            current.count -= n;
+            if current.count == 0 {
+                *cell = None;
+            }
+            self.view_changed(&source);
+            return Some(out);
+        }
+        None
+    }
     /// The rest of `HopperBlockEntity.ejectItems`: one item into `target`.
     fn eject_into(&mut self, pos: Pos, hopper: &View, target: &View, face: Direction) -> bool {
         if self.containers().is_full(target, face) {

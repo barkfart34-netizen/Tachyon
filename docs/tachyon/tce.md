@@ -112,6 +112,22 @@ Lapisan yang memberi blok modpack perilaku di luar template vanilla-nya. Rencana
     wol dan karpet berwarna jadi putih.
   - Kacamata menampilkan kerja kipas ("udara", "mencuci", "menyedot"). Pemain melihat partikel
     angin, serta cipratan, asap, atau api di tempat pengolahan.
+- **Sabuk mekanis dan corong** (`game/tachyon_engine/belt.rs`):
+  - Sabuk memakai template stonecutter. Arah `facing` menentukan garis angkutnya. Segmen yang
+    berjajar di garis itu berputar bersama, digerakkan poros di samping segmen mana pun (poros
+    katrolnya). Beban sabuk 0 SU.
+  - Barang tergeletak di atas sabuk dibawa sepanjang garis dengan kecepatan Create (RPM / 480 blok
+    per tick) dan ditarik ke tengah sabuk. Arahnya mengikuti putaran katrol menurut kaidah tangan
+    kanan. Di ujung sabuk, barang jatuh atau masuk ke corong.
+  - Klik sabuk sambil memegang tumpukan untuk menaruh tumpukan itu di atasnya.
+  - Corong memakai template waxed lightning rod. Ia menghadap keluar dari wadah tempatnya dipasang:
+    peti, tungku (lewat sisi yang sesuai), hopper, depot, baskom, atau penggiling.
+  - Mode memasukkan (bawaan): barang yang menyentuh corong (bloknya ditambah 0,25) dimasukkan ke
+    wadah.
+  - Klik corong untuk beralih ke mode mengeluarkan. Corong lalu mengambil setumpuk (maks. 16) tiap
+    8 tick selama mulutnya kosong, dan menjatuhkannya keluar, misalnya ke sabuk. Mode ini disimpan
+    di berkas dunia.
+  - Kacamata menampilkan mode corong.
 - **Inventaris kreatif:** semua barang mod konten (urutan registri) ada di tab sendiri. Mod bawaan
   Tachyon ada di tab "Tachyon" pada tempat hotbar tersimpan vanilla (baris atas). Mod lain, misalnya
   hasil impor, ada di tab "Mods" pada tempat blok operator (baris bawah). Pencarian juga
@@ -188,5 +204,5 @@ Satu baris per titik, supaya merge dari upstream tetap mudah:
 ## Belum ada
 
 - Kacamata yang terlihat di kepala (sekarang tampilannya masih topi kulit dari template).
-- Gergaji, panas (blaze burner), fluida, dan logistik (belt, funnel): sisa Kinetica II.
+- Gergaji, panas (blaze burner), fluida, sabuk miring, dan corong di atas sabuk: sisa Kinetica II.
 - Instancing GPU untuk jaringan yang sangat besar.

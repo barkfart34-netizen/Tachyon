@@ -18,6 +18,7 @@
 pub(super) mod chronicles;
 pub(crate) mod kinetic;
 mod basin;
+mod belt;
 mod fan;
 mod millstone;
 
@@ -115,6 +116,10 @@ fn part_of<'a>(name: &str, property: impl Fn(&str) -> Option<&'a str>) -> Option
         "mechanical_mixer" => Some(Part::Mixer),
         "basin" => Some(Part::Basin),
         "encased_fan" => Some(Part::Fan(axis()?)),
+        // A stonecutter's facing: the line it carries along.
+        "belt" => Some(Part::Belt(property("facing").and_then(Dir::parse)?.axis())),
+        // A lightning rod's facing points out of the block it was put on.
+        "funnel" => Some(Part::Funnel(property("facing").and_then(Dir::parse)?)),
         _ => None,
     }
 }
@@ -253,6 +258,10 @@ struct Owner {
     /// how many ticks, and how.
     fan_items: HashMap<u32, (fan::Process, u32)>,
     fan_depots: HashMap<[i32; 3], (fan::Process, u32)>,
+    /// The funnels taking out of their containers (the others put in).
+    funnels_out: HashSet<[i32; 3]>,
+    /// What each funnel does, for the goggles ("inserting").
+    funnel_work: HashMap<[i32; 3], String>,
 }
 
 impl Owner {
@@ -281,6 +290,8 @@ impl Owner {
         let basins: Vec<([i32; 3], basin::Basin)> =
             serde_json::from_value(value["basins"].clone()).unwrap_or_default();
         self.basins = basins.into_iter().collect();
+        let funnels: Vec<[i32; 3]> = serde_json::from_value(value["funnels"].clone()).unwrap_or_default();
+        self.funnels_out = funnels.into_iter().collect();
         self.dirty = true;
     }
     fn save(&self, root: &std::path::Path, dimension: &str) {
@@ -303,9 +314,11 @@ impl Owner {
         let mut basins: Vec<(&[i32; 3], &basin::Basin)> =
             self.basins.iter().filter(|(_, b)| !b.is_empty()).collect();
         basins.sort_by_key(|(p, _)| **p);
+        let mut funnels: Vec<&[i32; 3]> = self.funnels_out.iter().collect();
+        funnels.sort();
         let file = Self::file(root, dimension);
-        let text =
-            serde_json::json!({ "motors": rows, "mills": mills, "basins": basins }).to_string();
+        let text = serde_json::json!({ "motors": rows, "mills": mills, "basins": basins, "funnels": funnels })
+            .to_string();
         let written = file
             .parent()
             .map_or(Ok(()), std::fs::create_dir_all)
@@ -597,12 +610,32 @@ fn pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
             const BLADES: &str = "kinetica:block/fan_blades";
             vec![(BLADES, neg, 1.0, 0), (BLADES, pos, 1.0, 0)]
         }
-        Part::Depot | Part::Basin => Vec::new(),
+        Part::Belt(a) => {
+            let [neg, pos] = belt::pulleys(a).dirs();
+            const HUB: &str = "kinetica:block/belt_pulley";
+            vec![(HUB, neg, 1.0, 0), (HUB, pos, 1.0, 0)]
+        }
+        Part::Depot | Part::Basin | Part::Funnel(_) => Vec::new(),
     }
 }
 
 fn add(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+/// Whether a use of the part is Tachyon's (`Game::tachyon_use`): a motor's,
+/// a crank's, a machine's that holds items, a belt's, a funnel's.
+fn takes_use(part: Part) -> bool {
+    matches!(
+        part,
+        Part::Motor(_)
+            | Part::Crank(_)
+            | Part::Millstone
+            | Part::Depot
+            | Part::Basin
+            | Part::Belt(_)
+            | Part::Funnel(_)
+    )
 }
 
 fn positive(axis: Axis) -> Dir {
@@ -671,7 +704,9 @@ impl Game<'_> {
             // A motor broken forgets its speed.
             let before = owner.motors.len();
             owner.motors.retain(|p, _| !removed.contains(p));
-            if owner.motors.len() != before {
+            let funnels = owner.funnels_out.len();
+            owner.funnels_out.retain(|p| !removed.contains(p));
+            if owner.motors.len() != before || owner.funnels_out.len() != funnels {
                 owner.save(&root, dimension);
             }
             // A millstone, a depot or a basin broken drops what it held.
@@ -721,8 +756,11 @@ impl Game<'_> {
                     .collect()
             })
         };
-        // The fans' air on the items in it.
+        // The fans' air on the items in it, the belts under them, the
+        // funnels they come to.
         self.tachyon_fans();
+        self.tachyon_belts();
+        self.tachyon_funnels();
         let random = &mut self.world.random;
         let send = OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
@@ -834,6 +872,7 @@ impl Game<'_> {
                 }
             }
             work.extend(owner.fan_work.iter().map(|(p, w)| (*p, w.clone())));
+            work.extend(owner.funnel_work.iter().map(|(p, w)| (*p, w.clone())));
             if work != owner.shown.work {
                 owner.shown.work = work;
                 send = true;
@@ -969,15 +1008,34 @@ impl Game<'_> {
         };
         let state = self.world.block(pos[0], pos[1], pos[2]).0;
         let part = kinds.part(state);
-        if !matches!(
-            part,
-            Some(Part::Motor(_) | Part::Crank(_) | Part::Millstone | Part::Depot | Part::Basin)
-        ) {
+        if !part.is_some_and(takes_use) {
             return false;
         }
         let sneaking = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft);
         let dimension = self.dim.id();
         let root = self.save.root.clone();
+        // A belt: the held stack onto it, to be carried.
+        if let Some(Part::Belt(_)) = part {
+            if let Some(stack) = self.held().cloned() {
+                let n = stack.count;
+                let at = [0usize, 1, 2].map(|i| f64::from(pos[i]) + 0.5);
+                self.spawn_item(stack, [at[0], at[1] + 0.2, at[2]], [0.0; 3], 20);
+                self.tachyon_spend_held(n);
+            }
+            return true;
+        }
+        // A funnel: from putting in to taking out, and back.
+        if let Some(Part::Funnel(_)) = part {
+            OWNERS.with_borrow_mut(|owners| {
+                let owner = owners.entry(dimension).or_default();
+                owner.load(&root, dimension);
+                if !owner.funnels_out.remove(&pos) {
+                    owner.funnels_out.insert(pos);
+                }
+                owner.save(&root, dimension);
+            });
+            return true;
+        }
         if part == Some(Part::Basin) {
             let mut b = OWNERS.with_borrow_mut(|owners| {
                 let owner = owners.entry(dimension).or_default();
@@ -1044,10 +1102,7 @@ impl Game<'_> {
             return false;
         };
         let state = self.world.block(pos[0], pos[1], pos[2]).0;
-        matches!(
-            kinds.part(state),
-            Some(Part::Motor(_) | Part::Crank(_) | Part::Millstone | Part::Depot | Part::Basin)
-        )
+        kinds.part(state).is_some_and(takes_use)
     }
 
     /// Whether the block at `pos` is a machine a hopper fills and empties
@@ -1430,6 +1485,8 @@ impl Game<'_> {
             Part::Mixer => ("mechanical_mixer", "Mechanical Mixer"),
             Part::Basin => ("basin", "Basin"),
             Part::Fan(_) => ("encased_fan", "Encased Fan"),
+            Part::Belt(_) => ("belt", "Mechanical Belt"),
+            Part::Funnel(_) => ("funnel", "Funnel"),
         };
         let what = self.translate(&format!("block.kinetica.{block}"), english);
         let mut state = if jammed {
@@ -1451,7 +1508,10 @@ impl Game<'_> {
                 .replacen("%s", &(s.capacity.round() as i64).to_string(), 1);
             state = format!("{state} | {su}");
         }
-        if let Some(item) = work {
+        // A funnel: whether it puts in or takes out, only.
+        if let (Part::Funnel(_), Some(w)) = (part, &work) {
+            state = self.translate(&format!("kinetica.hud.{w}"), w);
+        } else if let Some(item) = work {
             // A fan: what its air does ("pulling, washing").
             let what = if matches!(part, Part::Fan(_)) {
                 (item.split(':'))
@@ -1564,6 +1624,11 @@ mod tests {
         assert_eq!(
             part_of("kinetica:encased_fan", props("x")),
             Some(Part::Fan(Axis::X))
+        );
+        assert_eq!(part_of("kinetica:belt", facing), Some(Part::Belt(Axis::Z)));
+        assert_eq!(
+            part_of("kinetica:funnel", facing),
+            Some(Part::Funnel(Dir::North))
         );
         assert_eq!(
             part_of("kinetica:mechanical_press", props("z")),
