@@ -466,6 +466,8 @@ fn decode(data: &[u8]) -> Option<Shown> {
 /// the model), its speed for each turn of its half's, and the half.
 fn pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
     const HALF: &str = "kinetica:block/shaft_half";
+    // Out of a casing's face a hair, not in it.
+    const CASED: &str = "kinetica:block/shaft_half_cased";
     match part {
         Part::Shaft(a) => vec![("kinetica:block/shaft", positive(a), 1.0, 0)],
         Part::Cog(a) => vec![("kinetica:block/cogwheel", positive(a), 1.0, 0)],
@@ -475,14 +477,14 @@ fn pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         Part::Gearbox(_) => Dir::ALL
             .into_iter()
             .filter(|d| part.shaft_toward(*d))
-            .map(|d| (HALF, d, part.side_factor(d), 0))
+            .map(|d| (CASED, d, part.side_factor(d), 0))
             .collect(),
         Part::Motor(out) => vec![(HALF, out, 1.0, 0)],
         // The handle stands out of the side the crank was put on.
         Part::Crank(out) => vec![("kinetica:block/hand_crank_handle", out.opposite(), 1.0, 0)],
         Part::Clutch(a) | Part::Gearshift(a) => {
             let [neg, pos] = a.dirs();
-            vec![(HALF, neg, 1.0, 0), (HALF, pos, 1.0, 1)]
+            vec![(CASED, neg, 1.0, 0), (CASED, pos, 1.0, 1)]
         }
         Part::Millstone => vec![("kinetica:block/millstone_top", Dir::Up, 1.0, 0)],
     }

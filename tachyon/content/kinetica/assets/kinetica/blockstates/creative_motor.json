@@ -1,18 +1,34 @@
 {
   "variants": {
-    "facing=north": {
+    "eye=false,facing=north": {
       "model": "kinetica:block/creative_motor_body",
       "y": 180
     },
-    "facing=east": {
+    "eye=true,facing=north": {
+      "model": "kinetica:block/creative_motor_body",
+      "y": 180
+    },
+    "eye=false,facing=east": {
       "model": "kinetica:block/creative_motor_body",
       "y": 270
     },
-    "facing=south": {
+    "eye=true,facing=east": {
+      "model": "kinetica:block/creative_motor_body",
+      "y": 270
+    },
+    "eye=false,facing=south": {
       "model": "kinetica:block/creative_motor_body",
       "y": 0
     },
-    "facing=west": {
+    "eye=true,facing=south": {
+      "model": "kinetica:block/creative_motor_body",
+      "y": 0
+    },
+    "eye=false,facing=west": {
+      "model": "kinetica:block/creative_motor_body",
+      "y": 90
+    },
+    "eye=true,facing=west": {
       "model": "kinetica:block/creative_motor_body",
       "y": 90
     }

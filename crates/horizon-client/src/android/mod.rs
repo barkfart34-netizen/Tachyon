@@ -20,25 +20,31 @@ pub const BUILD: &str = match option_env!("TACHYON_BUILD") {
 
 /// Tachyon's lighter settings for a phone, applied once per version of them
 /// (`tachyon-defaults` in the game folder): Horizon's Performance preset (8
-/// chunks, fast clouds and leaves, fewer particles), 75% resolution, VSync
-/// up to 120 FPS (a 90 or 120 Hz screen gets its rate), and 4 worker threads
-/// for a phone's few big cores.
+/// chunks, fast clouds and leaves, fewer particles), 75% resolution and 4
+/// worker threads for a phone's few big cores on a first start; since
+/// version 3, VSync at most 60 FPS in a world and 30 in menus (battery
+/// mode): a phone kept at 120 heats up and slows down after a while.
 fn phone_defaults(home: &std::path::Path) {
-    const VERSION: &str = "2";
+    const VERSION: &str = "3";
     let marker = home.join("tachyon-defaults");
-    if std::fs::read_to_string(&marker).is_ok_and(|v| v.trim() == VERSION) {
+    let had = std::fs::read_to_string(&marker).ok();
+    if had.as_deref().is_some_and(|v| v.trim() == VERSION) {
         return;
     }
     let options = home.join("options.txt");
     let mut settings = horizon_client::settings::Settings::load(&options);
-    horizon_client::graphics::apply_preset(
-        horizon_client::graphics::Preset::Performance,
-        &mut settings,
-    );
-    settings.max_fps = 120;
+    // An earlier version's choices stay; only the frame rate changes.
+    if had.is_none() {
+        horizon_client::graphics::apply_preset(
+            horizon_client::graphics::Preset::Performance,
+            &mut settings,
+        );
+        settings.horizon.resolution_scale = 75;
+        settings.horizon.workers = 4;
+    }
+    settings.max_fps = 60;
     settings.vsync = true;
-    settings.horizon.resolution_scale = 75;
-    settings.horizon.workers = 4;
+    settings.horizon.battery = true;
     settings.save(&options);
     let _ = std::fs::write(marker, VERSION);
     log::info!("Tachyon: phone defaults {VERSION} applied");

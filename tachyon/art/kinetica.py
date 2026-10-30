@@ -543,6 +543,13 @@ def still(particle):
     return {"parent": "minecraft:block/block", "textures": {"particle": t(particle)}}
 
 
+# The plate it stands on covers its whole floor: its template's shape hides
+# the face of the block under it.
+MOTOR_PLATE = box([0, 0, 0], [16, 2, 16], {
+    "north": ("#back", [0, 14, 16, 16]), "south": ("#back", [0, 14, 16, 16]),
+    "east": ("#back", [0, 14, 16, 16]), "west": ("#back", [0, 14, 16, 16]),
+    "up": ("#back", [0, 0, 16, 16]), "down": ("#back", [0, 0, 16, 16]),
+})
 MOTOR_BODY = box([2, 2, 4], [14, 14, 16], {
     "north": ("#back", [2, 2, 14, 14]), "south": ("#back", [2, 2, 14, 14], "south"),
     "east": ("#side", [0, 2, 12, 14]), "west": ("#side", [4, 2, 16, 14]),
@@ -623,15 +630,23 @@ MODELS = {
     # The turning parts, about +Y: the items show them whole too.
     "block/shaft": model(textures=SHAFT_TEX, elements=[shaft_part()]),
     "block/shaft_half": model(textures=SHAFT_TEX, elements=[shaft_part(8, 16)]),
+    # A casing's turning shaft end: a quarter pixel out of its face, not in
+    # it (two faces in one plane flicker).
+    "block/shaft_half_cased": model(textures=SHAFT_TEX, elements=[box([6, 8, 6], [10, 16.25, 10], {
+        "north": ("#shaft", [6, 8, 10, 16]), "south": ("#shaft", [6, 8, 10, 16]),
+        "east": ("#shaft", [6, 8, 10, 16]), "west": ("#shaft", [6, 8, 10, 16]),
+        "up": ("#shaft_end", [6, 6, 10, 10]), "down": ("#shaft_end", [6, 6, 10, 10]),
+    })]),
     "block/shaft_still": still("block/shaft"),
     "block/cogwheel_still": still("block/cogwheel"),
     "block/large_cogwheel_still": still("block/cogwheel"),
-    "block/creative_motor_body": model(textures=MOTOR_TEX, elements=[MOTOR_BODY]),
+    "block/creative_motor_body": model(textures=MOTOR_TEX, elements=[MOTOR_PLATE, MOTOR_BODY]),
     "block/cogwheel": model(textures=COG_TEX, elements=cog(8, 8)),
     "block/large_cogwheel": model(textures=COG_TEX, elements=cog(14, 16)),
     "block/gearbox": model("minecraft:block/cube_column", {"side": t("block/ferrostone_casing"),
                                                          "end": t("block/gearbox_side")}),
     "block/creative_motor": model(textures=MOTOR_TEX, elements=[
+        MOTOR_PLATE,
         MOTOR_BODY,
         box([6, 6, 0], [10, 10, 4], {
             "north": ("#shaft_end", [6, 6, 10, 10]),
@@ -683,10 +698,15 @@ AXIS = {
         "axis=z": {"x": 90},
     }
 }
-# Glazed terracotta's facing points at the player who placed it; the motor's
-# shaft (the model's north) points the other way, where the player looked.
+# An end portal frame's (and a stonecutter's) facing points at the player
+# who placed it; the motor's shaft (the model's north) points the other way,
+# where the player looked.
 FACING = {"variants": {f"facing={f}": {"y": y} for f, y in
                        [("north", 180), ("east", 270), ("south", 0), ("west", 90)]}}
+# The frame's eye: the same.
+FACING_EYE = {"variants": {f"eye={e},facing={f}": {"y": y} for f, y in
+                           [("north", 180), ("east", 270), ("south", 0), ("west", 90)]
+                           for e in ("false", "true")}}
 
 
 SIX = {"variants": {f"facing={f}": r for f, r in [
@@ -726,10 +746,10 @@ BLOCKS = {
                        ("Large Cogwheel", "Roda Gigi Besar")),
     "gearbox": ("minecraft:quartz_pillar", {"hardness": 2.0, "sounds": "minecraft:copper_block", "map_color": 11},
                 states(AXIS, "block/gearbox"), "block/gearbox", ("Gearbox", "Kotak Gigi")),
-    "creative_motor": ("minecraft:white_glazed_terracotta",
+    "creative_motor": ("minecraft:end_portal_frame",
                        {"hardness": -1.0, "explosion_resistance": 3600000.0, "sounds": "minecraft:copper_block",
                         "light": 6, "map_color": 23},
-                       states(FACING, "block/creative_motor_body"), "block/creative_motor",
+                       states(FACING_EYE, "block/creative_motor_body"), "block/creative_motor",
                        ("Creative Motor", "Motor Kreatif")),
     # A waxed lightning rod's states: six facings, powered, waterlogged;
     # placed against a block, it faces out of it.

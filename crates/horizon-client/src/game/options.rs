@@ -344,6 +344,12 @@ impl Game<'_> {
             has_overlay: false,
         };
         let limit = framerate_limit(self.settings.max_fps as i32, context);
+        // Tachyon on a hot phone: a lower cap (game/android.rs).
+        #[cfg(target_os = "android")]
+        let limit = match super::android::THERMAL_CAP.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => limit,
+            cap => limit.min(cap),
+        };
         self.settings
             .horizon
             .battery_limit(limit, self.title.is_none(), self.focused)

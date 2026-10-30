@@ -1,5 +1,5 @@
 {
-  "template": "minecraft:white_glazed_terracotta",
+  "template": "minecraft:end_portal_frame",
   "properties": {
     "hardness": -1.0,
     "explosion_resistance": 3600000.0,

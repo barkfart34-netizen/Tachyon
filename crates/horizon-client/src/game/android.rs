@@ -148,6 +148,31 @@ pub(crate) struct AndroidGame {
     last_status: Instant,
     /// How many frames, CPU and GPU times the stats held at the last status line.
     stats_mark: [usize; 3],
+    /// The first frame rate measured in a world this session ("60 FPS").
+    first_fps: Option<String>,
+}
+
+/// The frame cap the phone's heat sets (0: none), from
+/// `PowerManager.getCurrentThermalStatus` at each status line;
+/// `framerate_limit` takes it.
+pub(crate) static THERMAL_CAP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// The thermal statuses' names, 0 to 6.
+const HEAT: [&str; 7] = ["none", "light", "moderate", "severe", "critical", "emergency", "shutdown"];
+
+/// The frame cap for a thermal status: moderate 45, severe and above 30.
+fn thermal_cap(status: i32) -> i32 {
+    match status {
+        i32::MIN..=1 => 0,
+        2 => 45,
+        _ => 30,
+    }
+}
+
+/// The app's resident memory in MB (`/proc/self/statm`).
+fn resident_mb() -> Option<u64> {
+    let text = std::fs::read_to_string("/proc/self/statm").ok()?;
+    let pages: u64 = text.split_whitespace().nth(1)?.parse().ok()?;
+    Some(pages * 4096 / (1024 * 1024))
 }
 
 /// The frames since `mark` in a line: FPS, frame, CPU (by phase) and GPU
@@ -353,6 +378,7 @@ impl AndroidGame {
             was_in_game: false,
             last_status: Instant::now(),
             stats_mark: [0; 3],
+            first_fps: None,
         })
     }
 
@@ -593,8 +619,25 @@ impl AndroidGame {
                     };
                     let at = game.player.as_ref().map(|p| p.position);
                     log::info!("Tachyon status: {state}, playing {in_game}, player at {at:?}");
+                    // A hot phone slows down: a lower frame cap until it cools.
+                    let heat = jni::platform("thermal", "")
+                        .and_then(|s| s.trim().parse::<i32>().ok())
+                        .unwrap_or(0);
+                    let cap = thermal_cap(heat);
+                    let was = THERMAL_CAP.swap(cap, std::sync::atomic::Ordering::Relaxed);
+                    if was != cap {
+                        log::info!("Tachyon: thermal status {heat}, frame cap {cap} (0: none)");
+                    }
                     let perf = performance(game, &mut self.stats_mark);
                     if let Some(perf) = perf.filter(|_| state == "world") {
+                        let fps = perf.split(" FPS").next().unwrap_or("?").to_owned();
+                        let first = self.first_fps.get_or_insert(fps);
+                        let memory = resident_mb().map_or_else(|| "?".to_owned(), |m| format!("{m} MB"));
+                        let heat = HEAT.get(heat.clamp(0, 6) as usize).copied().unwrap_or("?");
+                        let minutes = game.started.elapsed().as_secs() / 60;
+                        let perf = format!(
+                            "{perf}; memory {memory}, heat {heat}, {first} FPS at first, {minutes} min since start"
+                        );
                         log::info!("Tachyon performance: {perf}");
                         let _ = std::fs::write(self.home.join("tachyon-performance.txt"), &perf);
                     }

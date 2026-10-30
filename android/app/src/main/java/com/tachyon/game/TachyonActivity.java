@@ -281,6 +281,11 @@ public class TachyonActivity extends NativeActivity {
                 java.io.File dir = getExternalFilesDir(null);
                 return dir == null ? null : dir.getAbsolutePath();
             }
+            case "thermal": {
+                // PowerManager.getCurrentThermalStatus: 0 none to 6 shutdown.
+                android.os.PowerManager power = getSystemService(android.os.PowerManager.class);
+                return power == null ? "0" : Integer.toString(power.getCurrentThermalStatus());
+            }
             case "total_memory": {
                 ActivityManager.MemoryInfo info = new ActivityManager.MemoryInfo();
                 getSystemService(ActivityManager.class).getMemoryInfo(info);
