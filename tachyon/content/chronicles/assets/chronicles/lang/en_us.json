@@ -25,6 +25,8 @@
   "chronicles.quest.crushed_ore.text": "A millstone grinds raw ore into crushed ore, and now and then gives one more. Smelted, each crushed ore gives an ingot.",
   "chronicles.quest.pressing": "Pressed Metal",
   "chronicles.quest.pressing.text": "A mechanical press turning over a depot presses what is put on the depot: ingots into sheets. A hopper beside the depot fills it, and one under it takes the sheets out.",
+  "chronicles.quest.mixing": "Stirred Together",
+  "chronicles.quest.mixing.text": "A mechanical mixer turning over a basin, or two blocks over it, mixes what is put in the basin once it holds all a recipe asks for: andesite and an iron nugget into ferrostone alloy, copper and tin into bronze, and more. A hopper under the basin takes out what was mixed.",
   "chronicles.quest.goggles": "Seeing Speed",
   "chronicles.quest.goggles.text": "Engineer's Goggles show how fast a part turns when you look at it.",
   "chronicles.quest.water_power": "Running Water",

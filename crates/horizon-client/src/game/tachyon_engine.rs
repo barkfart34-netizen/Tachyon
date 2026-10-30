@@ -17,6 +17,7 @@
 //! block entities, [`Game::tachyon_engine_hud`] from the HUD hook.
 pub(super) mod chronicles;
 pub(crate) mod kinetic;
+mod basin;
 mod millstone;
 
 use super::Game;
@@ -110,6 +111,8 @@ fn part_of<'a>(name: &str, property: impl Fn(&str) -> Option<&'a str>) -> Option
         "millstone" => Some(Part::Millstone),
         "mechanical_press" => Some(Part::Press(axis()?)),
         "depot" => Some(Part::Depot),
+        "mechanical_mixer" => Some(Part::Mixer),
+        "basin" => Some(Part::Basin),
         _ => None,
     }
 }
@@ -238,7 +241,9 @@ struct Owner {
     natural: HashMap<[i32; 3], f32>,
     /// What the millstones hold, kept with the motors' speeds.
     mills: HashMap<[i32; 3], millstone::Mill>,
-    /// `mills` changed since the file was written.
+    /// What the basins hold.
+    basins: HashMap<[i32; 3], basin::Basin>,
+    /// `mills` or `basins` changed since the file was written.
     mills_changed: bool,
 }
 
@@ -265,6 +270,9 @@ impl Owner {
         let mills: Vec<([i32; 3], millstone::Mill)> =
             serde_json::from_value(value["mills"].clone()).unwrap_or_default();
         self.mills = mills.into_iter().collect();
+        let basins: Vec<([i32; 3], basin::Basin)> =
+            serde_json::from_value(value["basins"].clone()).unwrap_or_default();
+        self.basins = basins.into_iter().collect();
         self.dirty = true;
     }
     fn save(&self, root: &std::path::Path, dimension: &str) {
@@ -284,8 +292,12 @@ impl Owner {
         let mut mills: Vec<(&[i32; 3], &millstone::Mill)> =
             self.mills.iter().filter(|(_, m)| !m.is_empty()).collect();
         mills.sort_by_key(|(p, _)| **p);
+        let mut basins: Vec<(&[i32; 3], &basin::Basin)> =
+            self.basins.iter().filter(|(_, b)| !b.is_empty()).collect();
+        basins.sort_by_key(|(p, _)| **p);
         let file = Self::file(root, dimension);
-        let text = serde_json::json!({ "motors": rows, "mills": mills }).to_string();
+        let text =
+            serde_json::json!({ "motors": rows, "mills": mills, "basins": basins }).to_string();
         let written = file
             .parent()
             .map_or(Ok(()), std::fs::create_dir_all)
@@ -293,6 +305,32 @@ impl Owner {
         if let Err(e) = written {
             log::warn!("Tachyon: {} not written: {e}", file.display());
         }
+    }
+}
+
+/// The machine working the depot or basin at `p`: the one `is` finds right
+/// above it, else one block higher with nothing between (as Create's press
+/// and mixer stand, their head down through that block).
+fn worker(
+    parts: &HashMap<[i32; 3], Part>,
+    p: [i32; 3],
+    is: impl Fn(&Part) -> bool,
+) -> Option<[i32; 3]> {
+    let up = |d: i32| [p[0], p[1] + d, p[2]];
+    match parts.get(&up(1)) {
+        Some(q) if is(q) => Some(up(1)),
+        Some(_) => None,
+        None => parts.get(&up(2)).filter(|&q| is(q)).map(|_| up(2)),
+    }
+}
+
+/// How far down a press's or mixer's work is: 1 for the block right under
+/// it, else 2 (`worker`).
+fn reach(parts: &HashMap<[i32; 3], Part>, pos: [i32; 3], under: Part) -> f32 {
+    if parts.get(&[pos[0], pos[1] - 1, pos[2]]) == Some(&under) {
+        1.0
+    } else {
+        2.0
     }
 }
 
@@ -329,36 +367,43 @@ thread_local! {
     static CLIENT: RefCell<Client> = RefCell::new(Client::default());
 }
 
-/// A machine's recipe for the recipe viewer: its input, its work, and its
-/// outputs (item, count, chance).
-pub(in crate::game) type Processing = (String, f32, Vec<(String, u32, f32)>);
+/// A machine's recipe for the recipe viewer: its inputs (item, count), its
+/// work, and its outputs (item, count, chance).
+pub(in crate::game) type Processing = (Vec<(String, u32)>, f32, Vec<(String, u32, f32)>);
 
-/// The millstone's recipes and the press's, for the recipe viewer.
-pub(in crate::game) fn processing() -> [Vec<Processing>; 2] {
-    let list = |recipes: &[millstone::Milling]| {
-        recipes
-            .iter()
-            .map(|r| {
-                let outputs = (r.outputs.iter())
-                    .map(|o| (o.item.clone(), o.count, o.chance))
-                    .collect();
-                (r.input.clone(), r.time, outputs)
-            })
+/// The millstone's recipes, the press's and the mixer's, for the recipe
+/// viewer.
+pub(in crate::game) fn processing() -> [Vec<Processing>; 3] {
+    let outputs = |list: &[millstone::Output]| -> Vec<(String, u32, f32)> {
+        (list.iter())
+            .map(|o| (o.item.clone(), o.count, o.chance))
             .collect()
     };
-    [list(millstone::recipes()), list(millstone::pressing())]
+    let list = |recipes: &[millstone::Milling]| -> Vec<Processing> {
+        (recipes.iter())
+            .map(|r| (vec![(r.input.clone(), 1)], r.time, outputs(&r.outputs)))
+            .collect()
+    };
+    let mixing: Vec<Processing> = (basin::recipes().iter())
+        .map(|r| {
+            let inputs: Vec<(String, u32)> =
+                r.inputs.iter().map(|i| (i.item.clone(), i.count)).collect();
+            (inputs, r.time, outputs(&r.outputs))
+        })
+        .collect();
+    [list(millstone::recipes()), list(millstone::pressing()), mixing]
 }
 
 /// What a game shows of the parts: their speeds, the jammed ones, their
-/// networks' stress, the machines at work (a millstone, a press: on what),
-/// and what each depot holds.
+/// networks' stress, the machines at work (a millstone, a press, a mixer:
+/// on what), and what each depot and basin holds (a few stacks).
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Shown {
     speeds: kinetic::Speeds,
     jammed: HashSet<[i32; 3]>,
     stress: HashMap<[i32; 3], kinetic::Stress>,
     work: HashMap<[i32; 3], String>,
-    held: HashMap<[i32; 3], (String, u32)>,
+    held: HashMap<[i32; 3], Vec<(String, u32)>>,
 }
 
 /// What the parts show as a payload: the turning parts (each half's
@@ -407,16 +452,20 @@ fn encode(shown: &Shown) -> Vec<u8> {
         name(&mut out, item);
     }
     out.extend_from_slice(&(held.len() as u32).to_le_bytes());
-    for (p, (item, count)) in held {
+    for (p, stacks) in held {
         pos(&mut out, p);
-        out.extend_from_slice(&count.to_le_bytes());
-        name(&mut out, item);
+        let stacks = &stacks[..stacks.len().min(255)];
+        out.push(stacks.len() as u8);
+        for (item, count) in stacks {
+            out.extend_from_slice(&count.to_le_bytes());
+            name(&mut out, item);
+        }
     }
     out
 }
 
 /// The payload's form.
-const VERSION: u8 = 4;
+const VERSION: u8 = 5;
 
 fn decode(data: &[u8]) -> Option<Shown> {
     let mut at = 0usize;
@@ -478,10 +527,15 @@ fn decode(data: &[u8]) -> Option<Shown> {
     let mut held = HashMap::with_capacity(count.min(1 << 10));
     for _ in 0..count {
         let p = pos(next(12)?);
-        let n = u32::from_le_bytes(word(next(4)?));
-        let len = usize::from(next(1)?[0]);
-        let item = std::str::from_utf8(next(len)?).ok()?;
-        held.insert(p, (item.to_owned(), n));
+        let stacks = usize::from(next(1)?[0]);
+        let mut list = Vec::with_capacity(stacks);
+        for _ in 0..stacks {
+            let n = u32::from_le_bytes(word(next(4)?));
+            let len = usize::from(next(1)?[0]);
+            let item = std::str::from_utf8(next(len)?).ok()?;
+            list.push((item.to_owned(), n));
+        }
+        held.insert(p, list);
     }
     Some(Shown {
         speeds,
@@ -523,7 +577,9 @@ fn pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
             .filter(|d| part.shaft_toward(*d))
             .map(|d| (CASED, d, 1.0, 0))
             .collect(),
-        Part::Depot => Vec::new(),
+        // The whisk is drawn as it mixes (`tachyon_render`).
+        Part::Mixer => vec![(CASED, Dir::Up, 1.0, 0)],
+        Part::Depot | Part::Basin => Vec::new(),
     }
 }
 
@@ -600,11 +656,13 @@ impl Game<'_> {
             if owner.motors.len() != before {
                 owner.save(&root, dimension);
             }
-            // A millstone broken drops what it held.
+            // A millstone, a depot or a basin broken drops what it held.
             let mut drops: Vec<([i32; 3], millstone::Held)> = Vec::new();
             for p in &removed {
-                if let Some(mut mill) = owner.mills.remove(p) {
-                    drops.extend(mill.take_all().into_iter().map(|h| (*p, h)));
+                let held = (owner.mills.remove(p).map(|mut m| m.take_all()))
+                    .or_else(|| owner.basins.remove(p).map(|mut b| b.take_all()));
+                if let Some(held) = held {
+                    drops.extend(held.into_iter().map(|h| (*p, h)));
                     owner.save(&root, dimension);
                 }
             }
@@ -710,21 +768,22 @@ impl Game<'_> {
                 if part == Some(Part::Depot)
                     && let Some(h) = mill.outputs.first().or(mill.input.as_ref())
                 {
-                    held.insert(*p, (h.item.clone(), h.count));
+                    held.insert(*p, vec![(h.item.clone(), h.count)]);
                 }
                 let Some(item) = mill.input.as_ref().map(|h| h.item.clone()) else {
                     continue;
                 };
                 let (at, recipe) = match part {
                     Some(Part::Millstone) => (*p, millstone::recipe(&item)),
-                    Some(Part::Depot) => ([p[0], p[1] + 1, p[2]], millstone::press_recipe(&item)),
+                    Some(Part::Depot) => {
+                        let press = |q: &Part| matches!(q, Part::Press(_));
+                        let Some(at) = worker(&owner.index.parts, *p, press) else {
+                            continue;
+                        };
+                        (at, millstone::press_recipe(&item))
+                    }
                     _ => continue,
                 };
-                if part == Some(Part::Depot)
-                    && !matches!(owner.index.parts.get(&at), Some(Part::Press(_)))
-                {
-                    continue;
-                }
                 let speed = owner.shown.speeds.get(&at).map_or(0.0, |s| s[0]);
                 if speed == 0.0 {
                     continue;
@@ -732,6 +791,26 @@ impl Game<'_> {
                 if mill.grind(speed, recipe, &mut || random.next_float()) {
                     owner.mills_changed = true;
                     work.insert(at, item);
+                }
+            }
+            for (p, b) in &mut owner.basins {
+                if owner.index.parts.get(p) != Some(&Part::Basin) {
+                    continue;
+                }
+                let stacks: Vec<(String, u32)> = (b.outputs.iter().chain(&b.inputs))
+                    .take(4)
+                    .map(|h| (h.item.clone(), h.count))
+                    .collect();
+                if !stacks.is_empty() {
+                    held.insert(*p, stacks);
+                }
+                let Some(at) = worker(&owner.index.parts, *p, |q| *q == Part::Mixer) else {
+                    continue;
+                };
+                let speed = owner.shown.speeds.get(&at).map_or(0.0, |s| s[0]);
+                if let Some(into) = b.mix(speed, basin::recipes(), &mut || random.next_float()) {
+                    owner.mills_changed = true;
+                    work.insert(at, into);
                 }
             }
             if work != owner.shown.work {
@@ -871,13 +950,31 @@ impl Game<'_> {
         let part = kinds.part(state);
         if !matches!(
             part,
-            Some(Part::Motor(_) | Part::Crank(_) | Part::Millstone | Part::Depot)
+            Some(Part::Motor(_) | Part::Crank(_) | Part::Millstone | Part::Depot | Part::Basin)
         ) {
             return false;
         }
         let sneaking = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft);
         let dimension = self.dim.id();
         let root = self.save.root.clone();
+        if part == Some(Part::Basin) {
+            let mut b = OWNERS.with_borrow_mut(|owners| {
+                let owner = owners.entry(dimension).or_default();
+                owner.load(&root, dimension);
+                owner.basins.remove(&pos).unwrap_or_default()
+            });
+            let moved = self.tachyon_use_basin(&mut b);
+            OWNERS.with_borrow_mut(|owners| {
+                let owner = owners.entry(dimension).or_default();
+                if !b.is_empty() {
+                    owner.basins.insert(pos, b);
+                }
+                if moved {
+                    owner.save(&root, dimension);
+                }
+            });
+            return true;
+        }
         if matches!(part, Some(Part::Millstone | Part::Depot)) {
             let mut mill = OWNERS.with_borrow_mut(|owners| {
                 let owner = owners.entry(dimension).or_default();
@@ -928,33 +1025,50 @@ impl Game<'_> {
         let state = self.world.block(pos[0], pos[1], pos[2]).0;
         matches!(
             kinds.part(state),
-            Some(Part::Motor(_) | Part::Crank(_) | Part::Millstone | Part::Depot)
+            Some(Part::Motor(_) | Part::Crank(_) | Part::Millstone | Part::Depot | Part::Basin)
         )
     }
 
     /// Whether the block at `pos` is a machine a hopper fills and empties
-    /// (a millstone, a depot): the world's owner's (game/machines.rs).
+    /// (a millstone, a depot, a basin): the world's owner's
+    /// (game/machines.rs).
     pub(super) fn tachyon_machine(&self, pos: [i32; 3]) -> bool {
         let Some(kinds) = self.tachyon_kinds() else {
             return false;
         };
         let state = self.world.block(pos[0], pos[1], pos[2]).0;
-        matches!(kinds.part(state), Some(Part::Millstone | Part::Depot))
+        matches!(
+            kinds.part(state),
+            Some(Part::Millstone | Part::Depot | Part::Basin)
+        )
     }
 
     /// A hopper's item into the machine at `pos`: a millstone takes what it
-    /// grinds, a depot one stack while it holds nothing it made. Whether it
-    /// went in.
+    /// grinds, a depot one stack while it holds nothing it made, a basin
+    /// nine stacks of anything; none an item with components (they keep
+    /// items by name and count). Whether it went in.
     pub(super) fn tachyon_machine_put(&mut self, pos: [i32; 3], one: &ItemStack) -> bool {
         let Some(kinds) = self.tachyon_kinds() else {
             return false;
         };
+        if one.extra.is_some() {
+            return false;
+        }
         let part = kinds.part(self.world.block(pos[0], pos[1], pos[2]).0);
         let dimension = self.dim.id();
         let root = self.save.root.clone();
         OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
             owner.load(&root, dimension);
+            if part == Some(Part::Basin) {
+                let b = owner.basins.entry(pos).or_default();
+                let took = b.put(&one.item, 1) == 1;
+                if b.is_empty() {
+                    owner.basins.remove(&pos);
+                }
+                owner.mills_changed |= took;
+                return took;
+            }
             let mill = owner.mills.entry(pos).or_default();
             let fits = match part {
                 Some(Part::Millstone) => millstone::recipe(&one.item).is_some(),
@@ -975,19 +1089,28 @@ impl Game<'_> {
     pub(super) fn tachyon_machine_take(&mut self, pos: [i32; 3]) -> Option<(ItemStack, bool)> {
         let kinds = self.tachyon_kinds()?;
         let part = kinds.part(self.world.block(pos[0], pos[1], pos[2]).0);
-        let above = kinds.part(self.world.block(pos[0], pos[1] + 1, pos[2]).0);
         let dimension = self.dim.id();
         let root = self.save.root.clone();
         OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
             owner.load(&root, dimension);
+            // A basin: what was mixed only.
+            if part == Some(Part::Basin) {
+                let b = owner.basins.get_mut(&pos)?;
+                let one = b.take_one()?;
+                if b.is_empty() {
+                    owner.basins.remove(&pos);
+                }
+                owner.mills_changed = true;
+                return Some((ItemStack::new(&one.item, one.count), false));
+            }
             let mill = owner.mills.get_mut(&pos)?;
             let pressed = mill
                 .input
                 .as_ref()
                 .is_some_and(|h| millstone::press_recipe(&h.item).is_some());
-            let input_too = part == Some(Part::Depot)
-                && !(pressed && matches!(above, Some(Part::Press(_))));
+            let worked = || worker(&owner.index.parts, pos, |q| matches!(q, Part::Press(_)));
+            let input_too = part == Some(Part::Depot) && !(pressed && worked().is_some());
             let (one, input) = mill.take_one(input_too)?;
             if mill.is_empty() {
                 owner.mills.remove(&pos);
@@ -1000,6 +1123,8 @@ impl Game<'_> {
     /// What a hopper took from the machine at `pos` and couldn't keep (of
     /// the items to work, `input`).
     pub(super) fn tachyon_machine_return(&mut self, pos: [i32; 3], rest: ItemStack, input: bool) {
+        let state = self.world.block(pos[0], pos[1], pos[2]).0;
+        let basin = (self.tachyon_kinds()).is_some_and(|k| k.part(state) == Some(Part::Basin));
         let dimension = self.dim.id();
         OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
@@ -1007,7 +1132,11 @@ impl Game<'_> {
                 item: rest.item.to_string(),
                 count: rest.count,
             };
-            owner.mills.entry(pos).or_default().give_back(held, input);
+            if basin {
+                owner.basins.entry(pos).or_default().give_back(held);
+            } else {
+                owner.mills.entry(pos).or_default().give_back(held, input);
+            }
         });
     }
 
@@ -1070,8 +1199,8 @@ impl Game<'_> {
         let ticks = self.world.game_time as f64 + alpha;
         let view = self.view_frustum;
         let mut draws: Vec<([i32; 3], Part, [f32; 2])> = Vec::new();
-        let mut heads: Vec<([i32; 3], f32)> = Vec::new();
-        let mut trays: Vec<([i32; 3], ItemStack)> = Vec::new();
+        let mut heads: Vec<([i32; 3], Part, f32, f32)> = Vec::new();
+        let mut trays: Vec<([i32; 3], Part, Vec<ItemStack>)> = Vec::new();
         self.tachyon_view(|index, shown| {
             for (pos, part) in &index.parts {
                 let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
@@ -1084,11 +1213,22 @@ impl Game<'_> {
                     continue;
                 }
                 let speed = shown.speeds.get(pos).copied().unwrap_or([0.0; 2]);
-                if matches!(part, Part::Press(_)) && shown.work.contains_key(pos) {
-                    heads.push((*pos, speed[0]));
+                if shown.work.contains_key(pos) {
+                    match part {
+                        Part::Press(_) => {
+                            let drop = reach(&index.parts, *pos, Part::Depot);
+                            heads.push((*pos, *part, speed[0], drop));
+                        }
+                        Part::Mixer => {
+                            let drop = reach(&index.parts, *pos, Part::Basin);
+                            heads.push((*pos, *part, speed[0], drop));
+                        }
+                        _ => {}
+                    }
                 }
-                if let Some((item, count)) = shown.held.get(pos) {
-                    trays.push((*pos, ItemStack::new(item, *count)));
+                if let Some(stacks) = shown.held.get(pos) {
+                    let stacks = stacks.iter().map(|(item, n)| ItemStack::new(item, *n));
+                    trays.push((*pos, *part, stacks.collect()));
                 }
                 draws.push((*pos, *part, speed));
             }
@@ -1110,46 +1250,84 @@ impl Game<'_> {
                 self.submit_item_world(&state, pose, light, out);
             }
         }
-        // A press at work: its head down onto the depot under it and up,
-        // once for each 100 work (a press's at 16 RPM: 5 seconds).
-        for (pos, speed) in heads {
-            let period = f64::from((1600.0 / speed.abs().max(1.0)).max(6.0));
-            let phase = (ticks / period).fract() as f32;
-            let down = if phase < 0.35 {
-                phase / 0.35
-            } else {
-                (1.0 - phase) / 0.65
-            };
-            let y = 1.0 / 64.0 - down * (6.0 / 16.0 + 1.0 / 64.0);
+        // A press at work: its head down onto what lies on the depot under
+        // it (`drop` blocks down) and up, once for each 100 work (5 seconds
+        // at 16 RPM). A mixer at work: its whisk down in the basin, turning.
+        // Each on a stem up into its block, as long as the head is low.
+        for (pos, part, speed, drop) in heads {
             let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
-            let pose = Mat4::from_translation((at - camera).as_vec3() + Vec3::new(0.0, y, 0.0));
+            let origin = (at - camera).as_vec3();
             let packed = self.world.light(pos[0], pos[1] - 1, pos[2]);
             let light = horizon_client::block_entity_render::vertex_light(packed);
-            let state = self.tachyon_model("kinetica:block/mechanical_press_head");
+            // The head's bottom (blocks from the machine's), its height,
+            // its turn.
+            let (bottom, height, turn, head, stem) = if part == Part::Mixer {
+                let degrees = kinetic::angle(part, pos, speed, ticks);
+                let turn = Mat4::from_translation(Vec3::new(0.5, 0.0, 0.5))
+                    * spin(Axis::Y, degrees)
+                    * Mat4::from_translation(Vec3::new(-0.5, 0.0, -0.5));
+                // The blades a quarter block over the basin's bottom.
+                let whisk = "kinetica:block/mechanical_mixer_whisk";
+                (4.0 / 16.0 - drop, 8.0 / 16.0, turn, whisk, "kinetica:block/mechanical_mixer_pole")
+            } else {
+                let period = f64::from((1600.0 / speed.abs().max(1.0)).max(6.0));
+                let phase = (ticks / period).fract() as f32;
+                let down = if phase < 0.35 {
+                    phase / 0.35
+                } else {
+                    (1.0 - phase) / 0.65
+                };
+                // From inside the press to the top of what lies on the tray.
+                let rest = 1.0 / 64.0;
+                let lowest = 9.0 / 16.0 + 1.0 / 32.0 - drop;
+                let bottom = rest + down * (lowest - rest);
+                let head = "kinetica:block/mechanical_press_head";
+                (bottom, 2.0 / 16.0, Mat4::IDENTITY, head, "kinetica:block/mechanical_press_stem")
+            };
+            let pose = Mat4::from_translation(origin + Vec3::new(0.0, bottom, 0.0)) * turn;
+            let state = self.tachyon_model(head);
             self.submit_item_world(&state, pose, light, out);
+            let length = -(bottom + height);
+            if length > 0.0 {
+                let pose = Mat4::from_translation(origin + Vec3::new(0.0, bottom + height, 0.0))
+                    * turn
+                    * Mat4::from_scale(Vec3::new(1.0, length, 1.0));
+                let state = self.tachyon_model(stem);
+                self.submit_item_world(&state, pose, light, out);
+            }
         }
         // What a depot holds, lying on its tray: turned face up, its middle
-        // over the tray's.
-        for (pos, stack) in trays {
-            let state = self.resolve_item(
-                &stack,
-                horizon_assets::item_model::DisplayContext::Ground,
-                None,
-                0,
-            );
-            if state.is_empty() {
-                continue;
-            }
-            let (lo, hi) = state.bounding_box();
+        // over the tray's. What a basin holds, smaller, on its floor, a
+        // stack in each quarter.
+        const QUARTERS: [(f32, f32); 4] = [(-0.2, -0.2), (0.2, 0.2), (0.2, -0.2), (-0.2, 0.2)];
+        for (pos, part, stacks) in trays {
             let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
-            // Face up: (x, y, z) to (x, z, -y).
-            let lift = Vec3::new(-(lo.x + hi.x) / 2.0, -lo.z, (lo.y + hi.y) / 2.0);
-            let pose = Mat4::from_translation(
-                (at - camera).as_vec3() + Vec3::new(0.5, 9.0 / 16.0, 0.5) + lift,
-            ) * Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2);
             let packed = self.world.light(pos[0], pos[1], pos[2]);
             let light = horizon_client::block_entity_render::vertex_light(packed);
-            self.submit_item_world(&state, pose, light, out);
+            for (i, stack) in stacks.iter().enumerate().take(QUARTERS.len()) {
+                let state = self.resolve_item(
+                    stack,
+                    horizon_assets::item_model::DisplayContext::Ground,
+                    None,
+                    0,
+                );
+                if state.is_empty() {
+                    continue;
+                }
+                let (lo, hi) = state.bounding_box();
+                let (spot, scale) = if part == Part::Basin {
+                    let (x, z) = QUARTERS[i];
+                    (Vec3::new(0.5 + x, 2.0 / 16.0 + i as f32 / 64.0, 0.5 + z), 0.75)
+                } else {
+                    (Vec3::new(0.5, 9.0 / 16.0, 0.5), 1.0)
+                };
+                // Face up: (x, y, z) to (x, z, -y).
+                let lift = Vec3::new(-(lo.x + hi.x) / 2.0, -lo.z, (lo.y + hi.y) / 2.0) * scale;
+                let pose = Mat4::from_translation((at - camera).as_vec3() + spot + lift)
+                    * Mat4::from_scale(Vec3::splat(scale))
+                    * Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+                self.submit_item_world(&state, pose, light, out);
+            }
         }
     }
 
@@ -1227,6 +1405,8 @@ impl Game<'_> {
             Part::Millstone => ("millstone", "Millstone"),
             Part::Press(_) => ("mechanical_press", "Mechanical Press"),
             Part::Depot => ("depot", "Depot"),
+            Part::Mixer => ("mechanical_mixer", "Mechanical Mixer"),
+            Part::Basin => ("basin", "Basin"),
         };
         let what = self.translate(&format!("block.kinetica.{block}"), english);
         let mut state = if jammed {
@@ -1251,12 +1431,16 @@ impl Game<'_> {
         if let Some(item) = work {
             state = format!("{state} | {}", self.tachyon_item_name(&item));
         }
-        // A depot: what it holds.
-        if part == Part::Depot {
-            state = held.map_or_else(
-                || "-".to_owned(),
-                |(item, n)| format!("{} x{n}", self.tachyon_item_name(&item)),
-            );
+        // A depot, a basin: what it holds.
+        if matches!(part, Part::Depot | Part::Basin) {
+            let names: Vec<String> = (held.unwrap_or_default().iter())
+                .map(|(item, n)| format!("{} x{n}", self.tachyon_item_name(item)))
+                .collect();
+            state = if names.is_empty() {
+                "-".to_owned()
+            } else {
+                names.join(", ")
+            };
         }
         let line = format!("{what}: {state}");
         let w = self.native_text_width(&line) + 4.0;
@@ -1294,7 +1478,10 @@ mod tests {
                 },
             )]),
             work: HashMap::from([([2, 64, 2], "minecraft:cobblestone".to_owned())]),
-            held: HashMap::from([([3, 64, 2], ("kinetica:iron_sheet".to_owned(), 5))]),
+            held: HashMap::from([(
+                [3, 64, 2],
+                vec![("kinetica:iron_sheet".to_owned(), 5), ("x:y".to_owned(), 64)],
+            )]),
         };
         assert_eq!(decode(&encode(&shown)), Some(shown.clone()));
         assert!(decode(&[1]).is_none());
@@ -1340,6 +1527,8 @@ mod tests {
         );
         assert_eq!(part_of("kinetica:millstone", facing), Some(Part::Millstone));
         assert_eq!(part_of("kinetica:depot", facing), Some(Part::Depot));
+        assert_eq!(part_of("kinetica:basin", facing), Some(Part::Basin));
+        assert_eq!(part_of("kinetica:mechanical_mixer", facing), Some(Part::Mixer));
         assert_eq!(
             part_of("kinetica:mechanical_press", props("z")),
             Some(Part::Press(Axis::Z))
@@ -1353,6 +1542,18 @@ mod tests {
         assert_eq!(pieces(Part::Motor(Dir::East)).len(), 1);
         let halves: Vec<usize> = pieces(Part::Clutch(Axis::X)).iter().map(|p| p.3).collect();
         assert_eq!(halves, [0, 1]);
+    }
+
+    #[test]
+    fn a_press_works_the_depot_under_it_or_one_lower() {
+        let press = |q: &Part| matches!(q, Part::Press(_));
+        let p = HashMap::from([([0, 1, 0], Part::Press(Axis::X)), ([5, 2, 0], Part::Press(Axis::X))]);
+        assert_eq!(worker(&p, [0, 0, 0], press), Some([0, 1, 0]));
+        assert_eq!(worker(&p, [5, 0, 0], press), Some([5, 2, 0]));
+        assert_eq!(reach(&p, [0, 1, 0], Part::Depot), 2.0);
+        // A part between: not that one.
+        let p = HashMap::from([([0, 2, 0], Part::Press(Axis::X)), ([0, 1, 0], Part::Shaft(Axis::X))]);
+        assert_eq!(worker(&p, [0, 0, 0], press), None);
     }
 
     #[test]

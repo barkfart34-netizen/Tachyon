@@ -90,6 +90,16 @@ CHAPTERS = [
                "samping depot mengisinya, dan hopper di bawahnya mengambil lembarannya."),
               tasks=[stack("kinetica:iron_sheet", 4)],
               rewards=[stack("kinetica:depot", 2), stack("minecraft:iron_ingot", 8)], after=["in_motion"]),
+        quest("mixing", "kinetica:mechanical_mixer",
+              ("Stirred Together", "Diaduk Rata"),
+              ("A mechanical mixer turning over a basin, or two blocks over it, mixes what is put in the basin "
+               "once it holds all a recipe asks for: andesite and an iron nugget into ferrostone alloy, copper "
+               "and tin into bronze, and more. A hopper under the basin takes out what was mixed.",
+               "Mesin pengaduk yang berputar di atas baskom (langsung, atau dua blok di atasnya) mengaduk isi "
+               "baskom begitu semua bahan resep lengkap: andesit dan butiran besi jadi paduan ferrostone, "
+               "tembaga dan timah jadi perunggu, dan lainnya. Hopper di bawah baskom mengambil hasilnya."),
+              tasks=[stack("kinetica:mechanical_mixer"), stack("kinetica:basin")],
+              rewards=[stack("minecraft:andesite", 16), stack("minecraft:iron_nugget", 16)], after=["pressing"]),
         quest("goggles", "kinetica:engineers_goggles",
               ("Seeing Speed", "Melihat Kecepatan"),
               ("Engineer's Goggles show how fast a part turns when you look at it.",
@@ -159,7 +169,7 @@ def main():
     ROOT.mkdir(parents=True)
     (ROOT / "horizon-mod.toml").write_text(
         "# Tachyon: Aether & Gears. Chronicles, the quests: written by tachyon/art/chronicles.py.\n"
-        'id = "chronicles"\nname = "Chronicles"\nversion = "0.4.0"\napi = "0.2"\nside = "both"\n'
+        'id = "chronicles"\nname = "Chronicles"\nversion = "0.5.0"\napi = "0.2"\nside = "both"\n'
         'capabilities = ["registries"]\n', encoding="utf-8")
     en = {"chronicles.title": "Chronicles", "chronicles.claim": "Claim", "chronicles.claimed": "Claimed",
           "chronicles.locked": "Finish the quests before it first", "chronicles.tasks": "Hold at once:",

@@ -156,6 +156,11 @@ pub enum Part {
     Press(Axis),
     /// A depot: a tray for one stack, which doesn't turn.
     Depot,
+    /// A mechanical mixer, turned by a shaft from above; its whisk mixes in
+    /// the basin under it.
+    Mixer,
+    /// A basin: the items to mix, which doesn't turn.
+    Basin,
 }
 
 impl Part {
@@ -173,7 +178,8 @@ impl Part {
             Part::Motor(out) | Part::Crank(out) => d == out,
             Part::Millstone => d == Dir::Down,
             Part::Press(a) => d.axis() == a && d != Dir::Down,
-            Part::Depot => false,
+            Part::Mixer => d == Dir::Up,
+            Part::Depot | Part::Basin => false,
         }
     }
     /// The stress the part takes for each RPM it turns at (stress units):
@@ -182,6 +188,7 @@ impl Part {
         match self {
             Part::Millstone => 4.0,
             Part::Press(_) => 8.0,
+            Part::Mixer => 4.0,
             _ => 0.0,
         }
     }
@@ -662,6 +669,21 @@ mod tests {
         // Not from a shaft under it.
         let p = parts(&[([0, 0, 0], Part::Motor(Dir::Up)), ([0, 1, 0], Part::Press(Axis::Y))]);
         assert_eq!(solve1(&p, &[([0, 0, 0], 32.0)]).speeds.get(&[0, 1, 0]), None);
+    }
+
+    #[test]
+    fn a_mixer_turns_from_above_only() {
+        let p = parts(&[
+            ([0, 2, 0], Part::Motor(Dir::Down)),
+            ([0, 1, 0], Part::Mixer),
+            ([0, 0, 0], Part::Basin),
+            ([1, 1, 0], Part::Shaft(Axis::X)),
+        ]);
+        let s = solve1(&p, &[([0, 2, 0], 32.0)]);
+        assert_eq!(s.speeds[&[0, 1, 0]][0].abs(), 32.0);
+        assert_eq!(s.speeds.get(&[0, 0, 0]), None);
+        assert_eq!(s.speeds.get(&[1, 1, 0]), None);
+        assert_eq!(s.stress[&[0, 1, 0]].load, 128.0);
     }
 
     #[test]

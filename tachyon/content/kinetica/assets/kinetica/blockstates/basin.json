@@ -1,0 +1,31 @@
+{
+  "variants": {
+    "level=0": {
+      "model": "kinetica:block/basin"
+    },
+    "level=1": {
+      "model": "kinetica:block/basin"
+    },
+    "level=2": {
+      "model": "kinetica:block/basin"
+    },
+    "level=3": {
+      "model": "kinetica:block/basin"
+    },
+    "level=4": {
+      "model": "kinetica:block/basin"
+    },
+    "level=5": {
+      "model": "kinetica:block/basin"
+    },
+    "level=6": {
+      "model": "kinetica:block/basin"
+    },
+    "level=7": {
+      "model": "kinetica:block/basin"
+    },
+    "level=8": {
+      "model": "kinetica:block/basin"
+    }
+  }
+}

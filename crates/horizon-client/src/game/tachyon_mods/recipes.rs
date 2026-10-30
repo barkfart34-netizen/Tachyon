@@ -27,7 +27,7 @@ pub const MAX_STACKS: usize = 64;
 /// A right click's gift in creative mode (cut to one stack by the game).
 pub const STACK: u32 = 99;
 /// The stations, in the order of their tabs, with each one's icon.
-pub const STATIONS: [&str; 10] = [
+pub const STATIONS: [&str; 11] = [
     "minecraft:crafting_table",
     "minecraft:furnace",
     "minecraft:blast_furnace",
@@ -36,9 +36,10 @@ pub const STATIONS: [&str; 10] = [
     "minecraft:stonecutter",
     "minecraft:smithing_table",
     "minecraft:brewing_stand",
-    // Tachyon: Kinetica's millstone and press.
+    // Tachyon: Kinetica's millstone, press and mixer.
     "kinetica:millstone",
     "kinetica:mechanical_press",
+    "kinetica:mechanical_mixer",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +57,9 @@ pub enum Kind {
     Milling,
     /// Tachyon: a mechanical press's, on a depot.
     Pressing,
+    /// Tachyon: a mechanical mixer's, in a basin (`slots` each an item and
+    /// its count).
+    Mixing,
 }
 
 fn station(kind: Kind) -> usize {
@@ -70,6 +74,7 @@ fn station(kind: Kind) -> usize {
         Kind::Brewing => 7,
         Kind::Milling => 8,
         Kind::Pressing => 9,
+        Kind::Mixing => 10,
     }
 }
 
@@ -353,6 +358,20 @@ impl Viewer {
         let results = (r.results.iter().take(MAX_STACKS))
             .map(|s| self.convert(s))
             .collect();
+        // A machine's: its work at 16 RPM (a tick's 1), the results past the
+        // first and their chances.
+        let worked = || {
+            let mut note = format!("{} s at 16 RPM", r.cooking_time as f32 / 20.0);
+            for (i, s) in r.results.iter().enumerate().skip(1) {
+                let chance = r.chances.get(i).copied().unwrap_or(1.0);
+                let name = self.name(self.id(s));
+                note.push_str(&format!(", +{} {name}", s.count));
+                if chance < 1.0 {
+                    note.push_str(&format!(" {}%", (chance * 100.0).round()));
+                }
+            }
+            note
+        };
         let (layout, width, height, note) = match r.kind {
             Kind::CraftingShaped => (Layout::Grid, r.width, r.height, String::new()),
             Kind::CraftingShapeless => {
@@ -376,17 +395,17 @@ impl Viewer {
             Kind::Brewing => (Layout::Brewing, 2, 1, String::new()),
             // The first result in its slot; the others, and their chances,
             // in the note. A millstone's work is a tick's at 16 RPM.
-            Kind::Milling | Kind::Pressing => {
-                let mut note = format!("{} s at 16 RPM", r.cooking_time as f32 / 20.0);
-                for (i, s) in r.results.iter().enumerate().skip(1) {
-                    let chance = r.chances.get(i).copied().unwrap_or(1.0);
-                    let name = self.name(self.id(s));
-                    note.push_str(&format!(", +{} {name}", s.count));
-                    if chance < 1.0 {
-                        note.push_str(&format!(" {}%", (chance * 100.0).round()));
-                    }
-                }
-                (Layout::Single, 1, 1, note)
+            Kind::Milling | Kind::Pressing => (Layout::Single, 1, 1, worked()),
+            Kind::Mixing => {
+                let n = slots.len() as u32;
+                let width = match n {
+                    0 | 1 => 1,
+                    2..=4 => 2,
+                    _ => 3,
+                };
+                let height = n.div_ceil(width).max(1);
+                slots.resize((width * height) as usize, Vec::new());
+                (Layout::Grid, width, height, worked())
             }
         };
         // + only for what the recipe book shows; greyed until the book has it.

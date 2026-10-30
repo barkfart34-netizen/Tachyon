@@ -523,6 +523,23 @@ def press_head():
     return img
 
 
+def basin_inside():
+    """A basin's inside: worn dark iron."""
+    rng = random.Random(53)
+    img = image()
+    noise(img, IRON, rng, 0, 2)
+    return img
+
+
+def mixer_side():
+    """A mixer's sides: a casing with a bronze band round it."""
+    img = casing()
+    for x in range(1, 15):
+        img.putpixel((x, 7), BRONZE[3] + (255,))
+        img.putpixel((x, 8), BRONZE[1] + (255,))
+    return img
+
+
 TEXTURES = {
     "block/ferrostone_casing": casing,
     "block/gearbox_side": casing_hole,
@@ -551,6 +568,8 @@ TEXTURES = {
     "block/depot_top": depot_top,
     "block/mechanical_press_side": press_side,
     "block/mechanical_press_head": press_head,
+    "block/basin_inside": basin_inside,
+    "block/mechanical_mixer_side": mixer_side,
     **{f"item/{m}_sheet": sheet(pal) for m, pal in
        [("iron", IRON), ("copper", COPPER), ("gold", GOLD), ("bronze", BRONZE), ("tin", TIN)]},
     **{f"item/crushed_{m}": crushed(pal, 60 + i) for i, (m, pal) in
@@ -729,6 +748,27 @@ DEPOT = box([0, 0, 0], [16, 9, 16], {
 })
 PRESS_TEX = {"head": t("block/mechanical_press_head"), "particle": t("block/mechanical_press_head")}
 
+BASIN_TEX = {"side": t("block/ferrostone_casing"), "inside": t("block/basin_inside"),
+             "particle": t("block/ferrostone_casing")}
+# A basin: a floor and four walls, two pixels thick (its template's shape, a
+# composter's).
+BASIN = [
+    box([0, 0, 0], [16, 2, 16], {
+        "north": ("#side", [0, 14, 16, 16]), "south": ("#side", [0, 14, 16, 16]),
+        "east": ("#side", [0, 14, 16, 16]), "west": ("#side", [0, 14, 16, 16]),
+        "up": ("#inside", [0, 0, 16, 16]), "down": ("#side", [0, 0, 16, 16])}),
+    box([0, 2, 0], [16, 16, 2], {
+        "north": ("#side", [0, 0, 16, 14]), "south": ("#inside", [0, 0, 16, 14]),
+        "east": ("#side", [14, 0, 16, 14]), "west": ("#side", [0, 0, 2, 14]), "up": ("#side", [0, 0, 16, 2])}),
+    box([0, 2, 14], [16, 16, 16], {
+        "south": ("#side", [0, 0, 16, 14]), "north": ("#inside", [0, 0, 16, 14]),
+        "east": ("#side", [0, 0, 2, 14]), "west": ("#side", [14, 0, 16, 14]), "up": ("#side", [0, 14, 16, 16])}),
+    box([0, 2, 2], [2, 16, 14], {
+        "west": ("#side", [2, 0, 14, 14]), "east": ("#inside", [2, 0, 14, 14]), "up": ("#side", [0, 2, 2, 14])}),
+    box([14, 2, 2], [16, 16, 14], {
+        "east": ("#side", [2, 0, 14, 14]), "west": ("#inside", [2, 0, 14, 14]), "up": ("#side", [14, 2, 16, 14])}),
+]
+
 
 def big_item(block):
     """An item for a part wider than its block: the block's model, smaller."""
@@ -810,11 +850,28 @@ MODELS = {
     "block/depot": model(textures=DEPOT_TEX, elements=[DEPOT]),
     "block/mechanical_press": model("minecraft:block/cube_column", {
         "side": t("block/mechanical_press_side"), "end": t("block/gearbox_side")}),
-    # The head, drawn by the content engine under the press: a plate on a
-    # stem, inside the press until it presses.
+    # The head, drawn by the content engine under the press: a plate, inside
+    # the press until it presses; its stem, stretched from the plate up
+    # into the press.
     "block/mechanical_press_head": model(textures=PRESS_TEX, elements=[
         all_faces("#head", [3, 0, 3], [13, 2, 13]),
-        all_faces("#head", [6, 2, 6], [10, 16, 10]),
+    ]),
+    "block/mechanical_press_stem": model(textures=PRESS_TEX, elements=[
+        all_faces("#head", [6, 0, 6], [10, 16, 10]),
+    ]),
+    "block/basin": model(textures=BASIN_TEX, elements=BASIN),
+    "block/mechanical_mixer": model("minecraft:block/cube_bottom_top", {
+        "side": t("block/mechanical_mixer_side"), "top": t("block/gearbox_side"),
+        "bottom": t("block/gearbox_side")}),
+    # The whisk, drawn by the content engine while the mixer mixes: two
+    # crossed blades and a hub; its pole, stretched up into the mixer.
+    "block/mechanical_mixer_whisk": model(textures=PRESS_TEX, elements=[
+        all_faces("#head", [3, 0, 7], [13, 4, 9]),
+        all_faces("#head", [7, 0.5, 3], [9, 3.5, 13]),
+        all_faces("#head", [7, 3.5, 7], [9, 8, 9]),
+    ]),
+    "block/mechanical_mixer_pole": model(textures=PRESS_TEX, elements=[
+        all_faces("#head", [7, 0, 7], [9, 16, 9]),
     ]),
     **{f"item/{m}_sheet": model("minecraft:item/generated", {"layer0": t(f"item/{m}_sheet")})
        for m in ["iron", "copper", "gold", "bronze", "tin"]},
@@ -921,6 +978,18 @@ BLOCKS = {
                                                      "map_color": 11},
                          states(AXIS, "block/mechanical_press"), "block/mechanical_press",
                          ("Mechanical Press", "Mesin Press")),
+    # A composter's shape (a floor and walls, two pixels thick) and states;
+    # a use goes to the content engine first, which puts items in or takes
+    # them out.
+    "basin": ("minecraft:composter", {"hardness": 2.0, "sounds": "minecraft:copper_block", "map_color": 11},
+              {"variants": {f"level={i}": {"model": t("block/basin")} for i in range(9)}}, "block/basin",
+              ("Basin", "Baskom")),
+    # A shaft into its top turns it; its whisk mixes in the basin under it,
+    # or one block lower.
+    "mechanical_mixer": ("minecraft:polished_andesite", {"hardness": 2.5, "sounds": "minecraft:copper_block",
+                                                         "map_color": 11},
+                         {"variants": {"": {"model": t("block/mechanical_mixer")}}}, "block/mechanical_mixer",
+                         ("Mechanical Mixer", "Mesin Pengaduk")),
 }
 
 ITEMS = {
@@ -1012,6 +1081,9 @@ RECIPES = {
     "depot": recipe_shapeless([t("ferrostone_casing"), t("ferrostone_alloy")], "depot"),
     "mechanical_press": recipe_shaped(["S", "X", "I"], {"S": t("shaft"), "X": t("ferrostone_casing"),
                                                        "I": "minecraft:iron_block"}, "mechanical_press"),
+    "basin": recipe_shaped(["A A", "AAA"], {"A": t("ferrostone_alloy")}, "basin"),
+    "mechanical_mixer": recipe_shaped(["C", "X", "W"], {"C": t("cogwheel"), "X": t("ferrostone_casing"),
+                                                       "W": t("iron_sheet")}, "mechanical_mixer"),
     # Crushed ore smelts into an ingot.
     **{f"{ingot.split(':')[1]}_from_{kind}_crushed_{m}": {
         "type": f"minecraft:{kind}", "category": "misc", "ingredient": t(f"crushed_{m}"),
@@ -1066,6 +1138,35 @@ PRESSING = [
       for m, ingot in [("iron", "minecraft:iron_ingot"), ("copper", "minecraft:copper_ingot"),
                        ("gold", "minecraft:gold_ingot"), ("bronze", t("bronze_ingot")), ("tin", t("tin_ingot"))]],
     mill("minecraft:sugar_cane", [("minecraft:paper", 1, 1.0)]),
+]
+
+
+def mix(inputs, outputs, time=100):
+    """A mixing recipe: all `inputs` (item, count) in a basin mixed in `time`
+    work into `outputs` (item, count, chance)."""
+    return {"inputs": [{"item": i, "count": c} for i, c in inputs], "time": time,
+            "outputs": [{"item": i, "count": c, "chance": p} for i, c, p in outputs]}
+
+
+COLORS = ["white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray", "light_gray", "cyan",
+          "purple", "blue", "brown", "green", "red", "black"]
+# The mixer's recipes, in a basin under it (read by the content engine's
+# basin.rs): the first one a basin holds everything for.
+MIXING = [
+    # Ferrostone alloy: one of each, not two (as crafting asks).
+    mix([("minecraft:andesite", 1), ("minecraft:iron_nugget", 1)], [(t("ferrostone_alloy"), 1, 1.0)]),
+    mix([("minecraft:tuff", 1), ("minecraft:iron_nugget", 1)], [(t("ferrostone_alloy"), 1, 1.0)]),
+    mix([("minecraft:copper_ingot", 3), (t("tin_ingot"), 1)], [(t("bronze_ingot"), 4, 1.0)], 150),
+    mix([(t("crushed_copper"), 3), (t("crushed_tin"), 1)], [(t("bronze_ingot"), 4, 1.0)], 200),
+    mix([("minecraft:dirt", 2), ("minecraft:gravel", 2)], [("minecraft:coarse_dirt", 4, 1.0)]),
+    mix([("minecraft:mud", 1), ("minecraft:wheat", 1)], [("minecraft:packed_mud", 1, 1.0)]),
+    mix([("minecraft:brown_mushroom", 1), ("minecraft:red_mushroom", 1), ("minecraft:bowl", 1)],
+        [("minecraft:mushroom_stew", 1, 1.0)], 50),
+    mix([("minecraft:spider_eye", 1), ("minecraft:brown_mushroom", 1), ("minecraft:sugar", 1)],
+        [("minecraft:fermented_spider_eye", 1, 1.0)]),
+    mix([("minecraft:slime_ball", 1), ("minecraft:blaze_powder", 1)], [("minecraft:magma_cream", 1, 1.0)]),
+    *[mix([("minecraft:sand", 4), ("minecraft:gravel", 4), (f"minecraft:{c}_dye", 1)],
+          [(f"minecraft:{c}_concrete_powder", 8, 1.0)]) for c in COLORS],
 ]
 
 
@@ -1143,7 +1244,7 @@ def main():
     (ROOT).mkdir(parents=True)
     (ROOT / "horizon-mod.toml").write_text(
         "# Tachyon: Aether & Gears. Kinetica, the machines: written by tachyon/art/kinetica.py.\n"
-        'id = "kinetica"\nname = "Kinetica"\nversion = "0.4.0"\napi = "0.2"\nside = "both"\n'
+        'id = "kinetica"\nname = "Kinetica"\nversion = "0.5.0"\napi = "0.2"\nside = "both"\n'
         'capabilities = ["registries"]\n', encoding="utf-8")
     for name, draw in TEXTURES.items():
         write(assets / "textures" / f"{name}.png", draw())
@@ -1173,6 +1274,7 @@ def main():
     inputs = [m["input"] for m in PRESSING]
     assert len(inputs) == len(set(inputs)), "one pressing recipe an item"
     write(data / NS / "tachyon" / "pressing.json", {"recipes": PRESSING})
+    write(data / NS / "tachyon" / "mixing.json", {"recipes": MIXING})
     wooden = ("cogwheel", "large_cogwheel", "hand_crank", "water_wheel", "windmill")
     pickaxe = [t(b) for b in BLOCKS if b not in wooden]
     axe = [t(b) for b in wooden]

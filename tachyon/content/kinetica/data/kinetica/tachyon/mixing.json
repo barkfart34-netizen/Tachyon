@@ -1,0 +1,576 @@
+{
+  "recipes": [
+    {
+      "inputs": [
+        {
+          "item": "minecraft:andesite",
+          "count": 1
+        },
+        {
+          "item": "minecraft:iron_nugget",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "kinetica:ferrostone_alloy",
+          "count": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:tuff",
+          "count": 1
+        },
+        {
+          "item": "minecraft:iron_nugget",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "kinetica:ferrostone_alloy",
+          "count": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:copper_ingot",
+          "count": 3
+        },
+        {
+          "item": "kinetica:tin_ingot",
+          "count": 1
+        }
+      ],
+      "time": 150,
+      "outputs": [
+        {
+          "item": "kinetica:bronze_ingot",
+          "count": 4,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "kinetica:crushed_copper",
+          "count": 3
+        },
+        {
+          "item": "kinetica:crushed_tin",
+          "count": 1
+        }
+      ],
+      "time": 200,
+      "outputs": [
+        {
+          "item": "kinetica:bronze_ingot",
+          "count": 4,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:dirt",
+          "count": 2
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 2
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:coarse_dirt",
+          "count": 4,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:mud",
+          "count": 1
+        },
+        {
+          "item": "minecraft:wheat",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:packed_mud",
+          "count": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:brown_mushroom",
+          "count": 1
+        },
+        {
+          "item": "minecraft:red_mushroom",
+          "count": 1
+        },
+        {
+          "item": "minecraft:bowl",
+          "count": 1
+        }
+      ],
+      "time": 50,
+      "outputs": [
+        {
+          "item": "minecraft:mushroom_stew",
+          "count": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:spider_eye",
+          "count": 1
+        },
+        {
+          "item": "minecraft:brown_mushroom",
+          "count": 1
+        },
+        {
+          "item": "minecraft:sugar",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:fermented_spider_eye",
+          "count": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:slime_ball",
+          "count": 1
+        },
+        {
+          "item": "minecraft:blaze_powder",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:magma_cream",
+          "count": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:white_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:white_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:orange_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:orange_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:magenta_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:magenta_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:light_blue_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:light_blue_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:yellow_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:yellow_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:lime_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:lime_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:pink_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:pink_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gray_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:gray_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:light_gray_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:light_gray_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:cyan_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:cyan_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:purple_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:purple_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:blue_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:blue_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:brown_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:brown_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:green_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:green_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:red_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:red_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "item": "minecraft:sand",
+          "count": 4
+        },
+        {
+          "item": "minecraft:gravel",
+          "count": 4
+        },
+        {
+          "item": "minecraft:black_dye",
+          "count": 1
+        }
+      ],
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:black_concrete_powder",
+          "count": 8,
+          "chance": 1.0
+        }
+      ]
+    }
+  ]
+}

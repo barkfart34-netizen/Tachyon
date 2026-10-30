@@ -53,8 +53,8 @@ fn recipe(r: &NativeRecipe) -> m::Recipe {
     }
 }
 
-/// Tachyon: the millstone's and the press's recipes (the content engine's)
-/// whose items the tables know.
+/// Tachyon: the millstone's, the press's and the mixer's recipes (the
+/// content engine's) whose items the tables know.
 fn processing(items: &[NativeItem]) -> Vec<m::Recipe> {
     let index: std::collections::HashMap<&str, u32> = (items.iter().enumerate())
         .map(|(i, it)| (it.id.as_str(), i as u32))
@@ -67,11 +67,15 @@ fn processing(items: &[NativeItem]) -> Vec<m::Recipe> {
         })
     };
     let mut out = Vec::new();
-    let [milling, pressing] = crate::game::tachyon_engine::processing();
+    let [milling, pressing, mixing] = crate::game::tachyon_engine::processing();
     let kinds = (milling.into_iter().map(|r| (m::Kind::Milling, r)))
-        .chain(pressing.into_iter().map(|r| (m::Kind::Pressing, r)));
-    for (kind, (input, time, outputs)) in kinds {
-        let Some(slot) = one(&input, 1) else {
+        .chain(pressing.into_iter().map(|r| (m::Kind::Pressing, r)))
+        .chain(mixing.into_iter().map(|r| (m::Kind::Mixing, r)));
+    for (kind, (inputs, time, outputs)) in kinds {
+        let slots: Option<Vec<Vec<m::Ingredient>>> = (inputs.iter())
+            .map(|(item, count)| one(item, *count).map(|s| vec![s]))
+            .collect();
+        let Some(slots) = slots.filter(|s| !s.is_empty()) else {
             continue;
         };
         let (mut results, mut chances) = (Vec::new(), Vec::new());
@@ -88,7 +92,7 @@ fn processing(items: &[NativeItem]) -> Vec<m::Recipe> {
             kind,
             width: 1,
             height: 1,
-            slots: vec![vec![slot]],
+            slots,
             results,
             cooking_time: time.round() as u32,
             experience: 0.0,

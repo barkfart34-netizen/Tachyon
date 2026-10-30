@@ -103,12 +103,19 @@ SHOWCASE = [
     ("setblock", (-2, -1, 13), "minecraft:hopper[facing=down]"),
     # A depot alone.
     ("setblock", (-4, 0, 11), "kinetica:depot[facing=north]"),
+    # A mixer two blocks over a basin (Create's way), turned from above
+    # through a gearbox a motor drives.
+    ("setblock", (5, 0, 14), "kinetica:basin"),
+    ("setblock", (5, 2, 14), "kinetica:mechanical_mixer"),
+    ("setblock", (5, 3, 14), "kinetica:gearbox[axis=x]"),
+    ("setblock", (5, 3, 13), "kinetica:creative_motor[facing=north]"),
 ]
 # Given to the player: with the goggles on and the motor at 128 RPM, enough
 # for Chronicles' machine quests (the counts some ask to hold).
 ITEMS = ["shaft 8", "cogwheel 2", "large_cogwheel", "gearbox", "hand_crank", "clutch", "gearshift",
          "water_wheel", "windmill", "creative_motor", "ferrostone_alloy 4", "raw_tin", "tin_ingot",
-         "bronze_ingot", "millstone", "wheat_flour", "depot", "mechanical_press", "crushed_iron 4"]
+         "bronze_ingot", "millstone", "wheat_flour", "depot", "mechanical_press", "crushed_iron 4",
+         "basin", "mechanical_mixer"]
 
 
 def look_at(control, eye, target):
@@ -262,6 +269,35 @@ def kinetica(control, out):
     sheets = re.search(r"Found (\d+)", lines)
     if not sheets or int(sheets.group(1)) < 6:
         good = False
+    # The mixer: copper and tin put in its basin with uses, the bronze it
+    # mixed taken out with an empty hand and counted (with the one given).
+    visit((5, 0, 16), (5, 0, 14))
+    for item in ["minecraft:copper_ingot 3", "kinetica:tin_ingot 1"]:
+        control.send(f"chat /item replace entity @s weapon.mainhand with {item}")
+        time.sleep(0.5)
+        control.send("mouse right click")
+        time.sleep(0.5)
+    time.sleep(1.5)
+    control.send("screenshot " + os.path.join(out, "kinetica-mixer.png"))
+    time.sleep(4)
+    control.send("chat /item replace entity @s weapon.mainhand with minecraft:air")
+    time.sleep(0.5)
+    control.send("mouse right click")
+    time.sleep(1)
+    control.send("chat /clear @s kinetica:bronze_ingot 0")
+    time.sleep(1)
+    lines = " ".join(str(line) for line in control.send("chat-log 2").get("chat", []))
+    print("bronze:", lines)
+    bronze = re.search(r"Found (\d+)", lines)
+    if not bronze or int(bronze.group(1)) < 5:
+        good = False
+    # The creative inventory: Tachyon's tab of the mods' items (the
+    # cogwheel, top row) beside vanilla's.
+    control.send("key e tap")
+    time.sleep(1.5)
+    control.send("screenshot " + os.path.join(out, "creative.png"))
+    control.send("key escape tap")
+    time.sleep(1)
     return good
 
 
@@ -402,7 +438,7 @@ def main():
         failed.append("quest claimed")
     # Done by the motor turning near the player, and by standing in the
     # structures the world made.
-    for quest in ["in_motion", "full_speed", "millstone", "crushed_ore", "pressing", "lost_workshop",
+    for quest in ["in_motion", "full_speed", "millstone", "crushed_ore", "pressing", "mixing", "lost_workshop",
                   "watchtower"]:
         if not any(quest in p.get("done", []) for p in progress):
             failed.append("quest " + quest)

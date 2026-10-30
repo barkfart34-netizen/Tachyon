@@ -49,6 +49,24 @@ pub struct Creative {
     /// search changes (selectTab, refreshSearchResults), not on every frame.
     shown: Mutex<Option<Shown>>,
 }
+/// Tachyon: the namespaces of the build's own content mods (their `data/`
+/// folders but `minecraft` and `c`).
+fn built_in_namespaces() -> Vec<String> {
+    let Some(content) = crate::brand::content() else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    for m in fs::read_dir(content).into_iter().flatten().flatten() {
+        for ns in fs::read_dir(m.path().join("data")).into_iter().flatten().flatten() {
+            let name = ns.file_name().to_string_lossy().into_owned();
+            if name != "minecraft" && name != "c" && !out.contains(&name) {
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
 /// The grid's stacks for one tab, search text and language.
 struct Shown {
     tab: usize,
@@ -189,13 +207,85 @@ impl Creative {
     /// prepared before it fall back to `creative-tabs.json`'s item ids.
     pub fn load(root: &Path) -> Result<Self> {
         let path = root.join("creative-inventory.json");
-        if path.exists() {
-            Self::from_json(&serde_json::from_slice(&fs::read(path)?)?)
+        let mut creative = if path.exists() {
+            Self::from_json(&serde_json::from_slice(&fs::read(path)?)?)?
         } else {
             Self::from_legacy(&serde_json::from_slice(&fs::read(
                 root.join("creative-tabs.json"),
-            )?)?)
+            )?)?)?
+        };
+        // Tachyon: the content mods' items in tabs of their own.
+        creative.add_mod_tabs(root);
+        Ok(creative)
+    }
+    /// Tachyon: the content mods' items (the item registry's past vanilla's,
+    /// in its order) in tabs of their own where vanilla's saved hotbars and
+    /// operator blocks would be (neither shows here): the build's own mods'
+    /// on top, any other mods' below. The search tab finds them too.
+    fn add_mod_tabs(&mut self, root: &Path) {
+        let Ok(bytes) = fs::read(root.join("registries.json")) else {
+            return;
+        };
+        let Ok(doc) = serde_json::from_slice::<Value>(&bytes) else {
+            return;
+        };
+        let Some(entries) = doc["minecraft:item"]["entries"].as_object() else {
+            return;
+        };
+        let mut ids: Vec<(u64, &str)> = (entries.iter())
+            .filter(|(id, _)| !id.starts_with("minecraft:"))
+            .filter_map(|(id, e)| Some((e["protocol_id"].as_u64()?, id.as_str())))
+            .collect();
+        ids.sort_unstable();
+        let own = built_in_namespaces();
+        let (ours, theirs): (Vec<ItemStack>, Vec<ItemStack>) = (ids.into_iter())
+            .map(|(_, id)| ItemStack::new(id, 1))
+            .partition(|s| {
+                let namespace = s.item.split(':').next().unwrap_or("");
+                own.iter().any(|n| n == namespace)
+            });
+        for (id, title, items, top) in [
+            ("tachyon:mods", crate::brand::name(), ours, true),
+            ("tachyon:other_mods", "Mods", theirs, false),
+        ] {
+            let Some(first) = items.first() else {
+                continue;
+            };
+            let icon = (items.iter())
+                .find(|s| &*s.item == "kinetica:cogwheel")
+                .unwrap_or(first)
+                .item
+                .to_string();
+            self.add_tab(Tab {
+                id: id.to_owned(),
+                title: title.to_owned(),
+                icon,
+                items,
+                top,
+                column: 5,
+                search: false,
+                inventory: false,
+            });
         }
+    }
+    /// Tachyon: another tab, its items also in the search tab's.
+    fn add_tab(&mut self, tab: Tab) {
+        for s in &tab.items {
+            if self.search_items.iter().any(|x| x.item == s.item) {
+                continue;
+            }
+            let (namespace, path) = split_id(&java_lower(&s.item));
+            self.search_index.push(SearchEntry {
+                namespace,
+                path,
+                ..Default::default()
+            });
+            self.search_items.push(s.clone());
+            if let Some(search) = self.tabs.iter_mut().find(|t| t.search) {
+                search.items.push(s.clone());
+            }
+        }
+        self.tabs.push(tab);
     }
     pub fn from_json(raw: &Value) -> Result<Self> {
         let mut tabs = Vec::new();

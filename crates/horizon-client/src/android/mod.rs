@@ -23,17 +23,20 @@ pub const BUILD: &str = match option_env!("TACHYON_BUILD") {
 /// chunks, fast clouds and leaves, fewer particles), 75% resolution and 4
 /// worker threads for a phone's few big cores on a first start; since
 /// version 3, VSync at most 60 FPS in a world and 30 in menus (battery
-/// mode): a phone kept at 120 heats up and slows down after a while.
+/// mode): a phone kept at 120 heats up and slows down after a while; since
+/// version 4, no menu background blur: blurring the whole frame every frame
+/// behind the pause menu lags a phone.
 fn phone_defaults(home: &std::path::Path) {
-    const VERSION: &str = "3";
+    const VERSION: u32 = 4;
     let marker = home.join("tachyon-defaults");
     let had = std::fs::read_to_string(&marker).ok();
-    if had.as_deref().is_some_and(|v| v.trim() == VERSION) {
+    let was: u32 = had.as_deref().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+    if was >= VERSION {
         return;
     }
     let options = home.join("options.txt");
     let mut settings = horizon_client::settings::Settings::load(&options);
-    // An earlier version's choices stay; only the frame rate changes.
+    // An earlier version's choices stay; only what changed since it.
     if had.is_none() {
         horizon_client::graphics::apply_preset(
             horizon_client::graphics::Preset::Performance,
@@ -42,11 +45,14 @@ fn phone_defaults(home: &std::path::Path) {
         settings.horizon.resolution_scale = 75;
         settings.horizon.workers = 4;
     }
-    settings.max_fps = 60;
-    settings.vsync = true;
-    settings.horizon.battery = true;
+    if was < 3 {
+        settings.max_fps = 60;
+        settings.vsync = true;
+        settings.horizon.battery = true;
+    }
+    settings.menu_blur = 0;
     settings.save(&options);
-    let _ = std::fs::write(marker, VERSION);
+    let _ = std::fs::write(marker, VERSION.to_string());
     log::info!("Tachyon: phone defaults {VERSION} applied");
 }
 

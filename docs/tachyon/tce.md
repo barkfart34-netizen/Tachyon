@@ -44,7 +44,8 @@ Lapisan yang memberi blok modpack perilaku di luar template vanilla-nya. Rencana
   sinyal membalik arahnya.
 - **Stress (beban):**
   - Mesin membebani jaringannya sebesar `Part::impact` per RPM. Batu gilingan bebannya 4 SU per
-    RPM dan mesin press 8; poros, roda gigi, gearbox, kopling, dan pemindah gigi tidak membebani.
+    RPM, mesin press 8, dan mesin pengaduk 4; poros, roda gigi, gearbox, kopling, dan pemindah gigi
+    tidak membebani.
   - Kapasitas sumber (`kinetic::capacity`): engkol tangan 8 SU per RPM (256 SU pada 32 RPM), kincir
     air 16, kincir angin 32, dan motor kreatif selalu 16384 SU.
   - Jaringan yang bebannya melebihi kapasitas *kelebihan beban*: seluruh jaringan berhenti sampai
@@ -71,25 +72,46 @@ Lapisan yang memberi blok modpack perilaku di luar template vanilla-nya. Rencana
     nampannya dan terlihat lewat kacamata ("Depot: Iron Ingot x5").
   - Mesin press (template pilar kuarsa, berporos x/y/z) menerima putaran lewat poros di sepanjang
     porosnya, kecuali dari bawah karena kepalanya turun ke sana. Press yang berputar mengerjakan
-    depot tepat di bawahnya dengan resep `pressing.json`: batangan besi, tembaga, emas, perunggu,
-    dan timah jadi lembaran; tebu jadi kertas. Kerjanya 100 per barang, sama seperti batu gilingan
-    (5 detik pada 16 RPM). Kepalanya naik turun selama bekerja, sekali per 100 kerja.
+    depot tepat di bawahnya, atau satu blok lebih rendah dengan ruang kosong di antaranya (cara
+    Create; `worker` di `tachyon_engine.rs`). Resepnya ada di `pressing.json`: batangan besi,
+    tembaga, emas, perunggu, dan timah jadi lembaran; tebu jadi kertas. Kerjanya 100 per barang,
+    sama seperti batu gilingan (5 detik pada 16 RPM). Kepalanya naik turun selama bekerja, sekali
+    per 100 kerja, dengan batang yang memanjang sampai ke dalam press.
   - Penampil resep punya tab mesin press.
+- **Baskom dan mesin pengaduk** (`game/tachyon_engine/basin.rs`):
+  - Baskom (template komposter: lantai dan dinding setebal 2 piksel) menampung sampai 9 tumpukan
+    barang apa saja. Dipakai sambil memegang barang: tumpukannya masuk. Dipakai dengan tangan
+    kosong: hasil adukan keluar, atau isinya bila belum ada hasil. Barang yang punya komponen (nama,
+    enchantment) tidak diterima. Ketentuan yang sama berlaku untuk depot dan hopper.
+  - Mesin pengaduk (blok penuh) menerima putaran dari poros di atasnya. Yang berputar mengaduk
+    baskom tepat di bawahnya atau satu blok lebih rendah, begitu baskom memuat semua bahan sebuah
+    resep `mixing.json` (resep pertama yang lengkap). Ada 25 resep:
+    - andesit atau tuff + butiran besi jadi paduan ferrostone (dua kali hasil resep crafting);
+    - 3 tembaga + 1 timah jadi 4 perunggu (dari batangan atau bijih hancur);
+    - tanah kasar, lumpur padat, sup jamur, mata laba-laba fermentasi, dan magma cream;
+    - 16 warna bubuk beton.
+  - Kocokannya berputar di dalam baskom selama bekerja, pada tiang yang memanjang ke atas.
+    Isi baskom (sampai 4 tumpukan) tergambar di dasarnya. Kacamata menampilkan isinya.
+  - Penampil resep punya tab mesin pengaduk; bahan tampil dalam grid beserta jumlahnya.
+- **Inventaris kreatif:** semua barang mod konten (urutan registri) ada di tab sendiri. Mod bawaan
+  Tachyon ada di tab "Tachyon" pada tempat hotbar tersimpan vanilla (baris atas). Mod lain, misalnya
+  hasil impor, ada di tab "Mods" pada tempat blok operator (baris bawah). Pencarian juga
+  menemukannya (`creative.rs`, `add_mod_tabs`).
 - **Hopper vanilla** (kait di `game/machines.rs`):
-  - Hopper yang menghadap batu gilingan atau depot memasukkan satu barang tiap kali. Batu gilingan
-    hanya menerima barang yang bisa digiling. Depot hanya menerima barang selama belum ada hasil
-    press di dalamnya.
+  - Hopper yang menghadap batu gilingan, depot, atau baskom memasukkan satu barang tiap kali. Batu
+    gilingan hanya menerima barang yang bisa digiling. Depot hanya menerima barang selama belum ada
+    hasil press di dalamnya. Baskom menerima apa saja selama masih ada tempat.
   - Hopper di bawah batu gilingan atau depot mengambil hasilnya satu per satu. Dari depot tanpa
     press di atasnya, atau berisi barang yang tidak bisa dipress, hopper mengambil barangnya juga,
-    jadi depot bisa dipakai sebagai jalur lewat.
+    jadi depot bisa dipakai sebagai jalur lewat. Dari baskom, hopper hanya mengambil hasil adukan.
   - Barang yang diambil hopper tetapi tidak muat dikembalikan ke tempat asalnya.
   - Komponen barang (nama, enchantment) tidak ikut tersimpan di mesin; tidak masalah untuk bahan
     mentah.
 - **HUD:** dengan Kacamata Insinyur dipakai di kepala atau dipegang, bagian kinetik yang dilihat
   menampilkan kecepatannya di pojok kiri atas, dalam bahasa pemain. Ditambah beban/kapasitas
   jaringannya ("128 / 256 SU"), status kelebihan beban, dan barang yang sedang digiling atau dipress.
-- **Payload** `tachyon:kinetic` versi 4 berisi kecepatan, bagian yang macet, stress tiap bagian,
-  mesin yang sedang bekerja (dan barangnya), serta isi tiap depot.
+- **Payload** `tachyon:kinetic` versi 5 berisi kecepatan, bagian yang macet, stress tiap bagian,
+  mesin yang sedang bekerja (dan barangnya), serta isi tiap depot dan baskom (sampai 4 tumpukan).
 - **State** disimpan per thread (`thread_local`). Jendela game dan thread server masing-masing
   berjalan di thread sendiri.
 
@@ -147,5 +169,6 @@ Satu baris per titik, supaya merge dari upstream tetap mudah:
 ## Belum ada
 
 - Kacamata yang terlihat di kepala (sekarang tampilannya masih topi kulit dari template).
-- Mesin pemroses lain (mixer + basin, kipas, gergaji) dan logistik (belt, funnel), sisa Kinetica II.
+- Mesin pemroses lain (kipas, gergaji), panas (blaze burner), fluida, dan logistik (belt, funnel):
+  sisa Kinetica II.
 - Instancing GPU untuk jaringan yang sangat besar.

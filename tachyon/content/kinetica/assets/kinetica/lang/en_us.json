@@ -17,6 +17,8 @@
   "block.kinetica.millstone": "Millstone",
   "block.kinetica.depot": "Depot",
   "block.kinetica.mechanical_press": "Mechanical Press",
+  "block.kinetica.basin": "Basin",
+  "block.kinetica.mechanical_mixer": "Mechanical Mixer",
   "item.kinetica.ferrostone_alloy": "Ferrostone Alloy",
   "item.kinetica.raw_tin": "Raw Tin",
   "item.kinetica.tin_ingot": "Tin Ingot",

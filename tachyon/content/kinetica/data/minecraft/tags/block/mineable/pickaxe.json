@@ -12,6 +12,8 @@
     "kinetica:raw_tin_block",
     "kinetica:millstone",
     "kinetica:depot",
-    "kinetica:mechanical_press"
+    "kinetica:mechanical_press",
+    "kinetica:basin",
+    "kinetica:mechanical_mixer"
   ]
 }

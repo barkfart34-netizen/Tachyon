@@ -256,7 +256,7 @@ fn take_from(cell: &mut Option<Held>) -> Option<Held> {
 
 /// Adds `made` to `stacks`: onto stacks of the same item up to 64, the rest
 /// as new stacks.
-fn add_all(stacks: &mut Vec<Held>, made: &[Held]) {
+pub(super) fn add_all(stacks: &mut Vec<Held>, made: &[Held]) {
     for m in made {
         let mut left = m.count;
         for s in stacks.iter_mut().filter(|s| s.item == m.item) {
@@ -302,7 +302,10 @@ impl Game<'_> {
     /// it holds comes out. Whether anything moved.
     pub(super) fn tachyon_use_depot(&mut self, depot: &mut Mill) -> bool {
         if depot.is_empty() {
-            let Some((item, count)) = self.held().map(|s| (s.item.to_string(), s.count)) else {
+            let held = (self.held())
+                .filter(|s| s.extra.is_none())
+                .map(|s| (s.item.to_string(), s.count));
+            let Some((item, count)) = held else {
                 return false;
             };
             let took = depot.put(&item, count);
@@ -316,7 +319,7 @@ impl Game<'_> {
     }
 
     /// `n` of the held stack gone into a machine (not in creative mode).
-    fn tachyon_spend_held(&mut self, n: u32) {
+    pub(super) fn tachyon_spend_held(&mut self, n: u32) {
         if self.creative || n == 0 {
             return;
         }

@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "C",
+    "X",
+    "W"
+  ],
+  "key": {
+    "C": "kinetica:cogwheel",
+    "X": "kinetica:ferrostone_casing",
+    "W": "kinetica:iron_sheet"
+  },
+  "result": {
+    "id": "kinetica:mechanical_mixer",
+    "count": 1
+  }
+}

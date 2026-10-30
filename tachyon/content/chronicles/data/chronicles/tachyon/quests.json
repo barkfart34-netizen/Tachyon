@@ -166,6 +166,33 @@
           ]
         },
         {
+          "id": "mixing",
+          "icon": "kinetica:mechanical_mixer",
+          "after": [
+            "pressing"
+          ],
+          "tasks": [
+            {
+              "item": "kinetica:mechanical_mixer",
+              "count": 1
+            },
+            {
+              "item": "kinetica:basin",
+              "count": 1
+            }
+          ],
+          "rewards": [
+            {
+              "item": "minecraft:andesite",
+              "count": 16
+            },
+            {
+              "item": "minecraft:iron_nugget",
+              "count": 16
+            }
+          ]
+        },
+        {
           "id": "goggles",
           "icon": "kinetica:engineers_goggles",
           "after": [

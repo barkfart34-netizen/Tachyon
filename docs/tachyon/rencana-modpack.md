@@ -296,3 +296,12 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
     "hopper → depot + press → hopper" berjalan tanpa pemain.
   - Quest baru *Bijih Hancur* dan *Logam Tempa*, sehingga total ada 17 quest. Penampil resep
     mendapat tab mesin press.
+- **30 Oktober 2026, Kinetica 0.5: mesin pengaduk dan baskom.**
+  - *Baskom* menampung bahan.
+  - *Mesin Pengaduk* di atasnya (langsung, atau dua blok di atasnya seperti Create) mengaduk bahan
+    jadi paduan ferrostone, perunggu, bubuk beton, dan lainnya (25 resep).
+  - Press kini juga bekerja dua blok di atas depot.
+  - Quest baru *Diaduk Rata*, sehingga total ada 18 quest.
+  - Semua blok dan barang mod ada di tab kreatif "Tachyon", jadi tidak perlu lagi memakai perintah
+    `/give`.
+  - Android: blur latar menu kini mati secara bawaan, karena membuka menu jeda membuat HP lag.

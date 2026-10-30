@@ -1,0 +1,8 @@
+{
+  "parent": "minecraft:block/cube_bottom_top",
+  "textures": {
+    "side": "kinetica:block/mechanical_mixer_side",
+    "top": "kinetica:block/gearbox_side",
+    "bottom": "kinetica:block/gearbox_side"
+  }
+}
