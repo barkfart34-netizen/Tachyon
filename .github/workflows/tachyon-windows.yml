@@ -182,7 +182,7 @@ jobs:
         run: |
           code=0
           exe="$GITHUB_WORKSPACE/dist/Tachyon/Tachyon.exe"
-          timeout 900 python .github/tachyon/scene.py "$exe" "$RUNNER_TEMP/scene" "$GITHUB_WORKSPACE/snapshots/scene" || code=$?
+          timeout 1500 python .github/tachyon/scene.py "$exe" "$RUNNER_TEMP/scene" "$GITHUB_WORKSPACE/snapshots/scene" || code=$?
           tail -30 "$RUNNER_TEMP/scene/logs/latest.log" || true
           cp "$RUNNER_TEMP/scene/logs/latest.log" "$GITHUB_WORKSPACE/snapshots/scene/" || true
           exit $code

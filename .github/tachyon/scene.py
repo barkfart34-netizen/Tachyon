@@ -117,15 +117,16 @@ SHOWCASE = [
     ("fill", (-4, 0, 0), (-2, 0, 0), "minecraft:glass"),
     ("setblock", (-1, 0, -1), "minecraft:stone"),
     ("setblock", (-4, 0, -1), "minecraft:water"),
-    # A belt along x a motor turns from the north, carrying west: a funnel
-    # on a chest at its east end takes the chest's iron out onto it (once
-    # used, below), one on a chest at its west end puts it in.
-    ("setblock", (2, 0, 17), "minecraft:chest[facing=west]"),
-    ("setblock", (1, 0, 17), "kinetica:funnel[facing=west]"),
-    ("fill", (-3, 0, 17), (0, 0, 17), "kinetica:belt[facing=east]"),
-    ("setblock", (-1, 0, 16), "kinetica:creative_motor[facing=north]"),
-    ("setblock", (-4, 0, 17), "kinetica:funnel[facing=east]"),
-    ("setblock", (-5, 0, 17), "minecraft:chest[facing=east]"),
+    # A belt along x by the player (the ruins take the far end), a motor
+    # turning it from the north, carrying west: a funnel on a chest at its
+    # east end takes the chest's iron out onto it (once used, below), one on
+    # a chest at its west end puts it in.
+    ("setblock", (8, 0, 2), "minecraft:chest[facing=west]"),
+    ("setblock", (7, 0, 2), "kinetica:funnel[facing=west]"),
+    ("fill", (3, 0, 2), (6, 0, 2), "kinetica:belt[facing=east]"),
+    ("setblock", (4, 0, 1), "kinetica:creative_motor[facing=north]"),
+    ("setblock", (2, 0, 2), "kinetica:funnel[facing=east]"),
+    ("setblock", (1, 0, 2), "minecraft:chest[facing=east]"),
 ]
 # Given to the player: with the goggles on and the motor at 128 RPM, enough
 # for Chronicles' machine quests (the counts some ask to hold).
@@ -315,9 +316,10 @@ def kinetica(control, out):
     control.send(f"chat /summon minecraft:item {x} {y} {z} {item}")
     visit((-5, 0, 2), (-5, 0, -1))
     time.sleep(3)
+    # A screenshot takes the runner half a minute: the items are worked by
+    # then (7.5 s in the air).
     control.send("screenshot " + os.path.join(out, "kinetica-fan.png"))
-    time.sleep(8)
-    control.send("screenshot " + os.path.join(out, "kinetica-fan-done.png"))
+    time.sleep(3)
     # At the wall, or by the fan should it pull.
     visit((-2, 0, -1), (-1, 0, -1))
     time.sleep(2)
@@ -332,16 +334,16 @@ def kinetica(control, out):
         good = False
     # The belt: 32 iron in the east chest, its funnel used (taking out),
     # carried into the west one.
-    x, y, z = base[0] + 2, base[1], base[2] + 17
+    x, y, z = base[0] + 8, base[1], base[2] + 2
     control.send(f"chat /item replace block {x} {y} {z} container.0 with minecraft:iron_ingot 32")
-    visit((1, 0, 19), (1, 0, 17))
+    visit((7, 0, 4), (7, 0, 2))
     control.send("mouse right click")
     time.sleep(1)
     control.send("screenshot " + os.path.join(out, "kinetica-funnel.png"))
-    visit((-1, 0, 20), (-1, 0, 17))
+    visit((5, 0, 4), (4, 0, 2))
     time.sleep(1)
     control.send("screenshot " + os.path.join(out, "kinetica-belt.png"))
-    time.sleep(12)
+    time.sleep(4)
     control.send(f"chat /data get block {x - 7} {y} {z} Items")
     time.sleep(1)
     lines = " ".join(str(line) for line in control.send("chat-log 1").get("chat", []))
