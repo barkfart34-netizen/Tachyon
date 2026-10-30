@@ -101,8 +101,7 @@ SHOWCASE = [
     ("setblock", (-3, 1, 13), "kinetica:creative_motor[facing=west]"),
     ("setblock", (-1, 0, 13), "minecraft:hopper[facing=west]"),
     ("setblock", (-2, -1, 13), "minecraft:hopper[facing=down]"),
-    # A pit to see the press's head from, and a depot alone.
-    ("setblock", (-2, -1, 11), "minecraft:air"),
+    # A depot alone.
     ("setblock", (-4, 0, 11), "kinetica:depot[facing=north]"),
 ]
 # Given to the player: with the goggles on and the motor at 128 RPM, enough
@@ -242,12 +241,13 @@ def kinetica(control, out):
     # The depot alone: five ingots put on it with a use, lying on its tray
     # (the goggles tell what it holds).
     control.send("chat /item replace entity @s weapon.mainhand with minecraft:iron_ingot 5")
-    visit((-4, 0, 13), (-4, 0.3, 11))
+    visit((-4, 0, 13), (-4, 0, 11))
     control.send("mouse right click")
     time.sleep(1.5)
     control.send("screenshot " + os.path.join(out, "kinetica-depot.png"))
-    # The press's head coming down on the iron, from the pit north of it.
-    visit((-2, -1, 11), (-2, 0.5, 13))
+    # The press's head coming down on the iron, from two blocks north (the
+    # whole tray shows under the press; the goggles tell what it holds).
+    visit((-2, 0, 11), (-2, 0, 13))
     for name in ["kinetica-press", "kinetica-press-2"]:
         control.send("screenshot " + os.path.join(out, f"{name}.png"))
         time.sleep(0.3)
