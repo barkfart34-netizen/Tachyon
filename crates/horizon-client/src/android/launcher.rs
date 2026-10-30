@@ -2,6 +2,7 @@
 //! controls, drawn in the game's window before the game takes it over. The
 //! first start unpacks the resources the APK carries.
 use crate::tachyon::brand::{self, P};
+use crate::tachyon::fetch;
 use super::controls;
 use crate::tachyon::draw::{Face, Rect, Renderer, hex};
 use super::install::{self, Paths, Task};
@@ -48,6 +49,8 @@ pub struct Launcher {
     crash: Option<String>,
     /// The last session's performance line (`tachyon-performance.txt`).
     performance: Option<String>,
+    /// The player asked for Create: the download's question shows.
+    create_ask: bool,
     /// The display cutout's margins in pixels, asked again when the window changes.
     insets: Option<[f32; 4]>,
     /// Set by Play: the arguments the game starts with.
@@ -99,6 +102,7 @@ impl Launcher {
             started: Instant::now(),
             crash,
             performance: None,
+            create_ask: false,
             insets: None,
             play: None,
             smoke: None,
@@ -142,6 +146,24 @@ impl Launcher {
             let file = std::path::PathBuf::from(path);
             let result = crate::tachyon::import::import(&file, &name, &home, &|line| report.line(line));
             let _ = std::fs::remove_file(&file);
+            report.line(result?.note);
+            Ok(())
+        }));
+    }
+
+    /// Gets Create from Modrinth into the game folder (the player said yes),
+    /// off the UI's thread.
+    fn get_create(&mut self) {
+        if self.busy() {
+            self.error = Some("Wait for the current task to finish.".into());
+            return;
+        }
+        let home = self.paths.home.clone();
+        let cache = self.paths.root.join("cache");
+        self.error = None;
+        self.note = None;
+        self.task = Some(Task::spawn(IMPORTING, move |report| {
+            let result = fetch::get(&fetch::CREATE, &home, &cache, &|line| report.line(line));
             report.line(result?.note);
             Ok(())
         }));
@@ -496,10 +518,38 @@ impl Launcher {
             jni::pick_file();
         }
         y += ROW * 1.5;
-        // 05 how the last session ran, for reporting.
+        // 05 Create, from its own file on Modrinth (its assets aren't
+        // Tachyon's to carry), after the player says yes.
+        let create = fetch::CREATE;
+        let row = Rect::new(r.x, y, r.w, ROW * 1.5);
+        let (detail, label) = if self.create_ask {
+            (create.ask(), "Download")
+        } else if fetch::installed(&create, &self.paths.home) {
+            (
+                "In the game: its blocks, items, recipes, textures and sounds, from its own file on Modrinth.".to_owned(),
+                "Again",
+            )
+        } else {
+            (
+                "Its blocks, items, recipes, textures and sounds come from its own file on Modrinth, not from Tachyon. Kinetica's engine turns its machines.".to_owned(),
+                "Get",
+            )
+        };
+        ui.row(row, 5, "Create (from Modrinth)", &detail, 90.0);
+        if ui.row_button(row, label, self.create_ask, !self.busy()) {
+            if self.create_ask {
+                self.create_ask = false;
+                self.get_create();
+            } else {
+                self.create_ask = true;
+                self.note = Some("Tap Download to get it: it is kept on the phone after.".into());
+            }
+        }
+        y += ROW * 1.5;
+        // 06 how the last session ran, for reporting.
         if let Some(perf) = self.performance.clone() {
             let row = Rect::new(r.x, y, r.w, ROW * 1.5);
-            ui.row(row, 5, "Last session's performance", &perf, 70.0);
+            ui.row(row, 6, "Last session's performance", &perf, 70.0);
             if ui.row_button(row, "Copy", false, true) {
                 jni::platform("clipboard_set", &perf);
                 self.note = Some("Copied: paste it in the chat.".into());
