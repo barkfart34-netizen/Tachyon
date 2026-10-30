@@ -1128,7 +1128,8 @@ impl Game<'_> {
             let state = self.tachyon_model("kinetica:block/mechanical_press_head");
             self.submit_item_world(&state, pose, light, out);
         }
-        // What a depot holds, standing on its tray.
+        // What a depot holds, lying on its tray: turned face up, its middle
+        // over the tray's.
         for (pos, stack) in trays {
             let state = self.resolve_item(
                 &stack,
@@ -1139,11 +1140,13 @@ impl Game<'_> {
             if state.is_empty() {
                 continue;
             }
-            let (lo, _) = state.bounding_box();
+            let (lo, hi) = state.bounding_box();
             let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
+            // Face up: (x, y, z) to (x, z, -y).
+            let lift = Vec3::new(-(lo.x + hi.x) / 2.0, -lo.z, (lo.y + hi.y) / 2.0);
             let pose = Mat4::from_translation(
-                (at - camera).as_vec3() + Vec3::new(0.5, 9.0 / 16.0 - lo.y, 0.5),
-            );
+                (at - camera).as_vec3() + Vec3::new(0.5, 9.0 / 16.0, 0.5) + lift,
+            ) * Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2);
             let packed = self.world.light(pos[0], pos[1], pos[2]);
             let light = horizon_client::block_entity_render::vertex_light(packed);
             self.submit_item_world(&state, pose, light, out);

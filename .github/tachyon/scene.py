@@ -101,6 +101,9 @@ SHOWCASE = [
     ("setblock", (-3, 1, 13), "kinetica:creative_motor[facing=west]"),
     ("setblock", (-1, 0, 13), "minecraft:hopper[facing=west]"),
     ("setblock", (-2, -1, 13), "minecraft:hopper[facing=down]"),
+    # A pit to see the press's head from, and a depot alone.
+    ("setblock", (-2, -1, 11), "minecraft:air"),
+    ("setblock", (-4, 0, 11), "kinetica:depot[facing=north]"),
 ]
 # Given to the player: with the goggles on and the motor at 128 RPM, enough
 # for Chronicles' machine quests (the counts some ask to hold).
@@ -227,18 +230,28 @@ def kinetica(control, out):
     # The one given with the items, and what was ground.
     if not flour or int(flour.group(1)) < 5:
         good = False
-    # The press: its motor up to 128 RPM, iron put in the hopper beside the
-    # depot, the sheets the hopper under it took counted (out of it into the
-    # player's hand).
-    visit((-3, 0, 15), (-3, 1, 13))
+    # The press: its motor up to 128 RPM (from its west side: the ruin's
+    # walls stand south of it), iron put in the hopper beside the depot, the
+    # sheets the hopper under it took counted (out of it into the player's
+    # hand).
+    visit((-4, 0, 13), (-3, 1, 13))
     for _ in range(2):
         control.send("mouse right click")
         time.sleep(0.5)
     control.send(f"chat /item replace block {at((-1, 0, 13))} container.0 with minecraft:iron_ingot 8")
-    visit((-2, 0, 15), (-2, 0.3, 13))
-    time.sleep(2)
-    control.send("screenshot " + os.path.join(out, "kinetica-press.png"))
-    time.sleep(14)
+    # The depot alone: five ingots put on it with a use, lying on its tray
+    # (the goggles tell what it holds).
+    control.send("chat /item replace entity @s weapon.mainhand with minecraft:iron_ingot 5")
+    visit((-4, 0, 13), (-4, 0.3, 11))
+    control.send("mouse right click")
+    time.sleep(1.5)
+    control.send("screenshot " + os.path.join(out, "kinetica-depot.png"))
+    # The press's head coming down on the iron, from the pit north of it.
+    visit((-2, -1, 11), (-2, 0.5, 13))
+    for name in ["kinetica-press", "kinetica-press-2"]:
+        control.send("screenshot " + os.path.join(out, f"{name}.png"))
+        time.sleep(0.3)
+    time.sleep(12)
     control.send("screenshot " + os.path.join(out, "kinetica-press-done.png"))
     control.send(f"chat /item replace entity @s weapon.mainhand from block {at((-2, -1, 13))} container.0")
     time.sleep(1)
