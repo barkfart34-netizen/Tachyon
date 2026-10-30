@@ -1,0 +1,70 @@
+{
+  "recipes": [
+    {
+      "input": "minecraft:iron_ingot",
+      "time": 100,
+      "outputs": [
+        {
+          "item": "kinetica:iron_sheet",
+          "count": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:copper_ingot",
+      "time": 100,
+      "outputs": [
+        {
+          "item": "kinetica:copper_sheet",
+          "count": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:gold_ingot",
+      "time": 100,
+      "outputs": [
+        {
+          "item": "kinetica:gold_sheet",
+          "count": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "kinetica:bronze_ingot",
+      "time": 100,
+      "outputs": [
+        {
+          "item": "kinetica:bronze_sheet",
+          "count": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "kinetica:tin_ingot",
+      "time": 100,
+      "outputs": [
+        {
+          "item": "kinetica:tin_sheet",
+          "count": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "input": "minecraft:sugar_cane",
+      "time": 100,
+      "outputs": [
+        {
+          "item": "minecraft:paper",
+          "count": 1,
+          "chance": 1.0
+        }
+      ]
+    }
+  ]
+}

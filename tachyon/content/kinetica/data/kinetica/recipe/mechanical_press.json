@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "S",
+    "X",
+    "I"
+  ],
+  "key": {
+    "S": "kinetica:shaft",
+    "X": "kinetica:ferrostone_casing",
+    "I": "minecraft:iron_block"
+  },
+  "result": {
+    "id": "kinetica:mechanical_press",
+    "count": 1
+  }
+}

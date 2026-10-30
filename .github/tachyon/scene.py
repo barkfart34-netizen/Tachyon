@@ -94,12 +94,19 @@ SHOWCASE = [
     ("setblock", (2, 0, 12), "kinetica:creative_motor[facing=west]"),
     ("setblock", (3, 0, 12), "kinetica:gearbox[axis=z]"),
     ("setblock", (3, 1, 12), "kinetica:millstone[facing=north]"),
+    # A press over a depot, a motor beside it; a hopper beside the depot
+    # fills it, one under it empties it.
+    ("setblock", (-2, 0, 13), "kinetica:depot[facing=north]"),
+    ("setblock", (-2, 1, 13), "kinetica:mechanical_press[axis=x]"),
+    ("setblock", (-3, 1, 13), "kinetica:creative_motor[facing=west]"),
+    ("setblock", (-1, 0, 13), "minecraft:hopper[facing=west]"),
+    ("setblock", (-2, -1, 13), "minecraft:hopper[facing=down]"),
 ]
 # Given to the player: with the goggles on and the motor at 128 RPM, enough
 # for Chronicles' machine quests (the counts some ask to hold).
 ITEMS = ["shaft 8", "cogwheel 2", "large_cogwheel", "gearbox", "hand_crank", "clutch", "gearshift",
          "water_wheel", "windmill", "creative_motor", "ferrostone_alloy 4", "raw_tin", "tin_ingot",
-         "bronze_ingot", "millstone", "wheat_flour"]
+         "bronze_ingot", "millstone", "wheat_flour", "depot", "mechanical_press", "crushed_iron 4"]
 
 
 def look_at(control, eye, target):
@@ -219,6 +226,28 @@ def kinetica(control, out):
     flour = re.search(r"Found (\d+)", lines)
     # The one given with the items, and what was ground.
     if not flour or int(flour.group(1)) < 5:
+        good = False
+    # The press: its motor up to 128 RPM, iron put in the hopper beside the
+    # depot, the sheets the hopper under it took counted (out of it into the
+    # player's hand).
+    visit((-3, 0, 15), (-3, 1, 13))
+    for _ in range(2):
+        control.send("mouse right click")
+        time.sleep(0.5)
+    control.send(f"chat /item replace block {at((-1, 0, 13))} container.0 with minecraft:iron_ingot 8")
+    visit((-2, 0, 15), (-2, 0.3, 13))
+    time.sleep(2)
+    control.send("screenshot " + os.path.join(out, "kinetica-press.png"))
+    time.sleep(14)
+    control.send("screenshot " + os.path.join(out, "kinetica-press-done.png"))
+    control.send(f"chat /item replace entity @s weapon.mainhand from block {at((-2, -1, 13))} container.0")
+    time.sleep(1)
+    control.send("chat /clear @s kinetica:iron_sheet 0")
+    time.sleep(1)
+    lines = " ".join(str(line) for line in control.send("chat-log 2").get("chat", []))
+    print("sheets:", lines)
+    sheets = re.search(r"Found (\d+)", lines)
+    if not sheets or int(sheets.group(1)) < 6:
         good = False
     return good
 
@@ -360,7 +389,8 @@ def main():
         failed.append("quest claimed")
     # Done by the motor turning near the player, and by standing in the
     # structures the world made.
-    for quest in ["in_motion", "full_speed", "millstone", "lost_workshop", "watchtower"]:
+    for quest in ["in_motion", "full_speed", "millstone", "crushed_ore", "pressing", "lost_workshop",
+                  "watchtower"]:
         if not any(quest in p.get("done", []) for p in progress):
             failed.append("quest " + quest)
     if failed:

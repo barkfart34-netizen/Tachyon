@@ -275,3 +275,24 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
     jadi roti), batu bulat jadi kerikil, kerikil jadi pasir, tulang jadi bubuk tulang, tebu jadi gula,
     dan bunga jadi dua kali lipat pewarna. Ada 30 resep.
   - Quest baru *Roti Harian* (pegang 4 tepung), sehingga total ada 15 quest.
+- **30 Oktober 2026, perbaikan dari pemain.**
+  - Motor kreatif tidak lagi berlubang di dasarnya. Templatenya kini end portal frame (setinggi 13
+    piksel), dan modelnya diberi pelat penutup lantai.
+  - Ujung poros pada casing (gearbox, kopling, pemindah gigi) dibuat sedikit menonjol dari permukaan
+    casing, sehingga tidak lagi berkedip (z-fighting).
+  - Android:
+    - Bawaan 60 FPS di dalam dunia dan 30 di menu (mode baterai), bukan 120. Main lama di 120 FPS
+      membuat HP panas lalu melambat.
+    - Batas FPS turun ke 45 saat HP berstatus panas *moderate*, dan ke 30 saat *severe* ke atas.
+    - Baris performa kini mencatat memori, suhu, FPS awal, dan lama bermain.
+- **30 Oktober 2026, Kinetica 0.4: Kinetica II bagian 1 (press, depot, bijih hancur, hopper).**
+  - Blok baru:
+    - *Depot*: nampan untuk satu tumpukan.
+    - *Mesin Press*: menempa isi depot di bawahnya. Batangan jadi lembaran besi, tembaga, emas,
+      perunggu, atau timah, dan tebu jadi kertas.
+  - Batu gilingan kini menggiling bijih mentah jadi bijih hancur (kadang lebih satu), yang dilebur
+    jadi batangan.
+  - Hopper vanilla bisa mengisi dan mengosongkan batu gilingan serta depot, sehingga lini
+    "hopper → depot + press → hopper" berjalan tanpa pemain.
+  - Quest baru *Bijih Hancur* dan *Logam Tempa*, sehingga total ada 17 quest. Penampil resep
+    mendapat tab mesin press.

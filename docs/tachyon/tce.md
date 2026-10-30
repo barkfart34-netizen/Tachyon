@@ -44,7 +44,7 @@ Lapisan yang memberi blok modpack perilaku di luar template vanilla-nya. Rencana
   sinyal membalik arahnya.
 - **Stress (beban):**
   - Mesin membebani jaringannya sebesar `Part::impact` per RPM. Batu gilingan bebannya 4 SU per
-    RPM; poros, roda gigi, gearbox, kopling, dan pemindah gigi tidak membebani.
+    RPM dan mesin press 8; poros, roda gigi, gearbox, kopling, dan pemindah gigi tidak membebani.
   - Kapasitas sumber (`kinetic::capacity`): engkol tangan 8 SU per RPM (256 SU pada 32 RPM), kincir
     air 16, kincir angin 32, dan motor kreatif selalu 16384 SU.
   - Jaringan yang bebannya melebihi kapasitas *kelebihan beban*: seluruh jaringan berhenti sampai
@@ -62,11 +62,34 @@ Lapisan yang memberi blok modpack perilaku di luar template vanilla-nya. Rencana
   - Isinya disimpan bersama kecepatan motor di `kinetica-<dimensi>.json`, dan jatuh ke tanah saat
     batunya dihancurkan. Bentuknya meminjam template pemotong batu (setinggi 9 piksel); klik ke
     blok ini selalu ditangani TCE lebih dulu, jadi layar pemotong batu tidak pernah terbuka.
+  - Selain gandum dan lainnya, batu gilingan menggiling bijih mentah (besi, tembaga, emas, timah)
+    jadi bijih hancur: satu, ditambah satu lagi dengan peluang 25%. Bijih hancur dilebur (tungku
+    atau blast furnace) jadi satu batangan.
+- **Depot dan mesin press** (`millstone.rs` juga):
+  - Depot menampung satu tumpukan (paling banyak 64). Dipakai saat kosong: tumpukan yang dipegang
+    masuk. Dipakai saat berisi: seluruh isinya keluar ke inventaris. Isinya tergambar di atas
+    nampannya dan terlihat lewat kacamata ("Depot: Iron Ingot x5").
+  - Mesin press (template pilar kuarsa, berporos x/y/z) menerima putaran lewat poros di sepanjang
+    porosnya, kecuali dari bawah karena kepalanya turun ke sana. Press yang berputar mengerjakan
+    depot tepat di bawahnya dengan resep `pressing.json`: batangan besi, tembaga, emas, perunggu,
+    dan timah jadi lembaran; tebu jadi kertas. Kerjanya 100 per barang, sama seperti batu gilingan
+    (5 detik pada 16 RPM). Kepalanya naik turun selama bekerja, sekali per 100 kerja.
+  - Penampil resep punya tab mesin press.
+- **Hopper vanilla** (kait di `game/machines.rs`):
+  - Hopper yang menghadap batu gilingan atau depot memasukkan satu barang tiap kali. Batu gilingan
+    hanya menerima barang yang bisa digiling. Depot hanya menerima barang selama belum ada hasil
+    press di dalamnya.
+  - Hopper di bawah batu gilingan atau depot mengambil hasilnya satu per satu. Dari depot tanpa
+    press di atasnya, atau berisi barang yang tidak bisa dipress, hopper mengambil barangnya juga,
+    jadi depot bisa dipakai sebagai jalur lewat.
+  - Barang yang diambil hopper tetapi tidak muat dikembalikan ke tempat asalnya.
+  - Komponen barang (nama, enchantment) tidak ikut tersimpan di mesin; tidak masalah untuk bahan
+    mentah.
 - **HUD:** dengan Kacamata Insinyur dipakai di kepala atau dipegang, bagian kinetik yang dilihat
   menampilkan kecepatannya di pojok kiri atas, dalam bahasa pemain. Ditambah beban/kapasitas
-  jaringannya ("128 / 256 SU"), status kelebihan beban, dan barang yang sedang digiling.
-- **Payload** `tachyon:kinetic` versi 3 berisi kecepatan, bagian yang macet, stress tiap bagian, dan
-  batu gilingan yang sedang bekerja.
+  jaringannya ("128 / 256 SU"), status kelebihan beban, dan barang yang sedang digiling atau dipress.
+- **Payload** `tachyon:kinetic` versi 4 berisi kecepatan, bagian yang macet, stress tiap bagian,
+  mesin yang sedang bekerja (dan barangnya), serta isi tiap depot.
 - **State** disimpan per thread (`thread_local`). Jendela game dan thread server masing-masing
   berjalan di thread sendiri.
 
@@ -114,7 +137,8 @@ Satu baris per titik, supaya merge dari upstream tetap mudah:
 |---|---|
 | `game.rs` | `mod tachyon_engine; mod tachyon_mods;`, `tachyon_tick_blocks` sebelum `tick_sculk_blocks`, `tachyon_render` setelah block entity |
 | `game/native_hooks.rs` | Isi setiap hook memanggil `tachyon_*` (mod resmi dan TCE) |
-| `game/remote.rs` | Payload `tachyon:*` menuju `tachyon_payload`; `remote_block_reacts` menanyakan `tachyon_takes_use` (klik ke motor, engkol, atau batu gilingan tidak memprediksi penempatan blok) |
+| `game/remote.rs` | Payload `tachyon:*` menuju `tachyon_payload`; `remote_block_reacts` menanyakan `tachyon_takes_use` (klik ke motor, engkol, batu gilingan, atau depot tidak memprediksi penempatan blok) |
+| `game/machines.rs` | `hopper_eject` dan `hopper_suck` lebih dulu menanyakan `tachyon_hopper_in` / `tachyon_hopper_out` (mesin TCE) |
 | `game/mods.rs` | `content_root` memasang konten bawaan |
 | `mod_content.rs` | `horizon:beside`: placed feature dari mod ikut masuk ke bioma |
 | `game/lan_actions.rs` | Payload `tachyon:*` dari pemain menuju `tachyon_guest_payload` |
@@ -123,6 +147,5 @@ Satu baris per titik, supaya merge dari upstream tetap mudah:
 ## Belum ada
 
 - Kacamata yang terlihat di kepala (sekarang tampilannya masih topi kulit dari template).
-- Mesin pemroses lain (press, mixer, kipas) dan logistik (belt, funnel), yaitu Kinetica II.
-- Corong atau hopper yang mengisi dan mengosongkan batu gilingan.
+- Mesin pemroses lain (mixer + basin, kipas, gergaji) dan logistik (belt, funnel), sisa Kinetica II.
 - Instancing GPU untuk jaringan yang sangat besar.

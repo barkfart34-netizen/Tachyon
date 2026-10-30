@@ -1,0 +1,12 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    "kinetica:ferrostone_casing",
+    "kinetica:ferrostone_alloy"
+  ],
+  "result": {
+    "id": "kinetica:depot",
+    "count": 1
+  }
+}

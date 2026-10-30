@@ -27,6 +27,8 @@ WOOD = [(58, 38, 22), (86, 58, 33), (114, 79, 45), (139, 99, 58), (165, 122, 74)
 BRONZE = [(70, 42, 20), (112, 70, 30), (156, 104, 44), (196, 142, 66), (230, 186, 104)]
 CORE = [(10, 40, 70), (20, 90, 140), (40, 160, 210), (110, 220, 255), (210, 248, 255)]
 TIN = [(58, 66, 74), (98, 110, 120), (140, 154, 162), (178, 192, 198), (210, 222, 226), (236, 244, 246)]
+COPPER = [(84, 40, 24), (140, 70, 40), (192, 104, 64), (226, 140, 96), (246, 184, 140), (252, 220, 190)]
+GOLD = [(96, 64, 8), (160, 112, 20), (214, 164, 40), (240, 206, 80), (252, 236, 140), (255, 250, 210)]
 # The ground the ores are in: a stone's greys, a deepslate's darker blue-greys.
 ROCK = [(96, 96, 96), (108, 108, 108), (119, 119, 119), (129, 129, 129), (140, 140, 140)]
 DEEP = [(48, 48, 54), (58, 58, 64), (69, 69, 75), (80, 80, 86), (92, 92, 98)]
@@ -423,6 +425,104 @@ def flour():
     return img
 
 
+def outline(img, color):
+    """A dark edge round what is drawn: the clear pixels beside it."""
+    edge = []
+    for y in range(16):
+        for x in range(16):
+            if img.getpixel((x, y))[3]:
+                continue
+            near = [(x + dx, y + dy) for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]]
+            if any(0 <= a < 16 and 0 <= b < 16 and img.getpixel((a, b))[3] for a, b in near):
+                edge.append((x, y))
+    for xy in edge:
+        img.putpixel(xy, color + (255,))
+
+
+def sheet(palette):
+    """A metal sheet seen at a slant: its top, a sheen along the far edge, its
+    thin near edge."""
+    def draw():
+        img = image()
+        rows = [
+            "................",
+            "................",
+            "................",
+            "................",
+            "......aaaaaaaaa.",
+            ".....abbbbbbbca.",
+            "....abbcccccbda.",
+            "...abccccccbdda.",
+            "..abcccccccddea.",
+            ".abcccccccddeea.",
+            ".abbbbbbbbbbea..",
+            ".aeeeeeeeeeea...",
+            "..aaaaaaaaaa....",
+            "................",
+            "................",
+            "................",
+        ]
+        colors = {"a": palette[0], "b": palette[-1], "c": palette[3], "d": palette[2], "e": palette[1]}
+        for y, row in enumerate(rows):
+            assert len(row) == 16, row
+            for x, ch in enumerate(row):
+                if ch in colors:
+                    img.putpixel((x, y), colors[ch] + (255,))
+        return img
+    return draw
+
+
+def crushed(metal, seed):
+    """Crushed ore: a heap of grit, rock grey and bits of its metal."""
+    def draw():
+        rng = random.Random(seed)
+        img = image()
+        for y in range(5, 14):
+            half = 2 + (y - 5) * 0.75
+            for x in range(16):
+                if abs(x - 7.5) <= half and rng.random() < 0.93:
+                    palette = metal if rng.random() < 0.45 else ROCK
+                    shade = rng.randint(1, len(palette) - 2)
+                    if y == 5 or rng.random() < 0.08:
+                        shade = len(palette) - 1
+                    img.putpixel((x, y), palette[shade] + (255,))
+        outline(img, ROCK[0] if metal is not IRON else IRON[0])
+        return img
+    return draw
+
+
+def depot_top():
+    """A depot's top: a dark iron tray in a frame."""
+    rng = random.Random(51)
+    img = image()
+    noise(img, IRON, rng, 0, 1)
+    frame(img, IRON)
+    for x in range(3, 13):
+        for y in (3, 12):
+            img.putpixel((x, y), IRON[2] + (255,))
+    return img
+
+
+def press_side():
+    """A press's sides: a casing with a slot down the middle for the head."""
+    img = casing()
+    for y in range(2, 14):
+        for x in (6, 9):
+            img.putpixel((x, y), IRON[1] + (255,))
+        for x in (7, 8):
+            img.putpixel((x, y), IRON[0] + (255,))
+    return img
+
+
+def press_head():
+    """The press head's iron: plates, a light rim."""
+    rng = random.Random(52)
+    img = image()
+    noise(img, IRON, rng, 2, 4)
+    frame(img, IRON)
+    return img
+
+
 TEXTURES = {
     "block/ferrostone_casing": casing,
     "block/gearbox_side": casing_hole,
@@ -448,6 +548,13 @@ TEXTURES = {
     "item/bronze_ingot": lambda: ingot({"a": BRONZE[0], "b": BRONZE[4], "c": BRONZE[3], "d": BRONZE[2],
                                         "e": BRONZE[1]}),
     "block/millstone_stone": millstone_stone,
+    "block/depot_top": depot_top,
+    "block/mechanical_press_side": press_side,
+    "block/mechanical_press_head": press_head,
+    **{f"item/{m}_sheet": sheet(pal) for m, pal in
+       [("iron", IRON), ("copper", COPPER), ("gold", GOLD), ("bronze", BRONZE), ("tin", TIN)]},
+    **{f"item/crushed_{m}": crushed(pal, 60 + i) for i, (m, pal) in
+       enumerate([("iron", IRON), ("copper", COPPER), ("gold", GOLD), ("tin", TIN)])},
     "block/millstone_top": millstone_top,
     "item/wheat_flour": flour,
 }
@@ -612,6 +719,17 @@ MILL_STONE = box([2, 5, 2], [14, 12, 14], {
 })
 
 
+DEPOT_TEX = {"casing": t("block/ferrostone_casing"), "top": t("block/depot_top"),
+             "particle": t("block/ferrostone_casing")}
+# A depot: a tray as high as its template's shape (a stonecutter's, 9).
+DEPOT = box([0, 0, 0], [16, 9, 16], {
+    "north": ("#casing", [0, 7, 16, 16]), "south": ("#casing", [0, 7, 16, 16]),
+    "east": ("#casing", [0, 7, 16, 16]), "west": ("#casing", [0, 7, 16, 16]),
+    "up": ("#top", [0, 0, 16, 16]), "down": ("#casing", [0, 0, 16, 16]),
+})
+PRESS_TEX = {"head": t("block/mechanical_press_head"), "particle": t("block/mechanical_press_head")}
+
+
 def big_item(block):
     """An item for a part wider than its block: the block's model, smaller."""
     return {"parent": t(block), "display": {
@@ -689,6 +807,19 @@ MODELS = {
     "block/millstone_top": model(textures=MILL_TEX, elements=[MILL_STONE]),
     "block/millstone_item": model(textures=MILL_TEX, elements=[MILL_BASE, MILL_STONE]),
     "item/wheat_flour": model("minecraft:item/generated", {"layer0": t("item/wheat_flour")}),
+    "block/depot": model(textures=DEPOT_TEX, elements=[DEPOT]),
+    "block/mechanical_press": model("minecraft:block/cube_column", {
+        "side": t("block/mechanical_press_side"), "end": t("block/gearbox_side")}),
+    # The head, drawn by the content engine under the press: a plate on a
+    # stem, inside the press until it presses.
+    "block/mechanical_press_head": model(textures=PRESS_TEX, elements=[
+        all_faces("#head", [3, 0, 3], [13, 2, 13]),
+        all_faces("#head", [6, 2, 6], [10, 16, 10]),
+    ]),
+    **{f"item/{m}_sheet": model("minecraft:item/generated", {"layer0": t(f"item/{m}_sheet")})
+       for m in ["iron", "copper", "gold", "bronze", "tin"]},
+    **{f"item/crushed_{m}": model("minecraft:item/generated", {"layer0": t(f"item/crushed_{m}")})
+       for m in ["iron", "copper", "gold", "tin"]},
 }
 
 AXIS = {
@@ -781,6 +912,15 @@ BLOCKS = {
     # the content engine first, which puts items in or takes them out.
     "millstone": ("minecraft:stonecutter", {"hardness": 2.0, "sounds": "minecraft:stone", "map_color": 11},
                   states(FACING, "block/millstone"), "block/millstone_item", ("Millstone", "Batu Gilingan")),
+    # A tray for one stack: a press over it works what is on it.
+    "depot": ("minecraft:stonecutter", {"hardness": 2.0, "sounds": "minecraft:copper_block", "map_color": 11},
+              states(FACING, "block/depot"), "block/depot", ("Depot", "Depot")),
+    # A quartz pillar's axis: the shaft through it; the head comes down on the
+    # depot under it.
+    "mechanical_press": ("minecraft:quartz_pillar", {"hardness": 2.5, "sounds": "minecraft:copper_block",
+                                                     "map_color": 11},
+                         states(AXIS, "block/mechanical_press"), "block/mechanical_press",
+                         ("Mechanical Press", "Mesin Press")),
 }
 
 ITEMS = {
@@ -790,6 +930,12 @@ ITEMS = {
     "tin_nugget": ("minecraft:iron_nugget", "item/tin_nugget", ("Tin Nugget", "Butiran Timah")),
     "bronze_ingot": ("minecraft:copper_ingot", "item/bronze_ingot", ("Bronze Ingot", "Batangan Perunggu")),
     "wheat_flour": ("minecraft:brick", "item/wheat_flour", ("Wheat Flour", "Tepung Terigu")),
+    **{f"{m}_sheet": ("minecraft:brick", f"item/{m}_sheet", (f"{en} Sheet", f"Lempeng {idn}"))
+       for m, en, idn in [("iron", "Iron", "Besi"), ("copper", "Copper", "Tembaga"), ("gold", "Golden", "Emas"),
+                          ("bronze", "Bronze", "Perunggu"), ("tin", "Tin", "Timah")]},
+    **{f"crushed_{m}": ("minecraft:brick", f"item/crushed_{m}", (f"Crushed {en}", f"{idn} Hancur"))
+       for m, en, idn in [("iron", "Iron", "Besi"), ("copper", "Copper", "Tembaga"), ("gold", "Gold", "Emas"),
+                          ("tin", "Tin", "Timah")]},
     # Worn on the head (a leather cap's slot), or held: a part's speed shows
     # when looked at.
     "engineers_goggles": ("minecraft:leather_helmet", "item/engineers_goggles",
@@ -803,6 +949,7 @@ HUD = {
     "kinetica.hud.rpm": ("%s RPM", "%s RPM"),
     "kinetica.hud.overstressed": ("overstressed", "kelebihan beban"),
     "kinetica.hud.stress": ("%s / %s SU", "%s / %s SU"),
+    "kinetica.hud.pressing": ("Pressing", "Penekanan"),
 }
 
 
@@ -862,6 +1009,16 @@ RECIPES = {
                                                          "A": t("ferrostone_alloy")}, "engineers_goggles"),
     "millstone": recipe_shaped([" P ", "ACA", " S "], {"P": "#minecraft:planks", "A": t("ferrostone_alloy"),
                                                        "C": t("cogwheel"), "S": "minecraft:stone"}, "millstone"),
+    "depot": recipe_shapeless([t("ferrostone_casing"), t("ferrostone_alloy")], "depot"),
+    "mechanical_press": recipe_shaped(["S", "X", "I"], {"S": t("shaft"), "X": t("ferrostone_casing"),
+                                                       "I": "minecraft:iron_block"}, "mechanical_press"),
+    # Crushed ore smelts into an ingot.
+    **{f"{ingot.split(':')[1]}_from_{kind}_crushed_{m}": {
+        "type": f"minecraft:{kind}", "category": "misc", "ingredient": t(f"crushed_{m}"),
+        "result": {"id": ingot}, "experience": 0.1, "cookingtime": ticks}
+       for m, ingot in [("iron", "minecraft:iron_ingot"), ("copper", "minecraft:copper_ingot"),
+                        ("gold", "minecraft:gold_ingot"), ("tin", t("tin_ingot"))]
+       for kind, ticks in [("smelting", 200), ("blasting", 100)]},
     # Flour bakes into bread.
     **{f"bread_from_{kind}_flour": {"type": f"minecraft:{kind}", "category": "food",
                                     "ingredient": t("wheat_flour"), "result": {"id": "minecraft:bread"},
@@ -896,6 +1053,19 @@ MILLING = [
     mill("minecraft:clay", [("minecraft:clay_ball", 3, 1.0), ("minecraft:clay_ball", 1, 0.5)]),
     mill("minecraft:white_wool", [("minecraft:string", 3, 1.0)], 150),
     *[mill(f"minecraft:{flower}", [(f"minecraft:{dye}_dye", n, 1.0)], 50) for flower, dye, n in DYES],
+    # Raw metal crushed: one, and a quarter of the time a second.
+    *[mill(raw, [(t(f"crushed_{m}"), 1, 1.0), (t(f"crushed_{m}"), 1, 0.25)], 250)
+      for m, raw in [("iron", "minecraft:raw_iron"), ("copper", "minecraft:raw_copper"),
+                     ("gold", "minecraft:raw_gold"), ("tin", t("raw_tin"))]],
+]
+
+# The press's recipes, on a depot under it (read by millstone.rs, as the
+# millstone's are).
+PRESSING = [
+    *[mill(ingot, [(t(f"{m}_sheet"), 1, 1.0)])
+      for m, ingot in [("iron", "minecraft:iron_ingot"), ("copper", "minecraft:copper_ingot"),
+                       ("gold", "minecraft:gold_ingot"), ("bronze", t("bronze_ingot")), ("tin", t("tin_ingot"))]],
+    mill("minecraft:sugar_cane", [("minecraft:paper", 1, 1.0)]),
 ]
 
 
@@ -946,6 +1116,7 @@ C_TAGS = {
     "item/ingots/bronze": [t("bronze_ingot")],
     "item/nuggets/tin": [t("tin_nugget")],
     "item/raw_materials/tin": [t("raw_tin")],
+    **{f"item/plates/{m}": [t(f"{m}_sheet")] for m in ["iron", "copper", "gold", "bronze", "tin"]},
 }
 
 
@@ -972,7 +1143,7 @@ def main():
     (ROOT).mkdir(parents=True)
     (ROOT / "horizon-mod.toml").write_text(
         "# Tachyon: Aether & Gears. Kinetica, the machines: written by tachyon/art/kinetica.py.\n"
-        'id = "kinetica"\nname = "Kinetica"\nversion = "0.3.0"\napi = "0.2"\nside = "both"\n'
+        'id = "kinetica"\nname = "Kinetica"\nversion = "0.4.0"\napi = "0.2"\nside = "both"\n'
         'capabilities = ["registries"]\n', encoding="utf-8")
     for name, draw in TEXTURES.items():
         write(assets / "textures" / f"{name}.png", draw())
@@ -999,6 +1170,9 @@ def main():
     inputs = [m["input"] for m in MILLING]
     assert len(inputs) == len(set(inputs)), "one milling recipe an item"
     write(data / NS / "tachyon" / "milling.json", {"recipes": MILLING})
+    inputs = [m["input"] for m in PRESSING]
+    assert len(inputs) == len(set(inputs)), "one pressing recipe an item"
+    write(data / NS / "tachyon" / "pressing.json", {"recipes": PRESSING})
     wooden = ("cogwheel", "large_cogwheel", "hand_crank", "water_wheel", "windmill")
     pickaxe = [t(b) for b in BLOCKS if b not in wooden]
     axe = [t(b) for b in wooden]

@@ -354,6 +354,70 @@
           "chance": 1.0
         }
       ]
+    },
+    {
+      "input": "minecraft:raw_iron",
+      "time": 250,
+      "outputs": [
+        {
+          "item": "kinetica:crushed_iron",
+          "count": 1,
+          "chance": 1.0
+        },
+        {
+          "item": "kinetica:crushed_iron",
+          "count": 1,
+          "chance": 0.25
+        }
+      ]
+    },
+    {
+      "input": "minecraft:raw_copper",
+      "time": 250,
+      "outputs": [
+        {
+          "item": "kinetica:crushed_copper",
+          "count": 1,
+          "chance": 1.0
+        },
+        {
+          "item": "kinetica:crushed_copper",
+          "count": 1,
+          "chance": 0.25
+        }
+      ]
+    },
+    {
+      "input": "minecraft:raw_gold",
+      "time": 250,
+      "outputs": [
+        {
+          "item": "kinetica:crushed_gold",
+          "count": 1,
+          "chance": 1.0
+        },
+        {
+          "item": "kinetica:crushed_gold",
+          "count": 1,
+          "chance": 0.25
+        }
+      ]
+    },
+    {
+      "input": "kinetica:raw_tin",
+      "time": 250,
+      "outputs": [
+        {
+          "item": "kinetica:crushed_tin",
+          "count": 1,
+          "chance": 1.0
+        },
+        {
+          "item": "kinetica:crushed_tin",
+          "count": 1,
+          "chance": 0.25
+        }
+      ]
     }
   ]
 }

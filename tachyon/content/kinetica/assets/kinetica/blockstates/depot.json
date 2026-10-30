@@ -1,0 +1,20 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "kinetica:block/depot",
+      "y": 180
+    },
+    "facing=east": {
+      "model": "kinetica:block/depot",
+      "y": 270
+    },
+    "facing=south": {
+      "model": "kinetica:block/depot",
+      "y": 0
+    },
+    "facing=west": {
+      "model": "kinetica:block/depot",
+      "y": 90
+    }
+  }
+}

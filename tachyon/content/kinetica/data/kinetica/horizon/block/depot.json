@@ -1,0 +1,9 @@
+{
+  "template": "minecraft:stonecutter",
+  "properties": {
+    "hardness": 2.0,
+    "sounds": "minecraft:copper_block",
+    "map_color": 11
+  },
+  "item": true
+}

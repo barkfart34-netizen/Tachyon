@@ -666,6 +666,11 @@ impl Game<'_> {
         };
         let front = offset(pos, facing);
         let face = facing.opposite();
+        // Tachyon's machines (a millstone, a depot): one item in.
+        if let Some(moved) = self.tachyon_hopper_in(hopper, front) {
+            return moved;
+        }
+        let c = self.containers();
         if let Some(target) = c.view(front, false) {
             return self.eject_into(pos, hopper, &target, face);
         }
@@ -678,6 +683,42 @@ impl Game<'_> {
         };
         self.with_entity_container(id, |g, target| g.eject_into(pos, hopper, target, face))
             .unwrap_or(false)
+    }
+    /// Tachyon: a hopper's item into the content engine's machine at
+    /// `front` (a millstone, a depot); None when there is none.
+    fn tachyon_hopper_in(&mut self, hopper: &View, front: Pos) -> Option<bool> {
+        let at = [front.0, front.1, front.2];
+        if !self.tachyon_machine(at) {
+            return None;
+        }
+        for slot in 0..hopper.len() {
+            let Some(one) = self.take_one(hopper, slot) else {
+                continue;
+            };
+            if self.tachyon_machine_put(at, &one) {
+                return Some(true);
+            }
+            self.put_back(hopper, slot, one);
+        }
+        Some(false)
+    }
+    /// Tachyon: one item the machine at `above` made into the hopper under
+    /// it; None when there is no machine.
+    fn tachyon_hopper_out(&mut self, hopper: &View, above: Pos) -> Option<bool> {
+        let at = [above.0, above.1, above.2];
+        if !self.tachyon_machine(at) {
+            return None;
+        }
+        let Some((one, input)) = self.tachyon_machine_take(at) else {
+            return Some(false);
+        };
+        match self.add_item(None, hopper, one, Some(Direction::Down)) {
+            None => Some(true),
+            Some(rest) => {
+                self.tachyon_machine_return(at, rest, input);
+                Some(false)
+            }
+        }
     }
     /// The rest of `HopperBlockEntity.ejectItems`: one item into `target`.
     fn eject_into(&mut self, pos: Pos, hopper: &View, target: &View, face: Direction) -> bool {
@@ -706,6 +747,10 @@ impl Game<'_> {
             f64::from(pos.1) + 1.5,
             f64::from(pos.2) + 0.5,
         ];
+        // Tachyon's machines: one item of what they made out.
+        if let Some(took) = self.tachyon_hopper_out(hopper, above) {
+            return took;
+        }
         if let Some(took) = self.suck_from_container(above, at, hopper) {
             return took;
         }

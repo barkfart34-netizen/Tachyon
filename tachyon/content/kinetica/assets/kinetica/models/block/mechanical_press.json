@@ -1,0 +1,7 @@
+{
+  "parent": "minecraft:block/cube_column",
+  "textures": {
+    "side": "kinetica:block/mechanical_press_side",
+    "end": "kinetica:block/gearbox_side"
+  }
+}

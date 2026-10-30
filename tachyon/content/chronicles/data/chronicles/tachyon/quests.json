@@ -124,6 +124,48 @@
           ]
         },
         {
+          "id": "crushed_ore",
+          "icon": "kinetica:crushed_iron",
+          "after": [
+            "millstone"
+          ],
+          "tasks": [
+            {
+              "item": "kinetica:crushed_iron",
+              "count": 4
+            }
+          ],
+          "rewards": [
+            {
+              "item": "minecraft:hopper",
+              "count": 2
+            }
+          ]
+        },
+        {
+          "id": "pressing",
+          "icon": "kinetica:mechanical_press",
+          "after": [
+            "in_motion"
+          ],
+          "tasks": [
+            {
+              "item": "kinetica:iron_sheet",
+              "count": 4
+            }
+          ],
+          "rewards": [
+            {
+              "item": "kinetica:depot",
+              "count": 2
+            },
+            {
+              "item": "minecraft:iron_ingot",
+              "count": 8
+            }
+          ]
+        },
+        {
           "id": "goggles",
           "icon": "kinetica:engineers_goggles",
           "after": [

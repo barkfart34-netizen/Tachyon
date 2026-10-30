@@ -1,0 +1,16 @@
+{
+  "variants": {
+    "axis=x": {
+      "model": "kinetica:block/mechanical_press",
+      "x": 90,
+      "y": 90
+    },
+    "axis=y": {
+      "model": "kinetica:block/mechanical_press"
+    },
+    "axis=z": {
+      "model": "kinetica:block/mechanical_press",
+      "x": 90
+    }
+  }
+}

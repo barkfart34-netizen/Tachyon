@@ -53,9 +53,9 @@ fn recipe(r: &NativeRecipe) -> m::Recipe {
     }
 }
 
-/// Tachyon: the millstone's recipes (the content engine's) whose items the
-/// tables know.
-fn milling(items: &[NativeItem]) -> Vec<m::Recipe> {
+/// Tachyon: the millstone's and the press's recipes (the content engine's)
+/// whose items the tables know.
+fn processing(items: &[NativeItem]) -> Vec<m::Recipe> {
     let index: std::collections::HashMap<&str, u32> = (items.iter().enumerate())
         .map(|(i, it)| (it.id.as_str(), i as u32))
         .collect();
@@ -67,7 +67,10 @@ fn milling(items: &[NativeItem]) -> Vec<m::Recipe> {
         })
     };
     let mut out = Vec::new();
-    for (input, time, outputs) in crate::game::tachyon_engine::milling() {
+    let [milling, pressing] = crate::game::tachyon_engine::processing();
+    let kinds = (milling.into_iter().map(|r| (m::Kind::Milling, r)))
+        .chain(pressing.into_iter().map(|r| (m::Kind::Pressing, r)));
+    for (kind, (input, time, outputs)) in kinds {
         let Some(slot) = one(&input, 1) else {
             continue;
         };
@@ -82,7 +85,7 @@ fn milling(items: &[NativeItem]) -> Vec<m::Recipe> {
             continue;
         }
         out.push(m::Recipe {
-            kind: m::Kind::Milling,
+            kind,
             width: 1,
             height: 1,
             slots: vec![vec![slot]],
@@ -145,7 +148,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
     match (tables, m::loaded()) {
         (Some(t), false) => {
             let mut recipes: Vec<m::Recipe> = t.recipes.iter().map(recipe).collect();
-            recipes.extend(milling(&t.items));
+            recipes.extend(processing(&t.items));
             let (viewer, out) = m::Viewer::new(t.items.iter().map(item).collect(), recipes);
             m::set_viewer(Some(viewer));
             apply(game, out);

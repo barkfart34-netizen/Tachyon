@@ -151,6 +151,11 @@ pub enum Part {
     /// A millstone: turned by a shaft from below, or by small cogwheels
     /// beside it (it meshes as one, about Y).
     Millstone,
+    /// A mechanical press, turned by a shaft along its axis (not from below:
+    /// its head comes down there, on the depot under it).
+    Press(Axis),
+    /// A depot: a tray for one stack, which doesn't turn.
+    Depot,
 }
 
 impl Part {
@@ -167,6 +172,8 @@ impl Part {
             Part::Gearbox(a) => d.axis() != a,
             Part::Motor(out) | Part::Crank(out) => d == out,
             Part::Millstone => d == Dir::Down,
+            Part::Press(a) => d.axis() == a && d != Dir::Down,
+            Part::Depot => false,
         }
     }
     /// The stress the part takes for each RPM it turns at (stress units):
@@ -174,6 +181,7 @@ impl Part {
     pub fn impact(self) -> f32 {
         match self {
             Part::Millstone => 4.0,
+            Part::Press(_) => 8.0,
             _ => 0.0,
         }
     }
@@ -636,6 +644,24 @@ mod tests {
         let s = solve1(&p2, &[([0, 0, 0], 32.0)]);
         assert_eq!(s.speeds[&[2, 1, 0]][0], 32.0);
         assert_eq!(s.stress[&[0, 0, 0]].capacity, CREATIVE_CAPACITY);
+    }
+
+    #[test]
+    fn a_press_turns_along_its_axis_and_a_depot_not_at_all() {
+        let p = parts(&[
+            ([0, 1, 0], Part::Motor(Dir::East)),
+            ([1, 1, 0], Part::Press(Axis::X)),
+            ([1, 0, 0], Part::Depot),
+            ([2, 1, 0], Part::Shaft(Axis::X)),
+        ]);
+        let s = solve1(&p, &[([0, 1, 0], 32.0)]);
+        assert_eq!(s.speeds[&[1, 1, 0]][0], 32.0);
+        assert_eq!(s.speeds[&[2, 1, 0]][0], 32.0);
+        assert_eq!(s.speeds.get(&[1, 0, 0]), None);
+        assert_eq!(s.stress[&[1, 1, 0]].load, 256.0);
+        // Not from a shaft under it.
+        let p = parts(&[([0, 0, 0], Part::Motor(Dir::Up)), ([0, 1, 0], Part::Press(Axis::Y))]);
+        assert_eq!(solve1(&p, &[([0, 0, 0], 32.0)]).speeds.get(&[0, 1, 0]), None);
     }
 
     #[test]

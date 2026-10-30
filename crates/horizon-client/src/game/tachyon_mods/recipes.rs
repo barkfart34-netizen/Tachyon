@@ -27,7 +27,7 @@ pub const MAX_STACKS: usize = 64;
 /// A right click's gift in creative mode (cut to one stack by the game).
 pub const STACK: u32 = 99;
 /// The stations, in the order of their tabs, with each one's icon.
-pub const STATIONS: [&str; 9] = [
+pub const STATIONS: [&str; 10] = [
     "minecraft:crafting_table",
     "minecraft:furnace",
     "minecraft:blast_furnace",
@@ -36,8 +36,9 @@ pub const STATIONS: [&str; 9] = [
     "minecraft:stonecutter",
     "minecraft:smithing_table",
     "minecraft:brewing_stand",
-    // Tachyon: Kinetica's millstone.
+    // Tachyon: Kinetica's millstone and press.
     "kinetica:millstone",
+    "kinetica:mechanical_press",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,6 +54,8 @@ pub enum Kind {
     Brewing,
     /// Tachyon: a millstone's (`results` past the first by `chances`).
     Milling,
+    /// Tachyon: a mechanical press's, on a depot.
+    Pressing,
 }
 
 fn station(kind: Kind) -> usize {
@@ -66,6 +69,7 @@ fn station(kind: Kind) -> usize {
         Kind::Smithing => 6,
         Kind::Brewing => 7,
         Kind::Milling => 8,
+        Kind::Pressing => 9,
     }
 }
 
@@ -372,7 +376,7 @@ impl Viewer {
             Kind::Brewing => (Layout::Brewing, 2, 1, String::new()),
             // The first result in its slot; the others, and their chances,
             // in the note. A millstone's work is a tick's at 16 RPM.
-            Kind::Milling => {
+            Kind::Milling | Kind::Pressing => {
                 let mut note = format!("{} s at 16 RPM", r.cooking_time as f32 / 20.0);
                 for (i, s) in r.results.iter().enumerate().skip(1) {
                     let chance = r.chances.get(i).copied().unwrap_or(1.0);

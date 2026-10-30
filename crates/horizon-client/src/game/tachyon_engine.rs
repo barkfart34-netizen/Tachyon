@@ -108,6 +108,8 @@ fn part_of<'a>(name: &str, property: impl Fn(&str) -> Option<&'a str>) -> Option
         "windmill" => Some(Part::Windmill(axis()?)),
         "gearshift" => Some(Part::Gearshift(axis()?)),
         "millstone" => Some(Part::Millstone),
+        "mechanical_press" => Some(Part::Press(axis()?)),
+        "depot" => Some(Part::Depot),
         _ => None,
     }
 }
@@ -327,28 +329,36 @@ thread_local! {
     static CLIENT: RefCell<Client> = RefCell::new(Client::default());
 }
 
-/// The millstone's recipes, for the recipe viewer: each input, its work,
-/// and its outputs (item, count, chance).
-pub(in crate::game) fn milling() -> Vec<(String, f32, Vec<(String, u32, f32)>)> {
-    millstone::recipes()
-        .iter()
-        .map(|r| {
-            let outputs = (r.outputs.iter())
-                .map(|o| (o.item.clone(), o.count, o.chance))
-                .collect();
-            (r.input.clone(), r.time, outputs)
-        })
-        .collect()
+/// A machine's recipe for the recipe viewer: its input, its work, and its
+/// outputs (item, count, chance).
+pub(in crate::game) type Processing = (String, f32, Vec<(String, u32, f32)>);
+
+/// The millstone's recipes and the press's, for the recipe viewer.
+pub(in crate::game) fn processing() -> [Vec<Processing>; 2] {
+    let list = |recipes: &[millstone::Milling]| {
+        recipes
+            .iter()
+            .map(|r| {
+                let outputs = (r.outputs.iter())
+                    .map(|o| (o.item.clone(), o.count, o.chance))
+                    .collect();
+                (r.input.clone(), r.time, outputs)
+            })
+            .collect()
+    };
+    [list(millstone::recipes()), list(millstone::pressing())]
 }
 
 /// What a game shows of the parts: their speeds, the jammed ones, their
-/// networks' stress, and the millstones at work (on what).
+/// networks' stress, the machines at work (a millstone, a press: on what),
+/// and what each depot holds.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Shown {
     speeds: kinetic::Speeds,
     jammed: HashSet<[i32; 3]>,
     stress: HashMap<[i32; 3], kinetic::Stress>,
     work: HashMap<[i32; 3], String>,
+    held: HashMap<[i32; 3], (String, u32)>,
 }
 
 /// What the parts show as a payload: the turning parts (each half's
@@ -360,6 +370,7 @@ fn encode(shown: &Shown) -> Vec<u8> {
         jammed,
         stress,
         work,
+        held,
     } = shown;
     let mut out = Vec::with_capacity(17 + speeds.len() * 20 + jammed.len() * 12 + stress.len() * 20);
     let pos = |out: &mut Vec<u8>, p: &[i32; 3]| {
@@ -385,18 +396,27 @@ fn encode(shown: &Shown) -> Vec<u8> {
         out.extend_from_slice(&s.load.to_le_bytes());
         out.extend_from_slice(&s.capacity.to_le_bytes());
     }
-    out.extend_from_slice(&(work.len() as u32).to_le_bytes());
-    for (p, item) in work {
-        pos(&mut out, p);
+    let name = |out: &mut Vec<u8>, item: &str| {
         let name = &item.as_bytes()[..item.len().min(255)];
         out.push(name.len() as u8);
         out.extend_from_slice(name);
+    };
+    out.extend_from_slice(&(work.len() as u32).to_le_bytes());
+    for (p, item) in work {
+        pos(&mut out, p);
+        name(&mut out, item);
+    }
+    out.extend_from_slice(&(held.len() as u32).to_le_bytes());
+    for (p, (item, count)) in held {
+        pos(&mut out, p);
+        out.extend_from_slice(&count.to_le_bytes());
+        name(&mut out, item);
     }
     out
 }
 
 /// The payload's form.
-const VERSION: u8 = 3;
+const VERSION: u8 = 4;
 
 fn decode(data: &[u8]) -> Option<Shown> {
     let mut at = 0usize;
@@ -454,11 +474,21 @@ fn decode(data: &[u8]) -> Option<Shown> {
         let item = std::str::from_utf8(next(len)?).ok()?;
         work.insert(p, item.to_owned());
     }
+    let count = u32::from_le_bytes(word(next(4)?)) as usize;
+    let mut held = HashMap::with_capacity(count.min(1 << 10));
+    for _ in 0..count {
+        let p = pos(next(12)?);
+        let n = u32::from_le_bytes(word(next(4)?));
+        let len = usize::from(next(1)?[0]);
+        let item = std::str::from_utf8(next(len)?).ok()?;
+        held.insert(p, (item.to_owned(), n));
+    }
     Some(Shown {
         speeds,
         jammed,
         stress,
         work,
+        held,
     })
 }
 
@@ -487,6 +517,13 @@ fn pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
             vec![(CASED, neg, 1.0, 0), (CASED, pos, 1.0, 1)]
         }
         Part::Millstone => vec![("kinetica:block/millstone_top", Dir::Up, 1.0, 0)],
+        // The head is drawn as it presses (`tachyon_render`).
+        Part::Press(_) => Dir::ALL
+            .into_iter()
+            .filter(|d| part.shaft_toward(*d))
+            .map(|d| (CASED, d, 1.0, 0))
+            .collect(),
+        Part::Depot => Vec::new(),
     }
 }
 
@@ -664,23 +701,45 @@ impl Game<'_> {
                     send = true;
                 }
             }
-            // The millstones turning grind.
+            // The millstones turning grind; a press turning works the depot
+            // under it. What the depots hold shows on them.
             let mut work = HashMap::new();
+            let mut held = HashMap::new();
             for (p, mill) in &mut owner.mills {
+                let part = owner.index.parts.get(p).copied();
+                if part == Some(Part::Depot)
+                    && let Some(h) = mill.outputs.first().or(mill.input.as_ref())
+                {
+                    held.insert(*p, (h.item.clone(), h.count));
+                }
                 let Some(item) = mill.input.as_ref().map(|h| h.item.clone()) else {
                     continue;
                 };
-                let speed = owner.shown.speeds.get(p).map_or(0.0, |s| s[0]);
-                if speed == 0.0 || owner.index.parts.get(p) != Some(&Part::Millstone) {
+                let (at, recipe) = match part {
+                    Some(Part::Millstone) => (*p, millstone::recipe(&item)),
+                    Some(Part::Depot) => ([p[0], p[1] + 1, p[2]], millstone::press_recipe(&item)),
+                    _ => continue,
+                };
+                if part == Some(Part::Depot)
+                    && !matches!(owner.index.parts.get(&at), Some(Part::Press(_)))
+                {
                     continue;
                 }
-                if mill.grind(speed, millstone::recipe(&item), &mut || random.next_float()) {
+                let speed = owner.shown.speeds.get(&at).map_or(0.0, |s| s[0]);
+                if speed == 0.0 {
+                    continue;
+                }
+                if mill.grind(speed, recipe, &mut || random.next_float()) {
                     owner.mills_changed = true;
-                    work.insert(*p, item);
+                    work.insert(at, item);
                 }
             }
             if work != owner.shown.work {
                 owner.shown.work = work;
+                send = true;
+            }
+            if held != owner.shown.held {
+                owner.shown.held = held;
                 send = true;
             }
             if owner.mills_changed && owner.ticks % RESEND == 0 {
@@ -810,19 +869,26 @@ impl Game<'_> {
         };
         let state = self.world.block(pos[0], pos[1], pos[2]).0;
         let part = kinds.part(state);
-        if !matches!(part, Some(Part::Motor(_) | Part::Crank(_) | Part::Millstone)) {
+        if !matches!(
+            part,
+            Some(Part::Motor(_) | Part::Crank(_) | Part::Millstone | Part::Depot)
+        ) {
             return false;
         }
         let sneaking = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft);
         let dimension = self.dim.id();
         let root = self.save.root.clone();
-        if part == Some(Part::Millstone) {
+        if matches!(part, Some(Part::Millstone | Part::Depot)) {
             let mut mill = OWNERS.with_borrow_mut(|owners| {
                 let owner = owners.entry(dimension).or_default();
                 owner.load(&root, dimension);
                 owner.mills.remove(&pos).unwrap_or_default()
             });
-            let moved = self.tachyon_use_millstone(&mut mill);
+            let moved = if part == Some(Part::Depot) {
+                self.tachyon_use_depot(&mut mill)
+            } else {
+                self.tachyon_use_millstone(&mut mill)
+            };
             OWNERS.with_borrow_mut(|owners| {
                 let owner = owners.entry(dimension).or_default();
                 if !mill.is_empty() {
@@ -862,8 +928,87 @@ impl Game<'_> {
         let state = self.world.block(pos[0], pos[1], pos[2]).0;
         matches!(
             kinds.part(state),
-            Some(Part::Motor(_) | Part::Crank(_) | Part::Millstone)
+            Some(Part::Motor(_) | Part::Crank(_) | Part::Millstone | Part::Depot)
         )
+    }
+
+    /// Whether the block at `pos` is a machine a hopper fills and empties
+    /// (a millstone, a depot): the world's owner's (game/machines.rs).
+    pub(super) fn tachyon_machine(&self, pos: [i32; 3]) -> bool {
+        let Some(kinds) = self.tachyon_kinds() else {
+            return false;
+        };
+        let state = self.world.block(pos[0], pos[1], pos[2]).0;
+        matches!(kinds.part(state), Some(Part::Millstone | Part::Depot))
+    }
+
+    /// A hopper's item into the machine at `pos`: a millstone takes what it
+    /// grinds, a depot one stack while it holds nothing it made. Whether it
+    /// went in.
+    pub(super) fn tachyon_machine_put(&mut self, pos: [i32; 3], one: &ItemStack) -> bool {
+        let Some(kinds) = self.tachyon_kinds() else {
+            return false;
+        };
+        let part = kinds.part(self.world.block(pos[0], pos[1], pos[2]).0);
+        let dimension = self.dim.id();
+        let root = self.save.root.clone();
+        OWNERS.with_borrow_mut(|owners| {
+            let owner = owners.entry(dimension).or_default();
+            owner.load(&root, dimension);
+            let mill = owner.mills.entry(pos).or_default();
+            let fits = match part {
+                Some(Part::Millstone) => millstone::recipe(&one.item).is_some(),
+                Some(Part::Depot) => mill.outputs.is_empty(),
+                _ => false,
+            };
+            let took = fits && mill.put(&one.item, 1) == 1;
+            if mill.is_empty() {
+                owner.mills.remove(&pos);
+            }
+            owner.mills_changed |= took;
+            took
+        })
+    }
+
+    /// One item out of the machine at `pos` for a hopper under it: what it
+    /// made, or a depot's stack no press works (and whether it was that).
+    pub(super) fn tachyon_machine_take(&mut self, pos: [i32; 3]) -> Option<(ItemStack, bool)> {
+        let kinds = self.tachyon_kinds()?;
+        let part = kinds.part(self.world.block(pos[0], pos[1], pos[2]).0);
+        let above = kinds.part(self.world.block(pos[0], pos[1] + 1, pos[2]).0);
+        let dimension = self.dim.id();
+        let root = self.save.root.clone();
+        OWNERS.with_borrow_mut(|owners| {
+            let owner = owners.entry(dimension).or_default();
+            owner.load(&root, dimension);
+            let mill = owner.mills.get_mut(&pos)?;
+            let pressed = mill
+                .input
+                .as_ref()
+                .is_some_and(|h| millstone::press_recipe(&h.item).is_some());
+            let input_too = part == Some(Part::Depot)
+                && !(pressed && matches!(above, Some(Part::Press(_))));
+            let (one, input) = mill.take_one(input_too)?;
+            if mill.is_empty() {
+                owner.mills.remove(&pos);
+            }
+            owner.mills_changed = true;
+            Some((ItemStack::new(&one.item, one.count), input))
+        })
+    }
+
+    /// What a hopper took from the machine at `pos` and couldn't keep (of
+    /// the items to work, `input`).
+    pub(super) fn tachyon_machine_return(&mut self, pos: [i32; 3], rest: ItemStack, input: bool) {
+        let dimension = self.dim.id();
+        OWNERS.with_borrow_mut(|owners| {
+            let owner = owners.entry(dimension).or_default();
+            let held = millstone::Held {
+                item: rest.item.to_string(),
+                count: rest.count,
+            };
+            owner.mills.entry(pos).or_default().give_back(held, input);
+        });
     }
 
     /// Each tick of every game: a client's index follows its world.
@@ -925,6 +1070,8 @@ impl Game<'_> {
         let ticks = self.world.game_time as f64 + alpha;
         let view = self.view_frustum;
         let mut draws: Vec<([i32; 3], Part, [f32; 2])> = Vec::new();
+        let mut heads: Vec<([i32; 3], f32)> = Vec::new();
+        let mut trays: Vec<([i32; 3], ItemStack)> = Vec::new();
         self.tachyon_view(|index, shown| {
             for (pos, part) in &index.parts {
                 let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
@@ -936,7 +1083,14 @@ impl Game<'_> {
                 if view.is_some_and(|v| !v.intersects(o - Vec3::splat(1.5), o + Vec3::splat(2.5))) {
                     continue;
                 }
-                draws.push((*pos, *part, shown.speeds.get(pos).copied().unwrap_or([0.0; 2])));
+                let speed = shown.speeds.get(pos).copied().unwrap_or([0.0; 2]);
+                if matches!(part, Part::Press(_)) && shown.work.contains_key(pos) {
+                    heads.push((*pos, speed[0]));
+                }
+                if let Some((item, count)) = shown.held.get(pos) {
+                    trays.push((*pos, ItemStack::new(item, *count)));
+                }
+                draws.push((*pos, *part, speed));
             }
         });
         for (pos, part, speed) in draws {
@@ -955,6 +1109,44 @@ impl Game<'_> {
                 let state = self.tachyon_model(model);
                 self.submit_item_world(&state, pose, light, out);
             }
+        }
+        // A press at work: its head down onto the depot under it and up,
+        // once for each 100 work (a press's at 16 RPM: 5 seconds).
+        for (pos, speed) in heads {
+            let period = f64::from((1600.0 / speed.abs().max(1.0)).max(6.0));
+            let phase = (ticks / period).fract() as f32;
+            let down = if phase < 0.35 {
+                phase / 0.35
+            } else {
+                (1.0 - phase) / 0.65
+            };
+            let y = 1.0 / 64.0 - down * (6.0 / 16.0 + 1.0 / 64.0);
+            let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
+            let pose = Mat4::from_translation((at - camera).as_vec3() + Vec3::new(0.0, y, 0.0));
+            let packed = self.world.light(pos[0], pos[1] - 1, pos[2]);
+            let light = horizon_client::block_entity_render::vertex_light(packed);
+            let state = self.tachyon_model("kinetica:block/mechanical_press_head");
+            self.submit_item_world(&state, pose, light, out);
+        }
+        // What a depot holds, standing on its tray.
+        for (pos, stack) in trays {
+            let state = self.resolve_item(
+                &stack,
+                horizon_assets::item_model::DisplayContext::Ground,
+                None,
+                0,
+            );
+            if state.is_empty() {
+                continue;
+            }
+            let (lo, _) = state.bounding_box();
+            let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
+            let pose = Mat4::from_translation(
+                (at - camera).as_vec3() + Vec3::new(0.5, 9.0 / 16.0 - lo.y, 0.5),
+            );
+            let packed = self.world.light(pos[0], pos[1], pos[2]);
+            let light = horizon_client::block_entity_render::vertex_light(packed);
+            self.submit_item_world(&state, pose, light, out);
         }
     }
 
@@ -1012,9 +1204,10 @@ impl Game<'_> {
                 shown.jammed.contains(&hit.pos),
                 shown.stress.get(&hit.pos).copied(),
                 shown.work.get(&hit.pos).cloned(),
+                shown.held.get(&hit.pos).cloned(),
             ))
         });
-        let Some((part, speed, jammed, stress, work)) = seen else {
+        let Some((part, speed, jammed, stress, work, held)) = seen else {
             return;
         };
         let (block, english) = match part {
@@ -1029,6 +1222,8 @@ impl Game<'_> {
             Part::WaterWheel(_) => ("water_wheel", "Water Wheel"),
             Part::Windmill(_) => ("windmill", "Windmill"),
             Part::Millstone => ("millstone", "Millstone"),
+            Part::Press(_) => ("mechanical_press", "Mechanical Press"),
+            Part::Depot => ("depot", "Depot"),
         };
         let what = self.translate(&format!("block.kinetica.{block}"), english);
         let mut state = if jammed {
@@ -1052,6 +1247,13 @@ impl Game<'_> {
         }
         if let Some(item) = work {
             state = format!("{state} | {}", self.tachyon_item_name(&item));
+        }
+        // A depot: what it holds.
+        if part == Part::Depot {
+            state = held.map_or_else(
+                || "-".to_owned(),
+                |(item, n)| format!("{} x{n}", self.tachyon_item_name(&item)),
+            );
         }
         let line = format!("{what}: {state}");
         let w = self.native_text_width(&line) + 4.0;
@@ -1089,6 +1291,7 @@ mod tests {
                 },
             )]),
             work: HashMap::from([([2, 64, 2], "minecraft:cobblestone".to_owned())]),
+            held: HashMap::from([([3, 64, 2], ("kinetica:iron_sheet".to_owned(), 5))]),
         };
         assert_eq!(decode(&encode(&shown)), Some(shown.clone()));
         assert!(decode(&[1]).is_none());
@@ -1133,6 +1336,11 @@ mod tests {
             Some(Part::Windmill(Axis::Z))
         );
         assert_eq!(part_of("kinetica:millstone", facing), Some(Part::Millstone));
+        assert_eq!(part_of("kinetica:depot", facing), Some(Part::Depot));
+        assert_eq!(
+            part_of("kinetica:mechanical_press", props("z")),
+            Some(Part::Press(Axis::Z))
+        );
     }
 
     #[test]
