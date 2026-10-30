@@ -22,6 +22,8 @@ horizon-world = { path = "../horizon-world" }
 horizon-protocol = { path = "../horizon-protocol" }
 # server.properties, eula.txt and the user lists, shared with horizon-server.
 horizon-server-files = { path = "../horizon-server-files" }
+# The dedicated server's anticheat, off unless server.toml's [anticheat] turns it on (docs/anticheat.md).
+horizon-anticheat = { path = "../horizon-anticheat" }
 # Shader packs: reading them and turning their GLSL into naga modules.
 horizon-shaders = { path = "../horizon-shaders" }
 # Horizon's own shader packs: the format, the stages and the check (docs/shaders.md).
@@ -67,7 +69,8 @@ unicode-bidi = "0.3.18"
 
 [target.'cfg(unix)'.dependencies]
 # The server thread's CPU time per tick (`HORIZON_SPIKES`, spans.rs).
-rustix = { version = "1", default-features = false, features = ["std", "time"] }
+# `LevelStorageAccess.estimateDiskSpace` (statvfs) too.
+rustix = { version = "1", default-features = false, features = ["std", "time", "process", "fs"] }
 
 [target.'cfg(windows)'.dependencies]
 # Use the registered URI handler without routing links through Explorer/cmd.
@@ -102,9 +105,6 @@ default = ["audio", "controllers"]
 audio = ["horizon-client-render/audio"]
 # Controllers: gilrs, and the DualSense's own output. Without it only `horizon-ctl pad`'s virtual pad.
 controllers = ["dep:gilrs", "dep:horizon-dualsense", "horizon-client-input/controllers"]
-# Runs code mods (wasmtime and cranelift: a quarter of a clean build). On in every release build
-# (release.yml); the tests and probes don't need it. Content mods load without it.
-mods = ["horizon-mods/runtime"]
 # The Android app's library (`src/android_main.rs`, built by android/build.sh).
 android = []
 # Records the call sites of mob random draws (`mob_ai_probe` traces).

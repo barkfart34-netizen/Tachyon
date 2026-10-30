@@ -394,7 +394,7 @@ impl Game<'_> {
             return;
         }
         self.tachyon_quests_send(HELLO, Vec::new());
-        self.screen = Screen::Mod;
+        self.screen = Screen::Quests;
         self.capture(false);
     }
 
@@ -405,7 +405,7 @@ impl Game<'_> {
         }));
     }
 
-    /// The book (Screen::Mod in a build without WebAssembly mods): the
+    /// The book (`Screen::Quests`): the
     /// quests down the left, the chosen one's page on the right.
     pub(in crate::game) fn tachyon_screen_draw(&mut self, batch: &mut HudBatch) {
         let Some(book) = book() else {
@@ -655,7 +655,7 @@ impl Game<'_> {
 
     /// Back to the world.
     pub(in crate::game) fn tachyon_screen_close(&mut self) {
-        if self.screen == Screen::Mod {
+        if self.screen == Screen::Quests {
             self.screen = Screen::Playing;
             if self.player.is_some() {
                 self.capture(true);

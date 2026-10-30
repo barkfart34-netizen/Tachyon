@@ -11,6 +11,7 @@ static CONTENT: OnceLock<PathBuf> = OnceLock::new();
 /// Sets the name, once, before the first frame.
 pub fn set(name: &'static str) {
     let _ = NAME.set(name);
+    crate::lang::set_brand(name);
 }
 
 pub fn name() -> &'static str {

@@ -256,6 +256,100 @@ fn suggestions_like_vanilla() {
     assert_eq!(suggestions("time set 5"), ["d", "s", "t"]);
     assert!(suggestions("time set ").contains(&"minecraft:day".to_owned()));
 }
+/// ClientSuggestionProvider: block and column positions offer the targeted
+/// block (`getRelevantCoordinates`), `Vec3` and `Vec2` the exact hit point
+/// with two decimals (`getAbsoluteCoordinates`); with no block hit, `~`.
+#[test]
+fn coordinates_suggest_the_crosshair_block_or_hit_point() {
+    let d = vanilla::dispatcher();
+    let suggest = |reg: &Registries, input: &str| -> Vec<String> {
+        let parse = d.parse(input, reg);
+        d.suggestions(&parse, input.len(), reg)
+            .1
+            .into_iter()
+            .map(|s| s.text)
+            .collect()
+    };
+    let mut hit = reg();
+    hit.target_block = Some([-29, 73, 8]);
+    hit.target_point = Some(["-28.77".into(), "73.28".into(), "8.00".into()]);
+    assert_eq!(suggest(&hit, "setblock "), ["-29", "-29 73", "-29 73 8"]);
+    assert_eq!(
+        suggest(&hit, "summon minecraft:pig "),
+        ["-28.77", "-28.77 73.28", "-28.77 73.28 8.00"]
+    );
+    assert_eq!(
+        suggest(&hit, "summon minecraft:pig -28.77 "),
+        ["-28.77 73.28", "-28.77 73.28 8.00"]
+    );
+    // Vec2Argument: x and z.
+    assert_eq!(
+        suggest(&hit, "worldborder center "),
+        ["-28.77", "-28.77 8.00"]
+    );
+    // An entity in front of the block (or no hit): the defaults.
+    let none = reg();
+    assert_eq!(suggest(&none, "setblock "), ["~", "~ ~", "~ ~ ~"]);
+    assert_eq!(
+        suggest(&none, "summon minecraft:pig "),
+        ["~", "~ ~", "~ ~ ~"]
+    );
+}
+#[test]
+fn entity_arguments_suggest_the_selected_entity() {
+    // EntityArgument.listSuggestions: getSelectedEntities (the crosshair
+    // entity's UUID) joins the player names unless the argument takes
+    // players only; GameProfileArgument and ScoreHolderArgument never ask.
+    let uuid = "0b9c6a7e-3d1f-4a2b-9c8d-7e6f5a4b3c2d";
+    let mut reg = reg();
+    reg.selected_entities = vec![uuid.into()];
+    let d = vanilla::dispatcher();
+    let suggest = |input: &str| -> Vec<String> {
+        let parse = d.parse(input, &reg);
+        d.suggestions(&parse, input.len(), &reg)
+            .1
+            .into_iter()
+            .map(|s| s.text)
+            .collect()
+    };
+    assert_eq!(
+        suggest("tp "),
+        [
+            "0b9c6a7e-3d1f-4a2b-9c8d-7e6f5a4b3c2d",
+            "@a",
+            "@e",
+            "@n",
+            "@p",
+            "@r",
+            "@s",
+            "Player",
+            "~",
+            "~ ~",
+            "~ ~ ~"
+        ]
+    );
+    assert!(suggest("kill ").contains(&uuid.to_owned()));
+    assert_eq!(suggest("kill 0b9"), [uuid]);
+    for players_only in ["gamemode creative ", "op ", "scoreboard players set "] {
+        assert!(
+            !suggest(players_only).contains(&uuid.to_owned()),
+            "{players_only}"
+        );
+    }
+}
+#[test]
+fn a_uuid_selects_by_entity_uuid() {
+    // EntitySelectorParser.parseNameOrUUID: a UUID sets entityUUID and
+    // includesEntities, never playerName (which findEntities checks first).
+    let reg = reg();
+    let mut r = Reader::new("2de5a9ad-2740-4058-835e-cf255e0d7798");
+    let s = selector::parse(&mut r, &reg, true).unwrap();
+    assert_eq!(s.uuid, Some(0x2de5a9ad_2740_4058_835e_cf255e0d7798));
+    assert!(s.include_entities && s.player_name.is_none());
+    let mut r = Reader::new("Steve");
+    let s = selector::parse(&mut r, &reg, true).unwrap();
+    assert_eq!((s.uuid, s.player_name.as_deref()), (None, Some("Steve")));
+}
 #[test]
 fn smart_usage_matches_brigadier() {
     let d = vanilla::dispatcher();
@@ -608,5 +702,41 @@ fn horizon_commands_are_off_unless_the_server_turns_them_on() {
             d.nodes[0].children.len(),
             vanilla_tree.nodes[0].children.len() + 1
         );
+    }
+}
+#[test]
+fn profile_commands_parse_like_vanilla() {
+    // OpCommand, DeOpCommands, BanPlayerCommands, PardonCommand and
+    // WhitelistCommand: GameProfileArgument targets, admins only.
+    assert_eq!(run("op Steve").unwrap().0, "op");
+    assert_eq!(run("deop @a").unwrap().0, "deop");
+    assert_eq!(run("pardon Steve").unwrap().0, "pardon");
+    assert_eq!(run("ban Steve").unwrap().0, "ban");
+    assert_eq!(
+        run("ban Steve griefing the farm").unwrap().1,
+        ["targets", "reason"]
+    );
+    for word in ["on", "off", "list", "reload"] {
+        assert_eq!(
+            run(&format!("whitelist {word}")).unwrap().0,
+            format!("whitelist.{word}")
+        );
+    }
+    assert_eq!(run("whitelist add Steve").unwrap().0, "whitelist.add");
+    assert_eq!(run("whitelist remove @p").unwrap().0, "whitelist.remove");
+    // GameProfileArgument: entity selectors are refused.
+    assert_eq!(
+        run("op @e").unwrap_err().message.plain(),
+        "argument.player.entities"
+    );
+    assert!(run("whitelist add").is_err());
+    let reg = Registries {
+        permission: 2,
+        ..reg()
+    };
+    let d = vanilla::game_dispatcher();
+    for line in ["op Steve", "ban Steve", "whitelist on"] {
+        let e = d.parse(line, &reg).executable().unwrap_err();
+        assert_eq!(e.message.plain(), "command.unknown.command", "{line}");
     }
 }

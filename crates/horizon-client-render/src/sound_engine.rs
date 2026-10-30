@@ -58,6 +58,11 @@ pub enum Ticking {
     Bee { bee: u32, aggressive: bool },
     /// `GuardianAttackSoundInstance`.
     GuardianAttack { guardian: u32 },
+    /// `ElytraOnPlayerSoundInstance`: ticks since it started.
+    Elytra { time: i32 },
+    /// `RidingEntitySoundInstance` for the player riding a happy ghast
+    /// (`underwater_sound` false) or a nautilus (true).
+    RidingEntity { entity: u32, underwater_sound: bool },
 }
 /// What a minecart's sound instances read about it.
 #[derive(Clone, Copy, Debug)]
@@ -82,6 +87,17 @@ pub struct MobSound {
     /// `Guardian.getAttackAnimationScale(0)`.
     pub attack_scale: f32,
 }
+/// What a `RidingEntitySoundInstance` reads about the mob the player rides.
+#[derive(Clone, Copy, Debug)]
+pub struct RiddenSound {
+    pub id: u32,
+    /// `getDeltaMovement().length()`.
+    pub speed: f64,
+    /// `isSilent`.
+    pub silent: bool,
+    /// `Entity.isUnderWater`.
+    pub underwater: bool,
+}
 /// What tickable instances read about the player and the entities they follow.
 #[derive(Clone, Debug, Default)]
 pub struct TickContext {
@@ -95,6 +111,14 @@ pub struct TickContext {
     pub mobs: Vec<MobSound>,
     /// `!tickRateManager().runsNormally()`.
     pub frozen: bool,
+    /// The player's position.
+    pub player_position: [f64; 3],
+    /// `getDeltaMovement().lengthSqr()` of the player.
+    pub player_speed_sqr: f64,
+    /// `isFallFlying()` of the player.
+    pub player_fall_flying: bool,
+    /// The mob the player rides, when it is not a minecart.
+    pub ridden: Option<RiddenSound>,
 }
 /// `AbstractSoundInstance` and its subclasses' fields.
 #[derive(Clone, Debug)]
@@ -337,6 +361,43 @@ impl SoundInstance {
         };
         s
     }
+    /// `new RidingEntitySoundInstance(player, happyGhast, false,
+    /// HAPPY_GHAST_RIDING, happyGhast.getSoundSource(), 0, 1, 5)`, from
+    /// `LocalPlayer.startRiding`.
+    pub fn riding_happy_ghast(ghast: &RiddenSound, random: LegacyRandom) -> Self {
+        Self::riding_entity("minecraft:entity.happy_ghast.riding", ghast, false, random)
+    }
+    /// `new RidingEntitySoundInstance(player, nautilus, true,
+    /// NAUTILUS_RIDING, nautilus.getSoundSource(), 0, 1, 5)`, from
+    /// `LocalPlayer.startRiding`.
+    pub fn riding_nautilus(nautilus: &RiddenSound, random: LegacyRandom) -> Self {
+        Self::riding_entity("minecraft:entity.nautilus.riding", nautilus, true, random)
+    }
+    fn riding_entity(
+        id: &str,
+        entity: &RiddenSound,
+        underwater_sound: bool,
+        random: LegacyRandom,
+    ) -> Self {
+        let mut s = Self::new(
+            id,
+            NEUTRAL,
+            0.0,
+            1.0,
+            random,
+            true,
+            0,
+            Attenuation::None,
+            [0.0; 3],
+            false,
+        );
+        s.can_start_silent = true;
+        s.ticking = Ticking::RidingEntity {
+            entity: entity.id,
+            underwater_sound,
+        };
+        s
+    }
     /// `new BeeFlyingSoundInstance(bee)` (or `BeeAggressiveSoundInstance`):
     /// silent until the bee moves.
     pub fn bee(bee: &MobSound, aggressive: bool, random: LegacyRandom) -> Self {
@@ -388,6 +449,24 @@ impl SoundInstance {
         s.ticking = Ticking::GuardianAttack {
             guardian: guardian.id,
         };
+        s
+    }
+    /// `new ElytraOnPlayerSoundInstance(player)`: looping at volume 0.1 until
+    /// its first tick.
+    pub fn elytra(position: [f64; 3], random: LegacyRandom) -> Self {
+        let mut s = Self::new(
+            "minecraft:item.elytra.flying",
+            PLAYERS,
+            0.1,
+            1.0,
+            random,
+            true,
+            0,
+            Attenuation::Linear,
+            position,
+            false,
+        );
+        s.ticking = Ticking::Elytra { time: 0 };
         s
     }
     pub fn tickable(&self) -> bool {
@@ -494,6 +573,37 @@ impl SoundInstance {
                     self.volume = 0.0;
                 }
             }
+            Ticking::Elytra { time } => {
+                *time += 1;
+                let time = *time;
+                if ctx.player_removed || (time > 20 && !ctx.player_fall_flying) {
+                    self.stop();
+                    return;
+                }
+                let [x, y, z] = ctx.player_position;
+                self.position = [
+                    f64::from(x as f32),
+                    f64::from(y as f32),
+                    f64::from(z as f32),
+                ];
+                let speed = ctx.player_speed_sqr as f32;
+                self.volume = if speed >= 1.0e-7 {
+                    (speed / 4.0).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                // Silent for a second, then a second's fade in.
+                if time < 20 {
+                    self.volume = 0.0;
+                } else if time < 40 {
+                    self.volume *= (time - 20) as f32 / 20.0;
+                }
+                self.pitch = if self.volume > 0.8 {
+                    1.0 + (self.volume - 0.8)
+                } else {
+                    1.0
+                };
+            }
             Ticking::GuardianAttack { guardian } => {
                 let id = *guardian;
                 // The client's guardian never has a target of its own, so
@@ -511,6 +621,26 @@ impl SoundInstance {
                 let scale = guardian.attack_scale;
                 self.volume = 0.0 + 1.0 * scale * scale;
                 self.pitch = 0.7 + 0.5 * scale;
+            }
+            Ticking::RidingEntity {
+                entity,
+                underwater_sound,
+            } => {
+                // RidingEntitySoundInstance.tick: canPlaySound, then while the
+                // player still rides it, volumeMin (0) when
+                // `underwaterSound != entity.isUnderWater()` and else
+                // `volumeAmplifier * Mth.clampedLerp(speed, volumeMin, volumeMax)`.
+                let (id, underwater_sound) = (*entity, *underwater_sound);
+                let Some(entity) = ctx.ridden.filter(|r| r.id == id && !r.silent) else {
+                    self.stop();
+                    return;
+                };
+                let speed = entity.speed as f32;
+                self.volume = if underwater_sound != entity.underwater || speed < 0.01 {
+                    0.0
+                } else {
+                    5.0 * speed.clamp(0.0, 1.0)
+                };
             }
             Ticking::RidingMinecart { cart, underwater } => {
                 let (id, underwater) = (*cart, *underwater);
@@ -1269,5 +1399,77 @@ pub mod test_backend {
         fn stopped(&mut self, c: ChannelId) -> bool {
             self.stopped.get(&c).copied().unwrap_or(true)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn happy_ghast_riding_sound_follows_the_ghast_speed() {
+        let ghast = RiddenSound {
+            id: 7,
+            speed: 0.1,
+            silent: false,
+            underwater: false,
+        };
+        let mut s = SoundInstance::riding_happy_ghast(&ghast, SoundEngine::unseeded());
+        assert_eq!(s.volume, 0.0);
+        let mut ctx = TickContext {
+            ridden: Some(ghast),
+            ..TickContext::default()
+        };
+        // 5 * clampedLerp(speed, 0, 1).
+        s.tick(&ctx);
+        assert!((s.volume - 0.5).abs() < 1e-6, "{}", s.volume);
+        ctx.ridden = Some(RiddenSound {
+            speed: 3.0,
+            ..ghast
+        });
+        s.tick(&ctx);
+        assert_eq!(s.volume, 5.0);
+        ctx.ridden = Some(RiddenSound {
+            speed: 0.005,
+            ..ghast
+        });
+        s.tick(&ctx);
+        assert_eq!(s.volume, 0.0);
+        // Under water the ghast's sound is not the underwater one.
+        ctx.ridden = Some(RiddenSound {
+            underwater: true,
+            ..ghast
+        });
+        s.tick(&ctx);
+        assert_eq!(s.volume, 0.0);
+        assert!(!s.stopped);
+        // Off the ghast, it stops.
+        ctx.ridden = None;
+        s.tick(&ctx);
+        assert!(s.stopped);
+    }
+
+    #[test]
+    fn nautilus_riding_sound_plays_only_under_water() {
+        let nautilus = RiddenSound {
+            id: 9,
+            speed: 0.2,
+            silent: false,
+            underwater: true,
+        };
+        let mut s = SoundInstance::riding_nautilus(&nautilus, SoundEngine::unseeded());
+        let mut ctx = TickContext {
+            ridden: Some(nautilus),
+            ..TickContext::default()
+        };
+        s.tick(&ctx);
+        assert!((s.volume - 1.0).abs() < 1e-6, "{}", s.volume);
+        ctx.ridden = Some(RiddenSound {
+            underwater: false,
+            ..nautilus
+        });
+        s.tick(&ctx);
+        assert_eq!(s.volume, 0.0);
+        assert!(!s.stopped);
     }
 }

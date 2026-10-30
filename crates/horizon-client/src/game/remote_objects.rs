@@ -5,7 +5,9 @@
 use super::Game;
 use horizon_client::entities::{ArmorStand, Cushion, ItemFrame, Painting};
 use horizon_client::mobs::leash::Holder;
+use horizon_client::particles::{ParticleOptions, ParticleType};
 use horizon_core::geometry::Vec3;
+use horizon_core::random::RandomSource;
 use horizon_protocol::entity_data::Value;
 use std::sync::Arc;
 
@@ -35,10 +37,23 @@ impl Game<'_> {
                     m.extra.leash = Some(Holder::Knot(block));
                 }
             }
-        } else if kind == "minecraft:text_display" {
+        } else if let Some(shows) = match kind {
+            "minecraft:text_display" => Some(super::text_displays::Shows::Text),
+            "minecraft:block_display" => Some(super::text_displays::Shows::Block),
+            "minecraft:item_display" => Some(super::text_displays::Shows::Item),
+            _ => None,
+        } {
             self.text_displays.insert(
                 id as i32,
-                super::text_displays::RemoteTextDisplay::new(position, yaw),
+                super::text_displays::RemoteTextDisplay::new(shows, position, yaw),
+            );
+        } else if kind == "minecraft:ominous_item_spawner" {
+            self.add_remote_ominous_item_spawner(id, position);
+        } else if kind == "minecraft:interaction" {
+            // The width, height and response follow in SetEntityData.
+            self.interactions.insert(
+                id as i32,
+                super::interactions::RemoteInteraction::new(position),
             );
         } else if let Some(cart) = super::minecarts::CartKind::from_id(kind) {
             let mut c = super::minecarts::Minecart::new(id, cart, at);
@@ -119,13 +134,36 @@ impl Game<'_> {
 
     /// `handleSetEntityData` for an object: what changes how it looks.
     pub(super) fn remote_object_data(&mut self, id: i32, values: &[(u8, i32, Value)]) {
-        if let Some(display) = self.text_displays.get_mut(&id) {
-            display.metadata(values);
+        if self.text_displays.contains_key(&id) {
+            // ItemDisplay.DATA_ITEM_STACK, read with the server's registries.
+            let item = values
+                .iter()
+                .find_map(|(index, _, value)| match (index, value) {
+                    (23, Value::Item(stack)) => Some(self.to_stack(stack)),
+                    _ => None,
+                });
+            if let Some(display) = self.text_displays.get_mut(&id) {
+                display.show(values, item);
+                display.metadata(values);
+            }
+            return;
+        }
+        if self.remote_interaction_data(id, values) {
             return;
         }
         let id = id as u32;
         for (index, _, value) in values {
-            if self.item_frames.iter().any(|f| f.id == id) {
+            if let (8, Value::Item(stack)) = (index, value)
+                && self.ominous_spawners.iter().any(|s| s.id == id)
+            {
+                // OminousItemSpawner.DATA_ITEM.
+                if let (Some(item), Some(s)) = (
+                    self.to_stack(stack),
+                    self.ominous_spawners.iter_mut().find(|s| s.id == id),
+                ) {
+                    s.item = item;
+                }
+            } else if self.item_frames.iter().any(|f| f.id == id) {
                 // HangingEntity.DATA_DIRECTION, ItemFrame.DATA_ITEM and DATA_ROTATION.
                 let item = match (index, value) {
                     (9, Value::Item(stack)) => Some(self.to_stack(stack)),
@@ -135,6 +173,7 @@ impl Game<'_> {
                     continue;
                 };
                 match (index, value) {
+                    (0, Value::Byte(flags)) => f.invisible = (*flags as u8 & 0x20) != 0,
                     (8, Value::Id(d)) => f.facing = (*d).clamp(0, 5) as u8,
                     (10, Value::Int(r)) => f.rotation = r.rem_euclid(8) as u8,
                     _ => {}
@@ -197,6 +236,9 @@ impl Game<'_> {
                     (8, Value::Int(v)) => c.hurt_time = *v,
                     (9, Value::Int(v)) => c.hurt_dir = *v,
                     (10, Value::Float(v)) => c.damage = *v,
+                    (13, Value::Bool(lit)) if c.kind == super::minecarts::CartKind::Furnace => {
+                        c.fuel = i32::from(*lit);
+                    }
                     _ => {}
                 }
             }
@@ -258,6 +300,16 @@ impl Game<'_> {
             c.previous = c.position;
             c.previous_yaw = c.yaw;
             c.position = step(c.id, c.position);
+            if c.kind == super::minecarts::CartKind::Furnace
+                && c.fuel > 0
+                && self.world.random.next_int_bound(4).unwrap_or(1) == 0
+            {
+                self.particles.add(
+                    &ParticleOptions::simple(ParticleType::LargeSmoke),
+                    [c.position.x, c.position.y + 0.8, c.position.z],
+                    [0.0; 3],
+                );
+            }
         }
         // The boat the player drives moves here, not where the server says.
         let driven = self.riding;
@@ -303,6 +355,11 @@ impl Game<'_> {
                 "yaw": c.yaw, "color": c.color_name()}),
             );
         }
+        for (&id, i) in &self.interactions {
+            out.push(json!({"id": id, "kind": "minecraft:interaction",
+                "position": at(i.position), "width": i.width, "height": i.height,
+                "response": i.response}));
+        }
         for f in &self.item_frames {
             out.push(
                 json!({"id": f.id, "kind": f.kind(), "position": f.pos, "facing": f.facing,
@@ -319,6 +376,8 @@ impl Game<'_> {
     /// Every object a server sent (a new connection, level or dimension).
     pub(super) fn clear_remote_objects(&mut self) {
         self.text_displays.clear();
+        self.interactions.clear();
+        self.ominous_spawners.clear();
         self.remote_knots.clear();
         self.carts.clear();
         self.boats.clear();
@@ -330,6 +389,8 @@ impl Game<'_> {
 
     pub(super) fn remove_remote_object(&mut self, id: u32) {
         self.text_displays.remove(&(id as i32));
+        self.interactions.remove(&(id as i32));
+        self.ominous_spawners.retain(|s| s.id != id);
         self.remote_knots.remove(&id);
         self.carts.retain(|c| c.id != id);
         self.boats.retain(|b| b.id != id);

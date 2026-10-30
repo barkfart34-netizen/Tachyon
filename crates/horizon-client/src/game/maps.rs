@@ -337,7 +337,18 @@ const DECORATION_TYPES: [(&str, &str); 24] = [
     ("ocean_ruin_warm", "map/decorations/warm_ocean_ruins"),
 ];
 /// `MapDecorationType.showOnItemFrame` is false for the player arrows and the two markers.
-fn shown_on_frame(sprite: &str) -> bool {
+/// `MapRenderer.render`'s pose for decoration `d` in map pixels (0..128,
+/// y down) at depth `z`: its quad is (-1, -1) to (1, 1) under it.
+pub(super) fn decoration_pose(d: &Decoration, z: f32) -> glam::Mat4 {
+    glam::Mat4::from_translation(glam::Vec3::new(
+        f32::from(d.x) / 2.0 + 64.0,
+        f32::from(d.y) / 2.0 + 64.0,
+        z,
+    )) * glam::Mat4::from_rotation_z((f32::from(d.rot) * 360.0 / 16.0).to_radians())
+        * glam::Mat4::from_scale(glam::Vec3::splat(4.0))
+        * glam::Mat4::from_translation(glam::Vec3::new(-0.125, 0.125, 0.0))
+}
+pub(super) fn shown_on_frame(sprite: &str) -> bool {
     !matches!(
         decoration_type(sprite),
         Some("player" | "red_marker" | "blue_marker" | "player_off_map" | "player_off_limits")
@@ -1074,7 +1085,7 @@ impl Game<'_> {
                         for dz in 0..scale {
                             let (x, z) = (min_x + dx, min_z + dz);
                             let mut y = self.world_surface(x, z);
-                            let min_y = super::MIN_Y;
+                            let min_y = self.world.bottom_y();
                             let mut color;
                             if y <= min_y {
                                 color = 11;
@@ -1277,14 +1288,7 @@ impl Game<'_> {
             let Some(s) = self.gui.atlas.sprites.get(d.sprite).copied() else {
                 continue;
             };
-            let dm = glam::Mat4::from_translation(glam::Vec3::new(
-                f32::from(d.x) / 2.0 + 64.0,
-                f32::from(d.y) / 2.0 + 64.0,
-                -0.02 - count as f32 * 0.001,
-            )) * glam::Mat4::from_rotation_z(
-                (f32::from(d.rot) * 360.0 / 16.0).to_radians(),
-            ) * glam::Mat4::from_scale(glam::Vec3::splat(4.0))
-                * glam::Mat4::from_translation(glam::Vec3::new(-0.125, 0.125, 0.0));
+            let dm = decoration_pose(d, -0.02 - count as f32 * 0.001);
             let p = |x: f32, y: f32| dm.transform_point3(glam::Vec3::new(x, y, 0.0)).to_array();
             let mut q = |corners: [[f32; 3]; 4], uv: [[f32; 2]; 4]| {
                 for (c, uv) in corners.into_iter().zip(uv) {
@@ -1308,7 +1312,7 @@ impl Game<'_> {
         }
     }
     /// `renderTwoHandedMap`: map `id` held in both hands, in view space (the
-    /// arms under it are not drawn).
+    /// arms under it: `first_person::map_arm_poses`).
     pub(super) fn two_handed_map_geometry(
         &mut self,
         to_world: glam::Mat4,
@@ -1318,22 +1322,11 @@ impl Game<'_> {
         light: u32,
         out: &mut Vec<Vertex>,
     ) {
+        use horizon_core::geometry::trig::Mth;
         let deg = |d: f32| d.to_radians();
-        let sqrt_attack = attack.sqrt();
-        let y_swing = -0.2 * (attack * std::f32::consts::PI).sin();
-        let z_swing = -0.4 * (sqrt_attack * std::f32::consts::PI).sin();
-        // calculateMapTilt
-        let tilt = (1.0 - self.pitch / 45.0 + 0.1).clamp(0.0, 1.0);
-        let tilt = -(tilt * std::f32::consts::PI).cos() * 0.5 + 0.5;
         let base = to_world
-            * glam::Mat4::from_translation(glam::Vec3::new(0.0, -y_swing / 2.0, z_swing))
-            * glam::Mat4::from_translation(glam::Vec3::new(
-                0.0,
-                0.04 + inverse_height * -1.2 + tilt * -0.5,
-                -0.72,
-            ))
-            * glam::Mat4::from_rotation_x(deg(tilt * -85.0));
-        let swing = (sqrt_attack * std::f32::consts::PI).sin();
+            * horizon_client::first_person::two_handed_map_base(self.pitch, inverse_height, attack);
+        let swing = (attack.sqrt() * std::f32::consts::PI).msin();
         let m = base
             * glam::Mat4::from_rotation_x(deg(swing * 20.0))
             * glam::Mat4::from_scale(glam::Vec3::splat(2.0));

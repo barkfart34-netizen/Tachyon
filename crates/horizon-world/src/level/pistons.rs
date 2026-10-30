@@ -132,6 +132,10 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
             // BellBlockEntity.triggerEvent handles event 1; the caller
             // reports handled events (`runBlockEvents` broadcasts them).
             a == 1
+        } else if data.is(super::classes::Class::PotentSulfur) {
+            // PotentSulfurBlock.triggerEvent: the block entity notes the
+            // eruption's game time (the caller's), and the event is handled.
+            true
         } else {
             false
         }
@@ -540,6 +544,12 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
         else {
             return false;
         };
+        if !self
+            .level
+            .allow_piston_move(piston_pos, push_direction, &to_push, &to_destroy)
+        {
+            return false;
+        }
         let mut delete_after: JavaHashMap<PosKey, BlockStateId> = JavaHashMap::default();
         let mut shapes = Vec::with_capacity(to_push.len());
         for pos in &to_push {
