@@ -291,7 +291,7 @@ Ditambahkan 31 Okt 2026 saat rancangan ini diterima.
   - Arcana: mana, aether, kartu skill;
   - Chronicles: alur cerita, quest, memori palsu;
   - Lost Realms: ruin, dungeon, waystone, arena;
-  - Aerodyne: kapal udara sampai angkasa.
+  - Create Aeronautics: kapal laut, kapal udara, sampai angkasa.
 - **Pekerjaan teknis terbesar:** entitas baru (boss multi-bagian seperti Kraken, naga yang ditunggangi).
   Mod konten Horizon belum bisa menambah entitas, jadi mesin Tachyon perlu sistem entitasnya sendiri
   dulu.

@@ -13,7 +13,7 @@ lewat LAN/server, berisi:
 | Bagian | Mirip dengan | Nama kerja |
 |---|---|---|
 | Mesin kinetik: poros, gear, proses, logistik, contraption | Create | **Kinetica** |
-| Kapal udara: balon, baling-baling, kemudi, dek yang bisa dinaiki | Create: Aeronautics | **Aerodyne** |
+| Kapal laut, kapal udara, pesawat, kendaraan | Create Aeronautics asli, diunduh dari Modrinth seperti Create | **Create Aeronautics** |
 | Sihir: kristal aether, mana, mantra, altar | mod magic (Ars, Botania) | **Arcana** |
 | Mesin + sihir: mesin bertenaga mana, mesin pengolah bahan sihir, tempa senjata dewa | addon Create bertema sihir | **Runeforge** (nama kerja) |
 | Quest: buku quest per era, tugas, hadiah | FTB Quests | **Chronicles** |
@@ -31,7 +31,7 @@ terbang dengan kapal udara ke pulau-pulau langit tempat dungeon dan bos terakhir
 | I. Abad Pertengahan | Desa, reruntuhan, sihir dasar, quest awal | Arcana, Lost Realms, Chronicles |
 | II. Jam Mekanik | Hand crank, kincir air, poros, gear, millstone | Kinetica |
 | III. Uap & Aether | Mesin aether, press, mixer, belt, otomasi, contraption | Kinetica + Arcana |
-| IV. Zaman Langit | Kapal udara, pulau langit, dungeon langit, bos | Aerodyne, Lost Realms |
+| IV. Zaman Langit | Kapal udara, pulau langit, dungeon langit, bos | Create Aeronautics, Lost Realms |
 
 ## 2. Batas yang harus dipahami dulu
 
@@ -44,7 +44,7 @@ terbang dengan kapal udara ke pulau-pulau langit tempat dungeon dan bos terakhir
   hanya meniru *ide gameplay* (ide tidak dilindungi hak cipta).
 - **Sistem mod Horizon belum cukup.** API mod WebAssembly-nya (versi 0.2) baru bisa menambah data:
   blok, item, resep, worldgen. Block entity, render animasi, entity, dan menu baru ada di rencana
-  Horizon (API 0.3 sampai 0.5) tanpa jadwal. Karena itu Kinetica, Aerodyne, dan lainnya ditulis
+  Horizon (API 0.3 sampai 0.5) tanpa jadwal. Karena itu Kinetica, Arcana, dan lainnya ditulis
   **native di dalam Tachyon** (lihat bagian 3).
 - **Tiruan, bukan salinan 1:1.** Mekaniknya akan terasa mirip Create, tapi angka, resep, dan
   detailnya milik kita.
@@ -55,7 +55,7 @@ terbang dengan kapal udara ke pulau-pulau langit tempat dungeon dan bos terakhir
  ┌──────────────────────────────────────────────────────────────┐
  │ Modpack (resep, quest, keseimbangan, progresi antar era)     │
  ├────────────┬────────────┬──────────┬────────────┬────────────┤
- │ Kinetica   │ Aerodyne   │ Arcana   │ Chronicles │ Lost Realms│  ← crate Rust + aset kita
+ │ Kinetica   │ Runeforge  │ Arcana   │ Chronicles │ Lost Realms│  ← crate Rust + aset kita
  ├────────────┴────────────┴──────────┴────────────┴────────────┤
  │ Tachyon Content Engine (TCE): registry blok/item, perilaku,  │  ← lapisan baru
  │ block entity, render animasi, menu, tipe resep, entity,      │
@@ -128,25 +128,30 @@ pemain.
 
 **Selesai bila:** kincir angin besar dari blok bebas berputar, dan lift piston mengangkut pemain.
 
-### Tahap 4b: laut (XL)
-- Kapal dan kapal selam: rakitan blok yang mengapung (daya apung dari blok di bawah permukaan air),
-  didorong baling-baling dari jaringan kinetik. Badan fisiknya sama dengan kapal udara Tahap 5,
-  hanya mediumnya yang berbeda.
-- Perlengkapan selam (helm dan tangki udara ala Create), mesin yang bekerja di bawah air.
+### Tahap 4b: laut dengan Create (L)
+- Perlengkapan selam Create (helm dan tangki udara), mesin yang bekerja di bawah air.
 - Pompa dan *hose pulley* untuk menguras atau mengisi air dalam jumlah besar (dipakai di arena
   Kraken, lihat [pembunuh-dewa.md](pembunuh-dewa.md)).
 
-**Selesai bila:** kapal kecil dirakit di pantai, berlayar, menyelam, dan muncul lagi, lalu tersimpan
-dan termuat ulang.
+**Selesai bila:** pemain bisa menyelam lama dengan perlengkapan Create, dan hose pulley menguras
+satu kolam.
 
-### Tahap 5: Aerodyne, kapal udara (XL, risiko tertinggi)
-- Rakit kapal dari blok bebas, lalu jadi satu badan fisik.
-- Daya angkat (balon/envelope), dorongan (baling-baling dari jaringan kinetik), kemudi, roda kemudi.
-- Pemain berjalan di dek yang bergerak, tabrakan dengan dunia, berlabuh, dan simpan/muat.
-- Sinkronisasi multiplayer.
+### Tahap 5: Create Aeronautics, kapal laut dan udara (XL, risiko tertinggi)
+- Create Aeronautics asli diunduh dari Modrinth seperti Create. Lisensinya sama: kode MIT, aset All
+  Rights Reserved, jadi asetnya hanya diambil di perangkat pemain. Kodenya (MIT) diporting ke Rust.
+- Fisika: Aeronautics memakai library **Sable**, yang intinya sudah ditulis dalam Rust di atas
+  **Rapier** (`sable_rapier/src/main/rust`: daya apung, tabrakan blok, sambungan, tali).
+  - Tachyon memakai Rapier langsung (Apache-2.0).
+  - Sable berlisensi PolyForm Shield (boleh dipakai dan dimodifikasi, kecuali untuk produk pesaing),
+    jadi kodenya hanya dijadikan acuan, tidak disalin.
+- Rakitan blok menjadi satu badan fisik yang mengapung di air (kapal, kapal selam), terbang
+  (balon, baling-baling, levitite), atau melaju di darat.
+- Pemain berjalan di dek yang bergerak, tabrakan dengan dunia, berlabuh, simpan/muat, dan
+  sinkronisasi multiplayer.
+- Urutan: kapal laut dulu (daya apung), lalu kapal udara, lalu kendaraan darat.
 
-**Selesai bila:** kapal kecil bisa dirakit, terbang ke pulau langit, berlabuh, lalu disimpan dan
-dimuat ulang. Pemain kedua lewat LAN bisa ikut menumpang.
+**Selesai bila:** kapal kecil dirakit di pantai lalu berlayar, kapal udara terbang ke pulau langit
+dan berlabuh, keduanya tersimpan dan termuat ulang, dan pemain kedua lewat LAN bisa ikut menumpang.
 
 ### Tahap 6: Arcana, sihir (L)
 - Kristal aether (ore, worldgen), mana pemain, tongkat dan mantra (cooldown, biaya mana).
@@ -255,13 +260,16 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
 
    ```
    Create 2b (perilaku mesin dari kode Create, resep Create) → fluida (3b) → contraption (4)
-     → laut (4b) → kapal udara (5) → Arcana (6) → Runeforge (6b)
+     → laut dengan Create (4b) → Create Aeronautics (5) → Arcana (6) → Runeforge (6b)
      → cerita Pembunuh Dewa: entity, boss, kartu skill (9)
    ```
 
 3. **Mod baru untuk mesin + sihir** (nama kerja *Runeforge*, Tahap 6b).
 4. **Rancangan cerita "Pembunuh Dewa"** ([pembunuh-dewa.md](pembunuh-dewa.md)) memperluas Aether &
    Gears, bukan menggantinya.
+5. **Create Aeronautics asli dipakai untuk laut dan udara, dan Aerodyne dihapus.** Aerodyne belum
+   dibuat, jadi tidak ada yang hilang. Eureka tidak dipakai, karena butuh Valkyrien Skies (mesin
+   fisika lain), resminya hanya sampai Minecraft 1.20.1, dan fiturnya sudah ada di Aeronautics.
 
 ## 10. Kemajuan
 
