@@ -1,6 +1,7 @@
 # Rencana modpack Tachyon: fantasi + era mesin
 
-Status: **Tahap 0 selesai, Tahap 1–2 berjalan** (kemajuan di bagian 10). Ditulis 29 Oktober 2026.
+Status: **Tahap 0–2 selesai; Tahap 3 dan port Create berjalan** (kemajuan di bagian 10, urutan
+terbaru di bagian 9). Ditulis 29 Oktober 2026.
 
 Nama modpack: **Tachyon: Aether & Gears**.
 
@@ -13,7 +14,8 @@ lewat LAN/server, berisi:
 |---|---|---|
 | Mesin kinetik: poros, gear, proses, logistik, contraption | Create | **Kinetica** |
 | Kapal udara: balon, baling-baling, kemudi, dek yang bisa dinaiki | Create: Aeronautics | **Aerodyne** |
-| Sihir: kristal aether, mana, mantra, altar, mesin bertenaga aether | mod magic (Ars, Botania) | **Arcana** |
+| Sihir: kristal aether, mana, mantra, altar | mod magic (Ars, Botania) | **Arcana** |
+| Mesin + sihir: mesin bertenaga mana, mesin pengolah bahan sihir, tempa senjata dewa | addon Create bertema sihir | **Runeforge** (nama kerja) |
 | Quest: buku quest per era, tugas, hadiah | FTB Quests | **Chronicles** |
 | Struktur, dungeon, pulau langit, loot | YUNG's, When Dungeons Arise | **Lost Realms** |
 | Minimap, penampil resep, zoom | Xaero, JEI | mod resmi Horizon, ikut dibundel |
@@ -126,6 +128,17 @@ pemain.
 
 **Selesai bila:** kincir angin besar dari blok bebas berputar, dan lift piston mengangkut pemain.
 
+### Tahap 4b: laut (XL)
+- Kapal dan kapal selam: rakitan blok yang mengapung (daya apung dari blok di bawah permukaan air),
+  didorong baling-baling dari jaringan kinetik. Badan fisiknya sama dengan kapal udara Tahap 5,
+  hanya mediumnya yang berbeda.
+- Perlengkapan selam (helm dan tangki udara ala Create), mesin yang bekerja di bawah air.
+- Pompa dan *hose pulley* untuk menguras atau mengisi air dalam jumlah besar (dipakai di arena
+  Kraken, lihat [pembunuh-dewa.md](pembunuh-dewa.md)).
+
+**Selesai bila:** kapal kecil dirakit di pantai, berlayar, menyelam, dan muncul lagi, lalu tersimpan
+dan termuat ulang.
+
 ### Tahap 5: Aerodyne, kapal udara (XL, risiko tertinggi)
 - Rakit kapal dari blok bebas, lalu jadi satu badan fisik.
 - Daya angkat (balon/envelope), dorongan (baling-baling dari jaringan kinetik), kemudi, roda kemudi.
@@ -138,8 +151,13 @@ dimuat ulang. Pemain kedua lewat LAN bisa ikut menumpang.
 ### Tahap 6: Arcana, sihir (L)
 - Kristal aether (ore, worldgen), mana pemain, tongkat dan mantra (cooldown, biaya mana).
 - Altar infus atau enchant baru.
-- **Jembatan ke mesin:** mesin aether yang memberi tenaga ke jaringan Kinetica, dan mesin yang
-  memproses material sihir.
+
+### Tahap 6b: Runeforge, mesin + sihir (L)
+- Mod tersendiri yang menggabungkan Kinetica/Create dengan Arcana.
+- Mesin yang mengubah putaran jadi mana, dan motor bertenaga mana yang memutar jaringan kinetik.
+- Mesin yang mengolah bahan sihir: press, mixer, dan kipas dengan proses sihir.
+- Tempa senjata dewa: relik + otoritas ditempa jadi senjata (lihat
+  [pembunuh-dewa.md](pembunuh-dewa.md)), dengan aether di tingkat tertinggi.
 
 ### Tahap 7: Lost Realms, dunia (M–L)
 - Struktur: desa fantasi, reruntuhan, menara penyihir, bengkel mekanik kuno, dungeon.
@@ -225,6 +243,25 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
 3. **Urutan:** mesin dulu, sesuai saran di bagian 4.
 4. **Ruang disk:** belum bisa dikosongkan. Untuk sementara semua tes lewat CI; tes di laptop
    menyusul setelah E: punya minimal 15 GB kosong.
+
+### Keputusan 31 Oktober 2026
+
+1. **Create asli dari Modrinth**, digerakkan mesin Tachyon; Kinetica tetap jadi cadangan offline.
+   Karena Tachyon pribadi (hobi, dimainkan bersama teman), kode Create (MIT) dibaca dari source
+   resminya (tag `mc1.21.1-6.0.10`) dan diporting ke Rust dengan pemberitahuan lisensinya. Aset Create
+   tetap tidak pernah masuk repo atau rilis.
+2. **Create didahulukan, termasuk bagian laut dan udara**, karena paling sulit dan paling
+   berpengaruh. Urutan baru:
+
+   ```
+   Create 2b (perilaku mesin dari kode Create, resep Create) → fluida (3b) → contraption (4)
+     → laut (4b) → kapal udara (5) → Arcana (6) → Runeforge (6b)
+     → cerita Pembunuh Dewa: entity, boss, kartu skill (9)
+   ```
+
+3. **Mod baru untuk mesin + sihir** (nama kerja *Runeforge*, Tahap 6b).
+4. **Rancangan cerita "Pembunuh Dewa"** ([pembunuh-dewa.md](pembunuh-dewa.md)) memperluas Aether &
+   Gears, bukan menggantinya.
 
 ## 10. Kemajuan
 

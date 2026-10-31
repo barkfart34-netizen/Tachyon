@@ -1,0 +1,109 @@
+# Port Create: catatan dari source Create
+
+Catatan untuk Tahap 2b dan seterusnya. Isinya membandingkan perilaku Create dengan mesin Tachyon,
+diambil dari kode Create sendiri. Rencana besarnya ada di [rencana-modpack.md](rencana-modpack.md).
+
+## Sumber dan lisensi
+
+- Source yang dibaca: tag `mc1.21.1-6.0.10` di `github.com/Creators-of-Create/Create`. Tag ini sama
+  dengan jar yang diunduh dari Modrinth (`create-1.21.1-6.0.10.jar`).
+- Salinan lokal ada di `E:/Experiment/_work/create-src`, hanya `src/main/java` dan `LICENSE.md`.
+  Salinan itu tidak masuk repo.
+- Kode Create berlisensi MIT. Saat kode yang diporting dari Create masuk repo, tambahkan
+  pemberitahuan MIT Create ke `THIRD_PARTY_NOTICES.md` dan sebut asalnya di kepala file Rust-nya.
+- Aset Create (`src/main/resources/assets/`) berlisensi All Rights Reserved. Aset itu hanya diambil
+  dari Modrinth di perangkat pemain dan tidak pernah masuk repo atau rilis.
+
+## Yang sudah sama
+
+- Aturan putaran (`RotationPropagator`):
+  - poros ke poros;
+  - roda gigi kecil bersebelahan berbalik arah (-1);
+  - roda gigi besar ke kecil secara diagonal (-2 dan -0,5);
+  - dua roda gigi besar bersudut siku;
+  - arah sisi gearbox.
+- Batas kecepatan 256 RPM.
+- Beban per RPM:
+  - millstone 4;
+  - press 8;
+  - mixer 4;
+  - kipas 2.
+- Engkol tangan: 32 RPM selama 10 tick setelah dipakai, kapasitas 8 per RPM.
+- Kecepatan sabuk: RPM / 480 blok per tick.
+- Kipas mengolah barang setelah 150 tick.
+
+## Yang berbeda
+
+| Bagian | Create | Tachyon sekarang |
+|---|---|---|
+| Motor kreatif | Kapasitas 16384 per RPM | 16384 rata, tidak tergantung RPM |
+| Kincir air | 8 RPM dikali arah aliran di sekitarnya: skor aliran dibatasi -1..1, jadi bisa berbalik. Kapasitas 32 per RPM. Lava juga bisa. | 8 RPM, kapasitas 16 per RPM |
+| Kincir air besar | 4 RPM, kapasitas 128 per RPM | Belum ada |
+| Kincir angin | Bearing + layar: RPM = jumlah layar / 8, dibatasi 1..16. Kapasitas 512 per RPM. Butuh contraption. | Blok tunggal, kapasitas 32 per RPM |
+| Millstone | Kerja per tick = `clamp(int(abs(RPM)/16), 1, 512)`, bilangan bulat dan minimal 1. Lama per resep (`processing_time`). Berhenti bila satu dari 9 slot hasil penuh. | `RPM/16` pecahan; berhenti bila hasil lebih dari 9 tumpukan |
+| Press | Satu siklus 240; tiap tick maju `lerp(clamp(abs(RPM)/512, 0, 1), 1, 60)`; menekan di tengah siklus. Satu barang per tekanan (`bulkPressing` mati). Mengerjakan barang yang tergeletak di blok tepat di bawahnya, sabuk/depot dua blok di bawah, dan baskom dua blok di bawah (*compacting*). | Depot satu atau dua blok di bawah; belum ada barang tergeletak dan compacting |
+| Mixer | Kepala turun 20 tick (kurva kosinus). Mengaduk `max(log2(int(512/abs(RPM))) * ceil(t/100*15) + 1, 1)` tick, dengan `t` = `processing_time` resep. Naik 20 tick. Juga mengerjakan resep crafting shapeless vanilla. Ada syarat panas (blaze burner) dan fluida. | Waktu sendiri, tanpa panas dan fluida |
+| Kipas | Jangkauan `lerp(min(abs(RPM)/256, 1), 3, 20)`. Waktu olah `150 * ((jumlah-1)/16 + 1) + 1`, jadi tumpukan besar lebih lama. RPM negatif menghisap. | Jangkauan `clamp(RPM*20/256, 3, 20)`; waktu tetap 150 |
+| Corong | Mengeluarkan tiap 8 tick. Andesite: sampai satu tumpukan (64). Brass: sejumlah filternya. | 16 barang tiap 8 tick |
+| Sabuk | Dipasang dengan item *belt connector* di antara dua poros, panjang maksimal 20 | Satu blok per segmen |
+
+## Resep Create
+
+Jumlah resep per jenis di jar 6.0.10:
+
+| Jenis | Jumlah |
+|---|---|
+| `create:milling` | 246 |
+| `create:crushing` | 211 |
+| `create:deploying` | 167 |
+| `create:splashing` | 52 |
+| `create:pressing` | 43 |
+| `create:cutting` | 32 |
+| `create:haunting` | 22 |
+| `create:filling` | 19 |
+| `create:mixing` | 14 |
+| `create:compacting` | 7 |
+
+Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, dan mechanical_crafting.
+
+**Format:**
+- `ingredients`: `{"item": ...}` atau `{"tag": ...}`, plus fluida `{"type": "neoforge:single", "fluid", "amount"}`.
+- `results`: `{"id", "count", "chance"}`, atau fluida `{"id", "amount"}`.
+- `processing_time` (opsional).
+- `heat_requirement`: `heated` atau `superheated`.
+- `neoforge:conditions`: biasanya `not tag_empty`, artinya resep dilewati bila tag-nya kosong.
+
+**Rencana pemakaian:**
+- Porter Horizon menyimpan resep berjenis khusus apa adanya di `horizon-mods/create/data/create/recipe/<jenis>/`.
+  Resep yang hasilnya bukan item terdaftar dipindah ke `outside/`.
+- Mesin `create:*` memakai resep Create. Mesin Kinetica tetap memakai resep Kinetica.
+- Tag dibaca dari tag item game.
+- Resep yang memakai fluida dilewati sampai fluida ada (Tahap 3b).
+
+## Urutan kerja 2b
+
+1. **Pembaca resep Create.** Mesin `create:*` memakai:
+   - milling di millstone;
+   - pressing di press;
+   - mixing dan compacting di mixer dan press (tanpa fluida dan panas dulu);
+   - splashing dan haunting di kipas.
+2. **Angka disamakan** dengan tabel di atas:
+   - kerja millstone;
+   - siklus press: satu barang per tekanan, plus barang yang tergeletak;
+   - waktu mixer;
+   - jangkauan dan waktu kipas;
+   - jumlah corong;
+   - kincir air: kapasitas 32, kecepatan mengikuti arah aliran;
+   - kapasitas motor kreatif.
+
+   Kinetica ikut berubah supaya keduanya terasa sama.
+3. **Mesin Create berikutnya:**
+   - crushing wheel (211 resep crushing);
+   - mechanical saw (cutting);
+   - deployer;
+   - blaze burner (panas untuk mixing);
+   - belt connector;
+   - kincir air besar;
+   - chute;
+   - mechanical arm.
+4. **Kincir angin dan bearing** menunggu contraption (Tahap 4).
