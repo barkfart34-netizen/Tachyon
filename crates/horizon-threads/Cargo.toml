@@ -6,7 +6,9 @@ license.workspace = true
 rust-version = "1.85"
 description = "Scheduling hints for the game's threads and its allocator: the OS calls the crates that forbid unsafe code can't make"
 
-[dependencies]
+# Not on Android: the game there is a library Java loads with dlopen, and
+# Bionic refuses one with mimalloc's initial-exec TLS.
+[target.'cfg(not(target_os = "android"))'.dependencies]
 mimalloc = { version = "0.1.52", default-features = false }
 libmimalloc-sys = { version = "0.1.49", default-features = false, features = ["extended"] }
 
