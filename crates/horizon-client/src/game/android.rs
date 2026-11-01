@@ -436,6 +436,13 @@ impl AndroidGame {
         }
     }
 
+    fn startup_loading(&self) -> bool {
+        match &self.app {
+            App::Loading(loading) => loading.startup_loading.is_some(),
+            App::Ready(game) => game.startup_loading.is_some(),
+        }
+    }
+
     fn editing(&self) -> bool {
         with_overlay(|o| o.editor.is_some()).unwrap_or(false)
     }
@@ -576,6 +583,18 @@ impl AndroidGame {
 
     /// The back gesture: it leaves the editor or the menu, else does what Escape does.
     pub(crate) fn back(&mut self) {
+        if self.startup_loading() {
+            match &mut self.app {
+                App::Loading(loading) => {
+                    loading.menu.pending = None;
+                    loading.menu.perf.cancel_world_opening();
+                }
+                App::Ready(game) => {
+                    let _ = game.pad_back();
+                }
+            }
+            return;
+        }
         let closed = with_overlay(|o| {
             if let Some(editor) = &mut o.editor {
                 if !editor.finish_typing() {
@@ -605,6 +624,7 @@ impl AndroidGame {
     pub(crate) fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
         let screen = self.screen();
+        let startup_loading = self.startup_loading();
         let in_game = self.in_game() && !self.editing();
         if now.duration_since(self.last_status) >= std::time::Duration::from_secs(10) {
             self.last_status = now;
@@ -660,8 +680,8 @@ impl AndroidGame {
             o.controls.size = o.settings.size.unwrap_or(o.settings.fitted);
             o.screen = screen;
             o.in_game = in_game;
-            o.shown = enabled;
-            if in_game || o.editor.is_some() {
+            o.shown = enabled && !startup_loading;
+            if startup_loading || in_game || o.editor.is_some() {
                 o.pointer = None;
             } else if o.pointer.is_none() {
                 // A screen opens with the pointer in the middle, as Zalith's does.
@@ -700,7 +720,12 @@ impl AndroidGame {
             self.scrolling = Some((lines, now + Duration::from_millis(80)));
         }
         let editing = self.editing();
-        if let App::Ready(game) = &mut self.app {
+        if startup_loading {
+            self.forced_keyboard = false;
+            if self.keyboard {
+                self.ask_keyboard(false);
+            }
+        } else if let App::Ready(game) = &mut self.app {
             let typing = !editing
                 && (game.pad_typing()
                     || game
@@ -771,6 +796,12 @@ impl AndroidGame {
 
     fn typed(&mut self) {
         let typed = jni::take_typed();
+        if self.startup_loading() {
+            if typed.contains(&Typed::Back) {
+                self.back();
+            }
+            return;
+        }
         if self.editing() {
             for t in typed {
                 let done = with_overlay(|o| {
@@ -958,6 +989,10 @@ impl AndroidGame {
     /// What the controls asked for: keys, mouse buttons, the launcher's events.
     fn apply_control_events(&mut self, event_loop: &ActiveEventLoop) {
         let events = with_overlay(|o| o.controls.take_events()).unwrap_or_default();
+        if self.startup_loading() {
+            // Drain queued events without activating a hidden menu or mod shortcut.
+            return;
+        }
         for event in events {
             match event {
                 ControlEvent::Key { name, pressed } | ControlEvent::Launcher { name, pressed }
@@ -1138,6 +1173,9 @@ impl AndroidGame {
     }
 
     fn touch(&mut self, event_loop: &ActiveEventLoop, id: WindowId, finger: Finger) {
+        if self.startup_loading() {
+            return;
+        }
         let at = (finger.location.x as f32, finger.location.y as f32);
         let now = Instant::now();
         let screen = self.screen();

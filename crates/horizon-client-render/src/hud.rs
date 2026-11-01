@@ -296,6 +296,39 @@ fn atlas_sprites(root: &Path, packed: &[PackedImage]) -> (Vec<PackedImage>, Vec<
     )
 }
 impl HudAtlas {
+    /// A small atlas for startup, before the resource worker publishes the
+    /// menu bundle. Only a white texel and the bundled font's glyph rows:
+    /// none of the world textures or run-time menu slots are needed yet.
+    pub fn loading() -> Self {
+        let (width, height) = (512, 512);
+        let mut pixels = vec![0; (width * height * 4) as usize];
+        for y in 0..4 {
+            let at = (y * width * 4) as usize;
+            pixels[at..at + 16].fill(255);
+        }
+        let white = Rect {
+            u0: 0.0,
+            v0: 0.0,
+            u1: 4.0 / width as f32,
+            v1: 4.0 / height as f32,
+            w: 4,
+            h: 4,
+        };
+        Self {
+            pixels,
+            width,
+            height,
+            sprites: HashMap::from([("horizon/white".into(), white)]),
+            object_skins: HashMap::new(),
+            translucent: HashSet::new(),
+            flags: HashMap::new(),
+            sprite_animations: Vec::new(),
+            font: crate::font::Font::loading((width, height), (5, height - 5), white),
+            glint: (vec![0; 4], 1, 1),
+            glint_armor: (vec![0; 4], 1, 1),
+            white,
+        }
+    }
     /// Keep a ready profile skin when another source only has its default.
     pub fn set_object_skin(&mut self, key: String, skin: String) {
         use std::collections::hash_map::Entry;

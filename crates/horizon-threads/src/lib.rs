@@ -271,6 +271,93 @@ fn release() {
 #[cfg(not(any(all(target_os = "linux", target_env = "gnu"), target_vendor = "apple")))]
 fn release() {}
 
+/// The process's resident bytes and the machine's total physical RAM.
+/// Native processes have no JVM heap maximum: the second number is RAM,
+/// not a claimed process limit. Callers sample occasionally, not per frame.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn process_memory() -> Option<(u64, u64)> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let memory = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let bytes = |text: &str, key: &str| -> Option<u64> {
+        text.lines()
+            .find_map(|line| line.strip_prefix(key))?
+            .split_whitespace()
+            .next()?
+            .parse::<u64>()
+            .ok()?
+            .checked_mul(1024)
+    };
+    // VmRSS is in KiB, independent of the device's 4K or 16K page size.
+    Some((bytes(&status, "VmRSS:")?, bytes(&memory, "MemTotal:")?))
+}
+
+#[cfg(windows)]
+pub fn process_memory() -> Option<(u64, u64)> {
+    use std::ffi::c_void;
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    // The documented Win32 layouts. These two calls don't need another
+    // windows-sys feature (the game's other crates forbid unsafe code).
+    #[repr(C)]
+    #[derive(Default)]
+    struct Counters {
+        cb: u32,
+        page_fault_count: u32,
+        peak_working_set_size: usize,
+        working_set_size: usize,
+        quota_peak_paged_pool_usage: usize,
+        quota_paged_pool_usage: usize,
+        quota_peak_non_paged_pool_usage: usize,
+        quota_non_paged_pool_usage: usize,
+        pagefile_usage: usize,
+        peak_pagefile_usage: usize,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct MemoryStatus {
+        length: u32,
+        memory_load: u32,
+        total_phys: u64,
+        avail_phys: u64,
+        total_page_file: u64,
+        avail_page_file: u64,
+        total_virtual: u64,
+        avail_virtual: u64,
+        avail_extended_virtual: u64,
+    }
+    #[link(name = "psapi")]
+    unsafe extern "system" {
+        #[link_name = "GetProcessMemoryInfo"]
+        fn get_process_memory_info(process: *mut c_void, counters: *mut Counters, cb: u32) -> i32;
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "GlobalMemoryStatusEx"]
+        fn global_memory_status_ex(status: *mut MemoryStatus) -> i32;
+    }
+    let mut counters = Counters {
+        cb: std::mem::size_of::<Counters>() as u32,
+        ..Default::default()
+    };
+    let mut status = MemoryStatus {
+        length: std::mem::size_of::<MemoryStatus>() as u32,
+        ..Default::default()
+    };
+    let size = counters.cb;
+    // SAFETY: the pseudo handle is this process's and needs no closing;
+    // both out pointers have the documented layout, size and lifetime.
+    let read = unsafe {
+        get_process_memory_info(GetCurrentProcess(), &mut counters, size) != 0
+            && global_memory_status_ex(&mut status) != 0
+    };
+    read.then_some((counters.working_set_size as u64, status.total_phys))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
+pub fn process_memory() -> Option<(u64, u64)> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     /// The hint holds on the platforms that take it.

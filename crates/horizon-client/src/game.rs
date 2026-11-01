@@ -1722,6 +1722,8 @@ struct Game<'a> {
     /// Shared with an integrated server; `collision` and `motion` borrow from it.
     res: Arc<Resources>,
     rest_loader: Option<WorldRestLoader>,
+    /// Tachyon's startup display, carried over while the tail worker runs.
+    startup_loading: Option<tachyon_engine::loading::Screen>,
     pending_entry: Option<PendingWorldEntry>,
     world_loader: Option<world_loading::WorldLoader>,
     pending_pack_reload: bool,
@@ -12992,9 +12994,15 @@ impl Game<'_> {
             }
             return Ok(false);
         }
-        if self.pending_entry.is_some() {
+        if self.pending_entry.is_some() || self.startup_loading.is_some() {
             if let (Some(renderer), Some(loader)) = (&mut self.renderer, &self.rest_loader) {
                 let mut hud = HudBatch::new([renderer.config.width, renderer.config.height]);
+                if let Some(screen) = &mut self.startup_loading {
+                    screen.draw(&mut hud, &self.gui.atlas, &loader.progress);
+                    let rendered = renderer.render(&loading_frame(&hud));
+                    screen.after_frame(&mut hud, matches!(&rendered, Ok(true)));
+                    return rendered;
+                }
                 horizon_client::level_loading::draw_progress(
                     &mut hud,
                     &self.gui.atlas,
@@ -14139,7 +14147,8 @@ impl ApplicationHandler for Game<'_> {
             && let PhysicalKey::Code(key) = event.physical_key
             && horizon_client::keybinds::key_name(key)
                 == Some(self.settings.keys.get("key.fullscreen"))
-            && !(self.screen == Screen::Options && self.options_waiting_for_key())
+            && (self.startup_loading.is_some()
+                || !(self.screen == Screen::Options && self.options_waiting_for_key()))
         {
             self.last_input = Instant::now();
             if !event.repeat {
@@ -14158,6 +14167,26 @@ impl ApplicationHandler for Game<'_> {
             if self.screenshot_shortcut(key, event.repeat) {
                 return;
             }
+        }
+        // The startup display hides the title/options. Window shortcuts and
+        // cancelling a queued entry still work, but no hidden widget gets input.
+        if self.startup_loading.is_some()
+            && !matches!(
+                &event,
+                WindowEvent::CloseRequested
+                    | WindowEvent::Focused(_)
+                    | WindowEvent::Resized(_)
+                    | WindowEvent::RedrawRequested
+            )
+        {
+            if matches!(&event, WindowEvent::KeyboardInput { event, .. }
+                if event.state == ElementState::Pressed
+                    && event.physical_key == PhysicalKey::Code(KeyCode::Escape))
+            {
+                self.pending_entry = None;
+                self.perf.cancel_world_opening();
+            }
+            return;
         }
         // KeyboardHandler.keyPress: the debug keys come before the game's.
         if let WindowEvent::KeyboardInput {
@@ -15111,7 +15140,7 @@ impl ApplicationHandler for Game<'_> {
                                 self.started.elapsed().as_millis()
                             );
                         }
-                        if self.title.is_some() {
+                        if self.title.is_some() && self.startup_loading.is_none() {
                             self.perf.title_shown();
                         } else if self.screen == Screen::Playing && self.player.is_some() {
                             self.perf.frame(elapsed.as_secs_f32() * 1000.0);
@@ -15303,6 +15332,7 @@ impl<'a> Game<'a> {
         Ok(Game {
             res: res.clone(),
             rest_loader: None,
+            startup_loading: None,
             pending_entry: None,
             world_loader: None,
             pending_pack_reload: false,
@@ -15888,6 +15918,7 @@ impl Game<'_> {
                 .take()
                 .ok_or("missing world loader")?
                 .finish()?;
+            self.startup_loading = None;
         }
         Ok(())
     }
@@ -16050,19 +16081,33 @@ const STAGE_LINES: [&str; 10] = [
 struct Progress {
     value: Arc<AtomicU32>,
     lines: &'static [&'static str],
+    trace: Option<tachyon_engine::loading::Trace>,
 }
 impl Progress {
     fn new() -> Self {
-        Self::with(&STAGE_LINES)
+        Self {
+            trace: (horizon_client::brand::name() == "Tachyon")
+                .then(|| Arc::new(std::sync::Mutex::new(Default::default()))),
+            ..Self::with(&STAGE_LINES)
+        }
     }
     fn with(lines: &'static [&'static str]) -> Self {
         Self {
             value: Arc::new(AtomicU32::new(0)),
             lines,
+            trace: None,
         }
     }
     fn set(&self, stage: u32) {
         self.value.store(stage, Ordering::Relaxed);
+        if let Some(trace) = &self.trace {
+            trace.lock().unwrap().checkpoint(stage);
+        }
+    }
+    fn mods(&self, packages: Vec<(String, String)>) {
+        if let Some(trace) = &self.trace {
+            trace.lock().unwrap().mods(packages);
+        }
     }
     fn fraction(&self) -> f32 {
         self.value.load(Ordering::Relaxed) as f32 / (self.lines.len() - 1) as f32
@@ -16100,6 +16145,9 @@ fn load_resources(
 ) -> Result<Loaded> {
     let requested_root = root.clone();
     let threads = settings.horizon.worker_threads();
+    if let Some(trace) = &progress.trace {
+        trace.lock().unwrap().menu();
+    }
     // Stage A: the menu bundle (atlas and panorama). With a loading screen it is
     // published at once so the title screen can appear while the world bundle
     // loads; the synchronous launch instead carries it in `Loaded`.
@@ -16123,6 +16171,7 @@ fn load_resources(
             log::warn!("Horizon: resource packs failed to load ({e}); using the default resources");
             pack_error = Some(e.to_string());
             root = vanilla_root.to_path_buf();
+            progress.mods(Vec::new());
             None
         }
         Err(_) => None,
@@ -16160,6 +16209,7 @@ fn load_resources(
             log::warn!("Horizon: resource packs failed to load ({e}); using the default resources");
             pack_error = Some(e.to_string());
             root = vanilla_root.to_path_buf();
+            progress.mods(Vec::new());
             let assets = Assets::load(vanilla_root)?;
             let render = reload(&assets, vanilla_root)?;
             (assets, render)
@@ -16804,6 +16854,9 @@ struct Loading {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     gui: Option<UiResources>,
+    /// The bundled font until LoaderMsg::Ui brings the menu resources.
+    early_gui: Option<UiResources>,
+    startup_loading: Option<tachyon_engine::loading::Screen>,
     settings: Settings,
     fullscreen: horizon_client::window::FullscreenState,
     options: Option<Options>,
@@ -16862,7 +16915,7 @@ impl Loading {
         match loading_renderer(
             window.clone(),
             offscreen,
-            self.gui.as_ref(),
+            self.gui.as_ref().or(self.early_gui.as_ref()),
             None,
             self.settings.horizon.api,
         ) {
@@ -16895,6 +16948,7 @@ impl Loading {
         );
         self.menu.set_root(root, &self.settings);
         self.gui = Some(gui);
+        self.early_gui = None;
         horizon_client::ui_theme::reset_atlas();
         self.apply_menu_settings();
         let Some(window) = self.window.clone() else {
@@ -16955,7 +17009,9 @@ impl Loading {
         let mut batch = HudBatch::new(size);
         self.draw_menu(&mut batch);
         #[cfg(target_os = "android")]
-        if let Some(gui) = &self.gui {
+        if self.startup_loading.is_none()
+            && let Some(gui) = &self.gui
+        {
             android::draw_touch(&mut batch, &gui.atlas);
         }
         let mut frame = loading_frame(&batch);
@@ -16963,14 +17019,28 @@ impl Loading {
             self.started.elapsed().as_secs_f32(),
             self.settings.file.double("panoramaScrollSpeed") as f32,
         );
-        if let Some(renderer) = &mut self.renderer {
+        let rendered = if let Some(renderer) = &mut self.renderer {
             match renderer.render(&frame) {
-                Ok(true) if self.gui.is_some() && self.menu.pending.is_none() => {
-                    self.menu.perf.title_shown()
+                Ok(true) => {
+                    if self.startup_loading.is_none()
+                        && self.gui.is_some()
+                        && self.menu.pending.is_none()
+                    {
+                        self.menu.perf.title_shown();
+                    }
+                    true
                 }
-                Ok(_) => {}
-                Err(e) => log::warn!("Horizon: loading screen frame failed: {e}"),
+                Ok(false) => false,
+                Err(e) => {
+                    log::warn!("Horizon: loading screen frame failed: {e}");
+                    false
+                }
             }
+        } else {
+            false
+        };
+        if let Some(screen) = &mut self.startup_loading {
+            screen.after_frame(&mut batch, rendered);
         }
         if !self.shown {
             self.shown = true;
@@ -17042,6 +17112,9 @@ impl Loading {
         game.fullscreen = self.fullscreen;
         game.panorama_rotation = self.panorama_rotation;
         self.menu.handoff(&mut game);
+        if game.rest_loader.is_some() {
+            game.startup_loading = self.startup_loading.take();
+        }
         game.apply_settings();
         game.previous = Instant::now();
         log::info!(
@@ -17196,10 +17269,16 @@ fn loading_app(
     let (receiver, loader) =
         startup_menu::spawn_loader(&options, &settings, &vanilla_root, started, &progress)?;
     let menu = startup_menu::StartupMenu::new(&options, pack_error.as_deref())?;
+    let startup_loading = tachyon_engine::loading::Screen::for_brand(started);
+    let early_gui = startup_loading
+        .as_ref()
+        .map(|_| tachyon_engine::loading::early_gui());
     let loading = Loading {
         window: None,
         renderer: None,
         gui: None,
+        early_gui,
+        startup_loading,
         settings,
         fullscreen: horizon_client::window::FullscreenState::new(false),
         options: Some(options),

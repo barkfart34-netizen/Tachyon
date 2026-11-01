@@ -142,7 +142,9 @@ impl Game<'_> {
         for (button, down) in edges {
             self.pad_edge(event_loop, button, down);
         }
-        self.pad_menu_frame(event_loop);
+        if self.startup_loading.is_none() {
+            self.pad_menu_frame(event_loop);
+        }
     }
 
     fn pad_edge(&mut self, event_loop: &ActiveEventLoop, button: Button, down: bool) {
@@ -181,6 +183,13 @@ impl Game<'_> {
     ) -> Result<()> {
         if down && !self.pad_focused() {
             return Ok(());
+        }
+        if self.startup_loading.is_some() {
+            return if down && matches!(button, Button::East | Button::Start) {
+                self.pad_back()
+            } else {
+                Ok(())
+            };
         }
         let playing = !self.pad_in_menu();
         if down && playing && !self.captured && self.focused {
@@ -242,6 +251,11 @@ impl Game<'_> {
 
     /// B and Start: what Escape does where the pad is.
     pub(super) fn pad_back(&mut self) -> Result<()> {
+        if self.startup_loading.is_some() {
+            self.pending_entry = None;
+            self.perf.cancel_world_opening();
+            return Ok(());
+        }
         // The options open over the title screen too: they come first, as
         // for the keyboard's Escape.
         if self.screen == Screen::Options {

@@ -291,6 +291,13 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
    mengecek versi baru dan menawarkan update. Butuh secret `RELEASES_TOKEN` yang dibuat
    pemilik repo. Belum dijadwalkan.
 
+4. **Layar pemuatan bergaya mod loader** untuk Windows dan Android: nama Tachyon, progres
+   keseluruhan dan tahap berjalan, memori proses bila tersedia (dibandingkan dengan RAM fisik),
+   3–5 pesan terakhir, serta jumlah paket konten yang diterima dan port native yang aktif, dengan
+   nama pada layar lebar. Desain navy–cyan milik Tachyon, tanpa menyalin kode atau aset Forge/NeoForge,
+   dan disesuaikan untuk HP landscape.
+   Pengujian tampilan dan logika menunggu CI.
+
 ### Tahap A: kontrol sentuh ala Bedrock di Android (M–L)
 
 **Sumber:**

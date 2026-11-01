@@ -239,6 +239,12 @@ pub(super) fn spawn_loader(
     let vanilla_root = vanilla_root.to_path_buf();
     let dev_mods = options.dev_mods.clone();
     let progress = progress.clone();
+    if let Some(trace) = &progress.trace {
+        trace
+            .lock()
+            .unwrap()
+            .natives(super::tachyon_mods::loading_mods(&settings.mods.disabled));
+    }
     let handle = std::thread::Builder::new()
         .name("resource-loader".into())
         .spawn(move || {
@@ -248,7 +254,12 @@ pub(super) fn spawn_loader(
                     pack_error = Some(error.to_string());
                     vanilla_root.clone()
                 });
-            let root = mods::content_root(&root, &settings.mods.enabled, &dev_mods);
+            let root = mods::content_root_reported(
+                &root,
+                &settings.mods.enabled,
+                &dev_mods,
+                |packages| progress.mods(packages),
+            );
             let result = load_resources(
                 root,
                 &vanilla_root,
@@ -520,6 +531,19 @@ impl Loading {
                 self.menu.physical_keys.remove(&key);
             }
         }
+        // Fullscreen still works while Tachyon's startup display hides the menu.
+        if self.startup_loading.is_some()
+            && let WindowEvent::KeyboardInput { event, .. } = &event
+            && event.state == ElementState::Pressed
+            && event.physical_key == PhysicalKey::Code(KeyCode::F11)
+        {
+            if !event.repeat {
+                self.settings.fullscreen = !self.settings.fullscreen;
+                self.apply_menu_settings();
+                self.save_menu_settings();
+            }
+            return Ok(());
+        }
         match event {
             WindowEvent::CloseRequested => {
                 if !self.settings.quit_shortcuts
@@ -560,7 +584,9 @@ impl Loading {
                     self.menu.perf.cancel_world_opening();
                 }
             }
-            _ if self.gui.is_none() || self.menu.pending.is_some() => {}
+            _ if self.startup_loading.is_some()
+                || self.gui.is_none()
+                || self.menu.pending.is_some() => {}
             WindowEvent::KeyboardInput { event, .. } if self.menu.win.is_some() => {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     let pressed = event.state == ElementState::Pressed;
@@ -694,8 +720,12 @@ impl Loading {
     }
 
     pub(super) fn draw_menu(&mut self, batch: &mut HudBatch) {
-        let Some(gui) = &self.gui else { return };
-        if self.menu.pending.is_some() {
+        let Some(gui) = self.gui.as_ref().or(self.early_gui.as_ref()) else {
+            return;
+        };
+        if let Some(screen) = &mut self.startup_loading {
+            screen.draw(batch, &gui.atlas, &self.progress);
+        } else if self.menu.pending.is_some() {
             horizon_client::level_loading::draw_progress(
                 batch,
                 &gui.atlas,
@@ -759,6 +789,7 @@ impl Loading {
             })?;
         }
         self.progress = Progress::new();
+        self.startup_loading = tachyon_engine::loading::Screen::for_brand(Instant::now());
         let options = self.options.as_ref().ok_or("loading already finished")?;
         let (receiver, handle) = spawn_loader(
             options,
@@ -793,6 +824,8 @@ mod tests {
             window: None,
             renderer: None,
             gui: None,
+            early_gui: None,
+            startup_loading: None,
             settings: Settings::default(),
             fullscreen: horizon_client::window::FullscreenState::new(false),
             options: None,

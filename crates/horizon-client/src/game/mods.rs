@@ -25,6 +25,18 @@ pub(super) fn content_root(
     enabled: &std::collections::BTreeSet<String>,
     dev: &[std::path::PathBuf],
 ) -> std::path::PathBuf {
+    content_root_reported(root, enabled, dev, |_| {})
+}
+
+/// Report the accepted packages for the startup display, using the same
+/// discovery and validation as content_root. An unsuccessful overlay has
+/// no active content mods, even if individual packages could be read.
+pub(super) fn content_root_reported(
+    root: &std::path::Path,
+    enabled: &std::collections::BTreeSet<String>,
+    dev: &[std::path::PathBuf],
+    report: impl FnOnce(Vec<(String, String)>),
+) -> std::path::PathBuf {
     use horizon_client::mod_content::{self, ContentMod};
     use horizon_mods::{Capability, Content, Package};
     let here = std::env::current_dir().unwrap_or_default();
@@ -35,6 +47,7 @@ pub(super) fn content_root(
     paths.retain(|p| !dev.contains(p));
     paths.extend(dev.iter().cloned());
     let mut mods: Vec<ContentMod> = Vec::new();
+    let mut names = Vec::new();
     for path in &paths {
         let Ok(package) = Package::read(path) else {
             continue;
@@ -59,10 +72,13 @@ pub(super) fn content_root(
             }
         });
         match content {
-            Ok(content) => mods.push(ContentMod {
-                id: m.id.clone(),
-                content,
-            }),
+            Ok(content) => {
+                names.push((m.id.clone(), m.name.clone()));
+                mods.push(ContentMod {
+                    id: m.id.clone(),
+                    content,
+                });
+            }
             Err(e) => log::warn!("Horizon: mod {} content not loaded: {e}", m.id),
         }
     }
@@ -85,10 +101,12 @@ pub(super) fn content_root(
                     out.display()
                 );
             }
+            report(names);
             out
         }
         Err(e) => {
             log::warn!("Horizon: content mods not loaded: {e}");
+            report(Vec::new());
             root.to_owned()
         }
     }

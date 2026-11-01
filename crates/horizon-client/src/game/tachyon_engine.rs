@@ -22,6 +22,7 @@ mod belt;
 mod create_recipes;
 mod crusher;
 mod fan;
+pub(super) mod loading;
 mod millstone;
 mod obj_model;
 mod press;

@@ -30,6 +30,24 @@ const CORNERS: [Corner; 4] = [
     Corner::BottomRight,
 ];
 
+/// The compiled ports for the early loading display, before a Game exists.
+/// Native ports are on until disabled, exactly as native_on checks them.
+pub(super) fn loading_mods(disabled: &std::collections::BTreeSet<String>) -> Vec<(String, String)> {
+    [
+        (coords_hud::ID, coords_hud::NAME),
+        (fps_overlay::ID, fps_overlay::NAME),
+        (keystrokes::ID, keystrokes::NAME),
+        (minimap::ID, minimap::NAME),
+        (recipes::ID, recipes::NAME),
+        (zoom::ID, "Zoom"),
+        (super::tachyon_engine::chronicles::ID, "Chronicles"),
+    ]
+    .into_iter()
+    .filter(|(id, _)| !disabled.contains(*id))
+    .map(|(id, name)| (id.to_owned(), name.to_owned()))
+    .collect()
+}
+
 /// The hooks, for `native_hooks.rs`.
 impl Game<'_> {
     pub(super) fn tachyon_frame(&mut self, _elapsed: Duration) {

@@ -577,13 +577,63 @@ impl Font {
         region: (u32, u32),
         white: Rect,
     ) -> Self {
-        let sheets = sprites
+        let mut font = Self::empty(root, atlas, region, white);
+        font.sheets = sprites
             .iter()
             .filter(|(k, _)| k.starts_with("font/"))
             .map(|(k, v)| (k.clone(), *v))
             .collect();
-        let font = Self {
-            sheets,
+        // FontManager.prepare: every font definition of the resources.
+        let mut ids = font_ids(root);
+        ids.sort_by_key(|id| id != DEFAULT);
+        let sets = ids
+            .into_iter()
+            .map(|id| {
+                let set = font.load_set(&id, pixels);
+                (id, set)
+            })
+            .collect();
+        font.cache.borrow_mut().sets = sets;
+        font
+    }
+
+    /// The startup display's bundled Geist Mono, before game resources
+    /// exist. No font files or resource definitions are read from disk.
+    pub(crate) fn loading(atlas: (u32, u32), region: (u32, u32), white: Rect) -> Self {
+        let font = Self::empty(Path::new(""), atlas, region, white);
+        let face = ab_glyph::FontVec::try_from_vec(horizon_theme::fonts::GEIST_MONO.to_vec())
+            .expect("bundled font");
+        let ids = face
+            .codepoint_ids()
+            .filter(|(id, _)| id.0 != 0)
+            .map(|(id, ch)| (ch, id))
+            .collect();
+        let scale = ab_glyph::PxScale::from(
+            18.0 * face.height_unscaled() / face.units_per_em().unwrap_or(1000.0),
+        );
+        font.cache.borrow_mut().sets.push((
+            DEFAULT.to_owned(),
+            FontSet {
+                providers: vec![Provider::TrueType(
+                    Filter::default(),
+                    Box::new(TrueType {
+                        font: face,
+                        ids,
+                        scale,
+                        oversample: 2.0,
+                        shift: (0.0, 0.0),
+                    }),
+                )],
+                glyphs: Default::default(),
+                by_width: None,
+            },
+        ));
+        font
+    }
+
+    fn empty(root: &Path, atlas: (u32, u32), region: (u32, u32), white: Rect) -> Self {
+        Self {
+            sheets: HashMap::new(),
             missing: Glyph {
                 rect: None,
                 left: 0.0,
@@ -613,19 +663,7 @@ impl Font {
             generation: std::cell::Cell::new(next_generation()),
             uniform: false,
             japanese: false,
-        };
-        // FontManager.prepare: every font definition of the resources.
-        let mut ids = font_ids(root);
-        ids.sort_by_key(|id| id != DEFAULT);
-        let sets = ids
-            .into_iter()
-            .map(|id| {
-                let set = font.load_set(&id, pixels);
-                (id, set)
-            })
-            .collect();
-        font.cache.borrow_mut().sets = sets;
-        font
+        }
     }
     /// `FontManager`: a font's providers with references expanded.
     fn load_set(&self, id: &str, pixels: &[u8]) -> FontSet {
