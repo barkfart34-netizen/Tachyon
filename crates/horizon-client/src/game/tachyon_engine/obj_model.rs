@@ -92,23 +92,26 @@ fn textures(mods: &Path, json: &Value) -> HashMap<String, String> {
             }
         }
     }
-    let resolve = |mut v: &str| {
-        for _ in 0..8 {
-            match v.strip_prefix('#') {
-                Some(key) => v = raw.get(key).map_or("", String::as_str),
-                None => break,
-            }
-        }
-        v.to_owned()
-    };
     let mut out = HashMap::new();
     for k in raw.keys() {
-        let v = resolve(&raw[k]);
+        let v = resolve(&raw, &raw[k]);
         if !v.is_empty() && !v.starts_with('#') {
             out.insert(k.clone(), namespaced(&v));
         }
     }
     out
+}
+
+/// A texture value with its `#key` references followed (a few deep).
+fn resolve(raw: &HashMap<String, String>, start: &str) -> String {
+    let mut v = start;
+    for _ in 0..8 {
+        match v.strip_prefix('#') {
+            Some(key) => v = raw.get(key).map_or("", String::as_str),
+            None => break,
+        }
+    }
+    v.to_owned()
 }
 
 fn namespaced(id: &str) -> String {
@@ -270,7 +273,7 @@ mod tests {
         std::fs::create_dir_all(&models).unwrap();
         std::fs::write(
             models.join("textures.json"),
-            r#"{"parent": "block/block", "textures": {"planks": "block/oak_planks", "particle": "#planks"}}"#,
+            r##"{"parent": "block/block", "textures": {"planks": "block/oak_planks", "particle": "#planks"}}"##,
         )
         .unwrap();
         std::fs::write(
