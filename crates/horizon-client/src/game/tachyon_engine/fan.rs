@@ -303,7 +303,10 @@ impl Game<'_> {
     pub(super) fn tachyon_process(&mut self, process: Process, stack: &ItemStack) -> Option<Vec<ItemStack>> {
         let n = stack.count;
         if process == Process::Washing {
-            let recipe = washing().iter().find(|r| r.input == *stack.item)?;
+            // Kinetica's washing, else Create's splashing.
+            let create = self.tachyon_create_recipes();
+            let recipe = (washing().iter().find(|r| r.input == *stack.item))
+                .or_else(|| create.splashing(&stack.item))?;
             let mut made = Vec::new();
             for o in &recipe.outputs {
                 let times = if o.chance >= 1.0 {

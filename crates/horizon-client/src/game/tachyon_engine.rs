@@ -19,6 +19,7 @@ pub(super) mod chronicles;
 pub(crate) mod kinetic;
 mod basin;
 mod belt;
+mod create_recipes;
 mod fan;
 mod millstone;
 
@@ -170,6 +171,8 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
 #[derive(Default)]
 struct Index {
     parts: HashMap<[i32; 3], Part>,
+    /// The parts that are Create's blocks: they work by Create's recipes.
+    create: HashSet<[i32; 3]>,
     known: HashSet<(i32, i32)>,
     revision: Option<u64>,
 }
@@ -207,6 +210,8 @@ impl Index {
                 let before = self.parts.len();
                 self.parts
                     .retain(|p, _| !gone.contains(&(p[0] >> 4, p[2] >> 4)));
+                self.create
+                    .retain(|p| !gone.contains(&(p[0] >> 4, p[2] >> 4)));
                 changed |= self.parts.len() != before;
             }
             let arrived: Vec<(i32, i32)> = loaded.difference(&self.known).copied().collect();
@@ -232,6 +237,11 @@ impl Index {
                     self.parts.remove(&[x, y, z])
                 }
             };
+            if is.is_some() && kinds.create(new) {
+                self.create.insert([x, y, z]);
+            } else {
+                self.create.remove(&[x, y, z]);
+            }
             changed = true;
         }
         changed
@@ -261,6 +271,9 @@ impl Index {
                     let (x, z, y) = (i & 15, (i >> 4) & 15, i >> 8);
                     let pos = [key.0 * 16 + x as i32, y0 + y as i32, key.1 * 16 + z as i32];
                     self.parts.insert(pos, part);
+                    if kinds.create(*v) {
+                        self.create.insert(pos);
+                    }
                     found = true;
                 }
             }
@@ -426,6 +439,8 @@ struct Client {
 
 thread_local! {
     static KINDS: RefCell<Option<Arc<Kinds>>> = const { RefCell::new(None) };
+    /// Create's recipes, read once per registry (by its address).
+    static CREATE: RefCell<Option<(usize, Arc<create_recipes::Recipes>)>> = const { RefCell::new(None) };
     static OWNERS: RefCell<HashMap<&'static str, Owner>> = RefCell::new(HashMap::new());
     static CLIENT: RefCell<Client> = RefCell::new(Client::default());
 }
@@ -769,6 +784,45 @@ impl Game<'_> {
         })
     }
 
+    /// Create's recipes this game's machines work by, read from the Create
+    /// in the game folder once per registry; none without Create's blocks.
+    fn tachyon_create_recipes(&self) -> Arc<create_recipes::Recipes> {
+        let registry = self.pack.assets.registry;
+        let at = std::ptr::from_ref(registry) as usize;
+        if let Some(recipes) = CREATE.with_borrow(|c| c.as_ref().filter(|c| c.0 == at).map(|c| c.1.clone())) {
+            return recipes;
+        }
+        let any = self
+            .tachyon_kinds()
+            .is_some_and(|k| k.create.iter().any(|c| *c));
+        let recipes = if any {
+            let dir = Self::options_path()
+                .with_file_name(horizon_client::mod_list::DIR)
+                .join("create/data/create/recipe");
+            let items = self.res.items();
+            let tagged = create_recipes::tagged_in(&items.item_tags);
+            let known = |item: &str| items.get(item).is_some();
+            let lookup = create_recipes::Lookup {
+                tagged: &tagged,
+                known: &known,
+            };
+            let r = create_recipes::Recipes::read(&dir, &lookup);
+            log::info!(
+                "Tachyon: Create's recipes: {} milling, {} pressing, {} splashing, {} mixing",
+                r.milling.len(),
+                r.pressing.len(),
+                r.splashing.len(),
+                r.mixing.len()
+            );
+            r
+        } else {
+            create_recipes::Recipes::default()
+        };
+        let recipes = Arc::new(recipes);
+        CREATE.with_borrow_mut(|c| *c = Some((at, recipes.clone())));
+        recipes
+    }
+
     /// The owner's turn, in the block entity phase: the index follows the
     /// world, the speeds follow the index, the redstone and the cranks, and
     /// the players hear of them.
@@ -847,6 +901,7 @@ impl Game<'_> {
         self.tachyon_fans();
         self.tachyon_belts();
         self.tachyon_funnels();
+        let create = self.tachyon_create_recipes();
         let random = &mut self.world.random;
         let send = OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
@@ -917,14 +972,30 @@ impl Game<'_> {
                 let Some(item) = mill.input.as_ref().map(|h| h.item.clone()) else {
                     continue;
                 };
+                // A Create machine by Create's recipes first, a Kinetica
+                // one by Kinetica's.
                 let (at, recipe) = match part {
-                    Some(Part::Millstone) => (*p, millstone::recipe(&item)),
+                    Some(Part::Millstone) => {
+                        let (ours, theirs) = (millstone::recipe(&item), create.milling(&item));
+                        let r = if owner.index.create.contains(p) {
+                            theirs.or(ours)
+                        } else {
+                            ours.or(theirs)
+                        };
+                        (*p, r)
+                    }
                     Some(Part::Depot) => {
                         let press = |q: &Part| matches!(q, Part::Press(_));
                         let Some(at) = worker(&owner.index.parts, *p, press) else {
                             continue;
                         };
-                        (at, millstone::press_recipe(&item))
+                        let (ours, theirs) = (millstone::press_recipe(&item), create.pressing(&item));
+                        let r = if owner.index.create.contains(&at) {
+                            theirs.or(ours)
+                        } else {
+                            ours.or(theirs)
+                        };
+                        (at, r)
                     }
                     _ => continue,
                 };
@@ -952,7 +1023,14 @@ impl Game<'_> {
                     continue;
                 };
                 let speed = owner.shown.speeds.get(&at).map_or(0.0, |s| s[0]);
-                if let Some(into) = b.mix(speed, basin::recipes(), &mut || random.next_float()) {
+                // A Create mixer by Create's recipes first, a Kinetica one
+                // by Kinetica's: the other's when it holds none of these.
+                let (mut first, mut second) = (basin::recipes(), create.mixing.as_slice());
+                if owner.index.create.contains(&at) {
+                    std::mem::swap(&mut first, &mut second);
+                }
+                let recipes = if b.ready(first).is_some() { first } else { second };
+                if let Some(into) = b.mix(speed, recipes, &mut || random.next_float()) {
                     owner.mills_changed = true;
                     work.insert(at, into);
                 }
@@ -1219,6 +1297,7 @@ impl Game<'_> {
         let part = kinds.part(self.world.block(pos[0], pos[1], pos[2]).0);
         let dimension = self.dim.id();
         let root = self.save.root.clone();
+        let create = self.tachyon_create_recipes();
         OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
             owner.load(&root, dimension);
@@ -1233,7 +1312,9 @@ impl Game<'_> {
             }
             let mill = owner.mills.entry(pos).or_default();
             let fits = match part {
-                Some(Part::Millstone) => millstone::recipe(&one.item).is_some(),
+                Some(Part::Millstone) => {
+                    millstone::recipe(&one.item).is_some() || create.milling(&one.item).is_some()
+                }
                 Some(Part::Depot) => mill.outputs.is_empty(),
                 _ => false,
             };
@@ -1253,6 +1334,7 @@ impl Game<'_> {
         let part = kinds.part(self.world.block(pos[0], pos[1], pos[2]).0);
         let dimension = self.dim.id();
         let root = self.save.root.clone();
+        let create = self.tachyon_create_recipes();
         OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
             owner.load(&root, dimension);
@@ -1270,7 +1352,9 @@ impl Game<'_> {
             let pressed = mill
                 .input
                 .as_ref()
-                .is_some_and(|h| millstone::press_recipe(&h.item).is_some());
+                .is_some_and(|h| {
+                    millstone::press_recipe(&h.item).is_some() || create.pressing(&h.item).is_some()
+                });
             let worked = || worker(&owner.index.parts, pos, |q| matches!(q, Part::Press(_)));
             let input_too = part == Some(Part::Depot) && !(pressed && worked().is_some());
             let (one, input) = mill.take_one(input_too)?;

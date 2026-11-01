@@ -454,8 +454,8 @@ const MAPPINGS: [(&str, Option<KeyCode>); 9] = [
     ("key.use", None),
 ];
 
-/// The hook points. Each does nothing in Horizon; in Tachyon they call the
-/// official native mods built in (`tachyon_mods.rs`).
+/// The hook points. Each does nothing in Horizon.
+/// In Tachyon they call the official native mods built in (`tachyon_mods.rs`).
 impl Game<'_> {
     /// Once a frame, in a world or not, after Horizon's extras.
     pub(super) fn native_frame(&mut self, elapsed: Duration) {

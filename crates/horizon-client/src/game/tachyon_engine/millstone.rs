@@ -20,7 +20,7 @@ use std::sync::OnceLock;
 
 /// Work for one item when its recipe gives no time: 100, five seconds at
 /// 16 RPM.
-const TIME: f32 = 100.0;
+pub(super) const TIME: f32 = 100.0;
 /// The most of the input a millstone takes.
 const INPUT_MAX: u32 = 64;
 /// How many stacks of what was ground it keeps: full, it stops.
@@ -291,7 +291,7 @@ impl Game<'_> {
     pub(super) fn tachyon_use_millstone(&mut self, mill: &mut Mill) -> bool {
         let held = self.held().map(|s| (s.item.to_string(), s.count));
         if let Some((item, count)) = held
-            && recipe(&item).is_some()
+            && (recipe(&item).is_some() || self.tachyon_create_recipes().milling(&item).is_some())
         {
             let took = mill.put(&item, count);
             if took == 0 {
