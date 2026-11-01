@@ -16236,7 +16236,10 @@ fn load_resources(
     }
     let registry_owner = assets.clone();
     let collision = collisions::load(&root, registry_owner.registry)?;
-    let motion = MotionResources::load_with_facts(&root, &registry_owner, &facts)?;
+    let mut motion = MotionResources::load_with_facts(&root, &registry_owner, &facts)?;
+    if registry_owner.registry.default_state("create:crushing_wheel").is_some() {
+        motion.health.damage = Game::tachyon_crushing_damage(motion.health.damage)?;
+    }
     log::info!(
         "load collision+motion: {:.2}s",
         started.elapsed().as_secs_f32()

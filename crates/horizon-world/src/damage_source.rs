@@ -125,6 +125,25 @@ impl Catalog {
                 .collect(),
         })
     }
+    /// Adds a native definition and its tags to a new snapshot. Existing
+    /// local IDs keep their indices; this does not register a wire ID.
+    pub fn with_definition(mut self, definition: Definition, tags: &[&str]) -> io::Result<Self> {
+        if identifier(&definition.name).map_err(|e| invalid(e.to_string()))? != definition.name
+            || self.ids.contains_key(&definition.name)
+        {
+            return Err(invalid("noncanonical or duplicate damage type"));
+        }
+        let id = DamageTypeId(self.definitions.len());
+        self.ids.insert(definition.name.clone(), id);
+        self.definitions.push(definition);
+        for tag in tags {
+            if identifier(tag).map_err(|e| invalid(e.to_string()))? != *tag {
+                return Err(invalid("noncanonical damage tag"));
+            }
+            self.tags.entry((*tag).into()).or_default().insert(id);
+        }
+        Ok(self)
+    }
     pub fn id(&self, name: &str) -> Option<DamageTypeId> {
         self.ids.get(name).copied()
     }

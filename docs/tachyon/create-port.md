@@ -102,7 +102,15 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
     - hasilnya keluar searah putaran pelek dan tidak ditelan lagi oleh celah yang sama;
     - isi celah disimpan di file mesin begitu masuk atau keluar;
     - roda yang berhenti menyimpan isinya, roda yang dihancurkan menjatuhkannya;
-    - hopper di bawah celah tidak menyedot barang yang sedang menunggu di celah.
+    - hopper di bawah celah tidak menyedot barang yang sedang menunggu di celah;
+    - jendela host dan tamu LAN menampilkan empat partikel per tick dari barang yang sedang dihancurkan;
+      barang blok memakai partikel blok, barang lain memakai partikel item;
+    - celah yang berputar melukai satu mob atau pemain dengan damage dasar 4 (`create:crush`,
+      pesan kematian `create.crush`), melewati armor dan mengikuti cooldown (serta tingkat kesulitan
+      untuk pemain);
+      pemain kreatif, spectator, dan semua entitas pada peaceful tidak dilukai;
+    - damage hanya dihitung pemilik dunia, termasuk untuk pemain tamu LAN; celah berisi tumpukan
+      barang tidak menerima entitas hidup lain.
   - **Model OBJ Create** (`obj_model.rs`, loader `neoforge:obj`) dipakai untuk crushing wheel dan
     kincir air.
   - **Tag konvensi** `c:` yang tidak ada di game ditebak dari namanya (`c:ingots/iron` →
@@ -121,7 +129,7 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
     Inggris dan Indonesia.
   - Hasil cuci dan haunting dikocok per barang, seperti `RecipeApplier` Create.
 - **Belum:**
-  - partikel barang di celah crushing wheel dan crushing wheel yang melukai mob.
+  - tarikan mob dan pemain melalui celah crushing wheel, serta posisi keluarnya sebelum mati.
 - Pemberitahuan MIT Create sudah ada di `THIRD_PARTY_NOTICES.md`.
 
 1. **Pembaca resep Create.** Mesin `create:*` memakai:

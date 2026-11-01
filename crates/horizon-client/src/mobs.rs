@@ -541,6 +541,8 @@ pub enum DamageKind {
     IndirectMagic,
     Sting,
     Cactus,
+    /// `create:crush`: Create's crushing wheels (`AllDamageTypes`).
+    Crush,
     /// `sweet_berry_bush`.
     SweetBerryBush,
     Generic,
@@ -666,6 +668,7 @@ impl Damage {
                 | DamageKind::Stalagmite
                 | DamageKind::Starve
                 | DamageKind::Campfire
+                | DamageKind::Crush
         )
     }
     /// DamageTypeTags.BYPASSES_ARMOR
@@ -688,6 +691,7 @@ impl Damage {
                 | DamageKind::Stalagmite
                 | DamageKind::Starve
                 | DamageKind::Wither
+                | DamageKind::Crush
         )
     }
     pub fn is_fire(&self) -> bool {

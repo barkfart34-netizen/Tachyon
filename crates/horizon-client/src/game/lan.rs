@@ -39,8 +39,13 @@ pub(super) fn sync_data(
     overlay: &horizon_world::loot::PackOverlay,
 ) -> std::result::Result<Arc<SyncData>, String> {
     let mut sync = SYNC.lock().unwrap_or_else(|e| e.into_inner());
-    sync.get_or_insert_with(|| SyncData::load(root, overlay).map(Arc::new))
-        .clone()
+    sync.get_or_insert_with(|| {
+        SyncData::load(root, overlay).map(|mut data| {
+            Game::tachyon_crushing_sync(&mut data);
+            Arc::new(data)
+        })
+    })
+    .clone()
 }
 
 /// Let go of what `sync_data` loaded: for a preload no world used

@@ -203,8 +203,77 @@ impl SyncData {
             .map(|i| i as i32)
     }
 
+    /// Appends a native damage type and its tags without changing existing
+    /// wire IDs. Its data is sent even when the client knows the vanilla pack.
+    pub fn add_damage_type(
+        &mut self,
+        definition: &horizon_world::damage_source::Definition,
+        tags: &[&str],
+    ) {
+        const REGISTRY: &str = "minecraft:damage_type";
+        let i = self
+            .registries
+            .iter()
+            .position(|(key, _)| key == REGISTRY)
+            .unwrap_or_else(|| {
+                self.registries.push((
+                    REGISTRY.into(),
+                    Entries {
+                        names: Vec::new(),
+                        json: Vec::new(),
+                    },
+                ));
+                self.registries.len() - 1
+            });
+        let entries = &mut self.registries[i].1;
+        if entries.names.contains(&definition.name) {
+            return;
+        }
+        let id = entries.names.len() as i32;
+        let json = serde_json::json!({
+            "message_id": definition.message_id,
+            "exhaustion": definition.exhaustion,
+            "scaling": definition.scaling.name(),
+            "effects": definition.effects,
+            "death_message_type": definition.death_message_type,
+        });
+        entries.names.push(definition.name.clone());
+        entries.json.push(json.clone());
+        self.dynamic
+            .registries
+            .entry(REGISTRY.into())
+            .or_default()
+            .push((definition.name.clone(), Some(json_to_nbt(&json))));
+        let i = self
+            .tags
+            .registries
+            .iter()
+            .position(|r| r.registry == REGISTRY)
+            .unwrap_or_else(|| {
+                self.tags.registries.push(RegistryTags {
+                    registry: REGISTRY.into(),
+                    tags: Vec::new(),
+                });
+                self.tags.registries.len() - 1
+            });
+        let wire_tags = &mut self.tags.registries[i].tags;
+        for name in tags {
+            if let Some(tag) = wire_tags.iter_mut().find(|t| t.name == *name) {
+                if !tag.ids.contains(&id) {
+                    tag.ids.push(id);
+                }
+            } else {
+                wire_tags.push(TagEntry {
+                    name: (*name).into(),
+                    ids: vec![id],
+                });
+            }
+        }
+    }
+
     /// ClientboundRegistryDataPacket per registry. With `known_pack` the
-    /// client rebuilds the entries from its own data, so none is sent.
+    /// client rebuilds vanilla entries from its own data; native entries
+    /// still send theirs.
     /// The registries for a client, with the data of a dimension type the
     /// world's data packs changed (`levels`) even when it knows the vanilla
     /// pack.
@@ -217,7 +286,8 @@ impl SyncData {
                     .names
                     .iter()
                     .zip(&e.json)
-                    .map(|(name, json)| {
+                    .enumerate()
+                    .map(|(id, (name, json))| {
                         let changed = (key == "minecraft:dimension_type")
                             .then(|| changed_dimension_type(name, json, levels))
                             .flatten();
@@ -225,8 +295,11 @@ impl SyncData {
                             id: name.clone(),
                             data: match changed {
                                 Some(json) => Some(json_to_nbt(&json)),
-                                None if known_pack => None,
-                                None => Some(json_to_nbt(json)),
+                                None => self
+                                    .dynamic
+                                    .data(key, id as i32)
+                                    .cloned()
+                                    .or_else(|| (!known_pack).then(|| json_to_nbt(json))),
                             },
                         }
                     })
@@ -361,6 +434,48 @@ mod tests {
         assert!(matches!(t.get("a"), Some(Tag::Int(1))));
         assert!(matches!(t.get("c"), Some(Tag::String(_))));
         assert!(matches!(t.get("b"), Some(Tag::List(l)) if l.len() == 2));
+    }
+
+    #[test]
+    fn native_damage_types_keep_wire_ids_and_send_their_data() {
+        use horizon_world::damage_source::{Definition, Scaling};
+        let mut sync = SyncData::empty();
+        let mut definition = Definition {
+            name: "minecraft:generic".into(),
+            message_id: "generic".into(),
+            exhaustion: 0.0,
+            scaling: Scaling::Never,
+            effects: "hurt".into(),
+            death_message_type: "default".into(),
+        };
+        sync.add_damage_type(&definition, &["minecraft:bypasses_armor"]);
+        // Loaded vanilla entries have no explicit data in Dynamic.
+        sync.dynamic.registries.get_mut("minecraft:damage_type").unwrap()[0].1 = None;
+        definition.name = "create:crush".into();
+        definition.message_id = "create.crush".into();
+        definition.scaling = Scaling::Always;
+        sync.add_damage_type(&definition, &["minecraft:bypasses_armor"]);
+        sync.add_damage_type(&definition, &["minecraft:bypasses_armor"]);
+        assert_eq!(sync.id("minecraft:damage_type", "minecraft:generic"), Some(0));
+        assert_eq!(sync.id("minecraft:damage_type", "create:crush"), Some(1));
+        assert_eq!(sync.tags.registries[0].tags[0].ids, [0, 1]);
+        for known_pack in [false, true] {
+            let packets = sync.registry_packets(known_pack, &LevelShapes::VANILLA);
+            assert_eq!(packets[0].entries.len(), 2);
+            assert_eq!(packets[0].entries[0].data.is_none(), known_pack);
+            let data = packets[0].entries[1].data.as_ref().unwrap();
+            assert_eq!(
+                data.get("message_id"),
+                Some(&Tag::String("create.crush".into())),
+            );
+            assert_eq!(data.get("scaling"), Some(&Tag::String("always".into())));
+            let mut received = Dynamic::default();
+            received.add(packets.into_iter().next().unwrap());
+            assert_eq!(
+                received.name("minecraft:damage_type", 1),
+                Some("create:crush"),
+            );
+        }
     }
 
     #[test]

@@ -325,6 +325,8 @@ struct Owner {
     funnel_work: HashMap<[i32; 3], String>,
     /// What the crushing wheels' gaps hold, by the gap.
     crushers: HashMap<[i32; 3], crusher::Inside>,
+    /// The living entity each crushing gap keeps until it leaves.
+    crushing_entities: HashMap<[i32; 3], crusher::Living>,
     /// The dropped items a gap doesn't take in (what it made, or a stack
     /// with components), by the gap.
     passed: HashMap<u32, [i32; 3]>,
@@ -509,7 +511,8 @@ pub(in crate::game) fn processing() -> [Vec<Processing>; 4] {
 
 /// What a game shows of the parts: their speeds, the jammed ones, their
 /// networks' stress, the machines at work (a millstone, a press, a mixer:
-/// on what), and what each depot and basin holds (a few stacks).
+/// on what), what each depot and basin holds (a few stacks), and the item
+/// in each crushing gap.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Shown {
     speeds: kinetic::Speeds,
@@ -517,11 +520,12 @@ struct Shown {
     stress: HashMap<[i32; 3], kinetic::Stress>,
     work: HashMap<[i32; 3], String>,
     held: HashMap<[i32; 3], Vec<(String, u32)>>,
+    crushers: HashMap<[i32; 3], String>,
 }
 
 /// What the parts show as a payload: the turning parts (each half's
 /// speed), the jammed ones, the stress of each part's network, the
-/// millstones at work.
+/// machines at work and the stacks they hold.
 fn encode(shown: &Shown) -> Vec<u8> {
     let Shown {
         speeds,
@@ -529,8 +533,9 @@ fn encode(shown: &Shown) -> Vec<u8> {
         stress,
         work,
         held,
+        crushers,
     } = shown;
-    let mut out = Vec::with_capacity(17 + speeds.len() * 20 + jammed.len() * 12 + stress.len() * 20);
+    let mut out = Vec::with_capacity(25 + speeds.len() * 20 + jammed.len() * 12 + stress.len() * 20);
     let pos = |out: &mut Vec<u8>, p: &[i32; 3]| {
         for v in p {
             out.extend_from_slice(&v.to_le_bytes());
@@ -574,11 +579,16 @@ fn encode(shown: &Shown) -> Vec<u8> {
             name(&mut out, item);
         }
     }
+    out.extend_from_slice(&(crushers.len() as u32).to_le_bytes());
+    for (p, item) in crushers {
+        pos(&mut out, p);
+        name(&mut out, item);
+    }
     out
 }
 
 /// The payload's form.
-const VERSION: u8 = 5;
+const VERSION: u8 = 6;
 
 fn decode(data: &[u8]) -> Option<Shown> {
     let mut at = 0usize;
@@ -650,12 +660,21 @@ fn decode(data: &[u8]) -> Option<Shown> {
         }
         held.insert(p, list);
     }
+    let count = u32::from_le_bytes(word(next(4)?)) as usize;
+    let mut crushers = HashMap::with_capacity(count.min(1 << 10));
+    for _ in 0..count {
+        let p = pos(next(12)?);
+        let len = usize::from(next(1)?[0]);
+        let item = std::str::from_utf8(next(len)?).ok()?;
+        crushers.insert(p, item.to_owned());
+    }
     Some(Shown {
         speeds,
         jammed,
         stress,
         work,
         held,
+        crushers,
     })
 }
 
@@ -1105,6 +1124,13 @@ impl Game<'_> {
                 owner.shown.held = held;
                 send = true;
             }
+            let crushers: HashMap<[i32; 3], String> = (owner.crushers.iter())
+                .map(|(p, inside)| (*p, inside.item.clone()))
+                .collect();
+            if crushers != owner.shown.crushers {
+                owner.shown.crushers = crushers;
+                send = true;
+            }
             if owner.mills_changed && owner.ticks % RESEND == 0 {
                 owner.mills_changed = false;
                 owner.save(&root, dimension);
@@ -1472,6 +1498,7 @@ impl Game<'_> {
         self.tachyon_quests_tick();
         self.tachyon_fan_particles();
         self.tachyon_press_heads();
+        self.tachyon_crusher_particles();
         if self.remote.is_none() {
             return;
         }
@@ -1908,10 +1935,21 @@ mod tests {
                 [3, 64, 2],
                 vec![("kinetica:iron_sheet".to_owned(), 5), ("x:y".to_owned(), 64)],
             )]),
+            crushers: HashMap::from([
+                ([1, -20, 3], "minecraft:cobblestone".to_owned()),
+                ([-5, 70, 9], "minecraft:raw_iron".to_owned()),
+            ]),
         };
-        assert_eq!(decode(&encode(&shown)), Some(shown.clone()));
+        let data = encode(&shown);
+        assert_eq!(decode(&data), Some(shown.clone()));
+        assert_eq!(decode(&encode(&Shown::default())), Some(Shown::default()));
         assert!(decode(&[1]).is_none());
-        assert!(decode(&encode(&shown)[..10]).is_none());
+        for end in 0..data.len() {
+            assert!(decode(&data[..end]).is_none(), "truncated at {end}");
+        }
+        let mut old = data;
+        old[0] = VERSION - 1;
+        assert!(decode(&old).is_none());
     }
 
     #[test]
