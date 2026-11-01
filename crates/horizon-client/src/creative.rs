@@ -302,6 +302,7 @@ impl Creative {
                 column: 5,
                 search: false,
                 inventory: false,
+                hotbar: false,
             });
         }
     }
