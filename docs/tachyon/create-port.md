@@ -107,9 +107,13 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - **Tag konvensi** `c:` yang tidak ada di game ditebak dari namanya (`c:ingots/iron` →
     `minecraft:iron_ingot`), jadi resep press, mixer, dan crushing yang memakai tag ikut terbaca.
 - **Waktu kipas** sekarang menurut besar tumpukan, seperti Create: `150 * ((jumlah - 1) / 16 + 1) + 1` tick.
+- **Siklus press** seperti Create (`tachyon_engine/press.rs`):
+  - satu siklus 240, maju `lerp(|RPM|/512, 1, 60)` per tick;
+  - kepala turun di tengah siklus dan menekan satu barang di depot;
+  - compacting di baskom sekali per siklus;
+  - press tanpa depot atau baskom menekan barang yang tergeletak di blok bawahnya;
+  - peluang hasil dikocok per barang (`rollOutput`).
 - **Belum:**
-  - siklus press (240, satu barang per tekanan, barang yang tergeletak);
-  - compacting memakai waktu mixer, belum siklus press;
   - partikel barang di celah crushing wheel dan crushing wheel yang melukai mob.
 - Pemberitahuan MIT Create sudah ada di `THIRD_PARTY_NOTICES.md`.
 

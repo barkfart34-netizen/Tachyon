@@ -5,15 +5,17 @@
 //! with a use, and takes out what was ground with a use of anything that
 //! doesn't grind; breaking it drops all it holds.
 //!
-//! A depot holds one stack: a mechanical press turning over it works the
-//! stack by the press's recipes (`pressing.json`). A hopper puts items in
-//! either and takes what they made out from under them.
+//! A depot holds one stack: a mechanical press turning over it presses the
+//! stack by the press's recipes (`pressing.json`), one item each time its
+//! head comes down, as Create's (`press.rs`). A hopper puts items in either
+//! and takes what they made out from under them.
 //!
 //! The world's owner keeps what each holds with the motors' speeds (the
 //! dimension's `kinetica-*.json`), and tells its players which are at work,
 //! on what (the goggles show it), and what each depot holds (drawn on it).
 
 use super::super::Game;
+use super::press::{self, Beat};
 use horizon_client::items::ItemStack;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
@@ -34,8 +36,8 @@ pub(super) struct Held {
 }
 
 /// What a millstone holds: the items to grind, how far the one at hand is
-/// (work: a tick's is its RPM / 16 rounded down, at least 1, as Create's),
-/// and what came out.
+/// (work: a tick's is its RPM / 16 rounded down, at least 1, as Create's;
+/// on a depot, the press's cycle), and what came out.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct Mill {
     #[serde(default)]
@@ -226,21 +228,51 @@ impl Mill {
                 return true;
             }
         }
-        // One ground: its outputs, if they fit (else it waits).
-        let made: Vec<Held> = recipe
-            .outputs
-            .iter()
-            .filter(|o| o.chance >= 1.0 || roll() < o.chance)
-            .map(|o| Held {
-                item: o.item.clone(),
-                count: o.count,
-            })
-            .collect();
+        // One ground, if what it makes fits (else it waits).
+        if !self.work_one(recipe, roll) {
+            return false;
+        }
+        self.progress = 0.0;
+        true
+    }
+
+    /// A tick of a press at `speed` (RPM) over this depot, with `recipe`:
+    /// its cycle runs while the depot holds the recipe's input, and each
+    /// time its head comes down it presses one item of the stack, if what
+    /// it makes fits (Create's, bulk pressing off). Whether it is at work.
+    pub fn press(
+        &mut self,
+        speed: f32,
+        recipe: Option<&Milling>,
+        roll: &mut impl FnMut() -> f32,
+    ) -> bool {
+        let (Some(input), Some(recipe)) = (self.input.as_ref(), recipe) else {
+            self.progress = 0.0;
+            return false;
+        };
+        if speed == 0.0 || input.item != recipe.input {
+            return false;
+        }
+        let mut ticks = self.progress as i32;
+        match press::beat(&mut ticks, speed) {
+            Beat::Done => ticks = 0,
+            Beat::Press => {
+                self.work_one(recipe, roll);
+            }
+            Beat::Running => {}
+        }
+        self.progress = ticks as f32;
+        true
+    }
+
+    /// One item of the input worked by `recipe`: its outputs, each by its
+    /// chance, if they fit. Whether it was.
+    fn work_one(&mut self, recipe: &Milling, roll: &mut impl FnMut() -> f32) -> bool {
+        let made = roll_outputs(&recipe.outputs, roll);
         if !self.fits(&made) {
             return false;
         }
         add_all(&mut self.outputs, &made);
-        self.progress = 0.0;
         if let Some(input) = self.input.as_mut() {
             input.count -= 1;
             if input.count == 0 {
@@ -249,6 +281,25 @@ impl Mill {
         }
         true
     }
+}
+
+/// What `outputs` come to for one item worked, as Create's
+/// (`ProcessingOutput.rollOutput`): each output item kept by its chance
+/// (`roll` gives 0 to 1, kept up to the chance).
+pub(super) fn roll_outputs(outputs: &[Output], roll: &mut impl FnMut() -> f32) -> Vec<Held> {
+    (outputs.iter())
+        .filter_map(|o| {
+            let count = if o.chance >= 1.0 {
+                o.count
+            } else {
+                (0..o.count).filter(|_| roll() <= o.chance).count() as u32
+            };
+            (count > 0).then(|| Held {
+                item: o.item.clone(),
+                count,
+            })
+        })
+        .collect()
 }
 
 /// One item of the stack in `cell`.
@@ -391,6 +442,28 @@ mod tests {
         assert_eq!(m.take().len(), 2);
         assert_eq!(m.take()[0].count, 62);
         assert!(m.is_empty());
+    }
+
+    #[test]
+    fn a_press_presses_one_item_each_cycle() {
+        let r = cobble();
+        let mut depot = Mill::default();
+        depot.put("minecraft:cobblestone", 3);
+        let mut low = || 0.0f32;
+        // At 32 RPM a cycle is 62 ticks; the head comes down on the 31st.
+        for _ in 0..30 {
+            assert!(depot.press(32.0, Some(&r), &mut low));
+        }
+        assert!(depot.outputs.is_empty());
+        assert!(depot.press(32.0, Some(&r), &mut low));
+        assert_eq!(depot.input.as_ref().unwrap().count, 2);
+        for _ in 31..62 * 3 {
+            depot.press(32.0, Some(&r), &mut low);
+        }
+        assert_eq!(depot.input, None);
+        assert_eq!(depot.outputs[0].count, 3);
+        // Nothing left to press: not at work.
+        assert!(!depot.press(32.0, Some(&r), &mut low));
     }
 
     #[test]

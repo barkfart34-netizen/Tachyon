@@ -24,6 +24,7 @@ mod crusher;
 mod fan;
 mod millstone;
 mod obj_model;
+mod press;
 
 use super::Game;
 use glam::{DVec3, Mat4, Vec3};
@@ -329,6 +330,10 @@ struct Owner {
     passed: HashMap<u32, [i32; 3]>,
     /// The crushing wheels' gaps, as of the last tick.
     gaps: HashSet<[i32; 3]>,
+    /// The cycles of the presses pressing items lying under them, and on
+    /// what, for the goggles.
+    press_cycles: HashMap<[i32; 3], i32>,
+    press_work: HashMap<[i32; 3], String>,
 }
 
 impl Owner {
@@ -458,6 +463,9 @@ struct Client {
     /// reload makes another).
     models: HashMap<&'static str, Arc<ItemRenderState>>,
     renderer: usize,
+    /// The presses' heads, by their cycles (a guest's and the owner's
+    /// window alike).
+    heads: press::PressHeads,
 }
 
 thread_local! {
@@ -929,6 +937,7 @@ impl Game<'_> {
         self.tachyon_belts();
         self.tachyon_funnels();
         self.tachyon_crushers();
+        self.tachyon_presses_on_ground();
         let create = self.tachyon_create_recipes();
         let random = &mut self.world.random;
         let send = OWNERS.with_borrow_mut(|owners| {
@@ -998,6 +1007,9 @@ impl Game<'_> {
                     held.insert(*p, vec![(h.item.clone(), h.count)]);
                 }
                 let Some(item) = mill.input.as_ref().map(|h| h.item.clone()) else {
+                    // An empty depot: the next stack begins a press's cycle
+                    // of its own.
+                    mill.progress = 0.0;
                     continue;
                 };
                 // A Create machine by Create's recipes first, a Kinetica
@@ -1031,7 +1043,14 @@ impl Game<'_> {
                 if speed == 0.0 {
                     continue;
                 }
-                if mill.grind(speed, recipe, &mut || random.next_float()) {
+                // A depot's press by Create's cycle, a millstone by work.
+                let roll = &mut || random.next_float();
+                let worked = if part == Some(Part::Depot) {
+                    mill.press(speed, recipe, roll)
+                } else {
+                    mill.grind(speed, recipe, roll)
+                };
+                if worked {
                     owner.mills_changed = true;
                     work.insert(at, item);
                 }
@@ -1050,25 +1069,32 @@ impl Game<'_> {
                 // A mixer over a basin mixes: a Create one by Create's
                 // recipes first, a Kinetica one by Kinetica's (the other's
                 // when it holds none of these). A press over one compacts,
-                // by Create's.
-                let (at, recipes) = if let Some(at) = worker(&owner.index.parts, *p, |q| *q == Part::Mixer) {
+                // by Create's, once a cycle.
+                let (at, recipes, pressing) = if let Some(at) = worker(&owner.index.parts, *p, |q| *q == Part::Mixer) {
                     let (mut first, mut second) = (basin::recipes(), create.mixing.as_slice());
                     if owner.index.create.contains(&at) {
                         std::mem::swap(&mut first, &mut second);
                     }
-                    (at, if b.ready(first).is_some() { first } else { second })
+                    (at, if b.ready(first).is_some() { first } else { second }, false)
                 } else if let Some(at) = worker(&owner.index.parts, *p, |q| matches!(q, Part::Press(_))) {
-                    (at, create.compacting.as_slice())
+                    (at, create.compacting.as_slice(), true)
                 } else {
                     continue;
                 };
                 let speed = owner.shown.speeds.get(&at).map_or(0.0, |s| s[0]);
-                if let Some(into) = b.mix(speed, recipes, &mut || random.next_float()) {
+                let roll = &mut || random.next_float();
+                let made = if pressing {
+                    b.compact(speed, recipes, roll)
+                } else {
+                    b.mix(speed, recipes, roll)
+                };
+                if let Some(into) = made {
                     owner.mills_changed = true;
                     work.insert(at, into);
                 }
             }
             work.extend(owner.fan_work.iter().map(|(p, w)| (*p, w.clone())));
+            work.extend(owner.press_work.iter().map(|(p, w)| (*p, w.clone())));
             work.extend(owner.funnel_work.iter().map(|(p, w)| (*p, w.clone())));
             if work != owner.shown.work {
                 owner.shown.work = work;
@@ -1444,6 +1470,7 @@ impl Game<'_> {
     pub(super) fn tachyon_tick(&mut self) {
         self.tachyon_quests_tick();
         self.tachyon_fan_particles();
+        self.tachyon_press_heads();
         if self.remote.is_none() {
             return;
         }
@@ -1461,6 +1488,18 @@ impl Game<'_> {
                 .index
                 .sync(&mut self.world, &kinds, true, &mut Vec::new());
         });
+    }
+
+    /// A tick of the presses' heads this game draws: those at work run
+    /// their cycles.
+    fn tachyon_press_heads(&self) {
+        let working: Vec<([i32; 3], f32)> = self.tachyon_view(|index, shown| {
+            (shown.work.keys())
+                .filter(|p| matches!(index.parts.get(*p), Some(Part::Press(_))))
+                .map(|p| (*p, shown.speeds.get(p).map_or(0.0, |s| s[0])))
+                .collect()
+        });
+        CLIENT.with_borrow_mut(|client| client.heads.tick(working.into_iter()));
     }
 
     /// A `tachyon:*` payload from the server.
@@ -1519,7 +1558,17 @@ impl Game<'_> {
                 if shown.work.contains_key(pos) {
                     match part {
                         Part::Press(_) => {
-                            let drop = reach(&index.parts, *pos, Part::Depot);
+                            // With no depot or basin under it, onto what
+                            // lies on the ground a block down (as if on a
+                            // depot as high as that ground is low).
+                            let under = |d: i32| index.parts.get(&[pos[0], pos[1] - d, pos[2]]);
+                            let works = |q: Option<&Part>| matches!(q, Some(Part::Depot | Part::Basin));
+                            let ground = !(works(under(1)) || (under(1).is_none() && works(under(2))));
+                            let drop = if ground {
+                                1.0 + if create { 13.0 / 16.0 } else { 9.0 / 16.0 }
+                            } else {
+                                reach(&index.parts, *pos, Part::Depot)
+                            };
                             heads.push((*pos, *part, speed[0], drop, create));
                         }
                         Part::Mixer => {
@@ -1555,16 +1604,17 @@ impl Game<'_> {
             }
         }
         // A press at work: its head down onto what lies on the depot under
-        // it (`drop` blocks down) and up, once for each 100 work (5 seconds
-        // at 16 RPM). A mixer at work: its whisk down in the basin, turning.
-        // Each on a stem up into its block, as long as the head is low.
+        // it (`drop` blocks down) and up, by its cycle (`press.rs`). A mixer
+        // at work: its whisk down in the basin, turning. Each on a stem up
+        // into its block, as long as the head is low.
         for (pos, part, speed, drop, create) in heads {
             let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
             let origin = (at - camera).as_vec3();
             let packed = self.world.light(pos[0], pos[1] - 1, pos[2]);
             let light = horizon_client::block_entity_render::vertex_light(packed);
+            let down = CLIENT.with_borrow(|client| client.heads.down(pos, alpha as f32));
             if create {
-                self.tachyon_create_head(part, origin, speed, drop, ticks, light, out);
+                self.tachyon_create_head(part, origin, speed, drop, down, ticks, light, out);
                 continue;
             }
             // The head's bottom (blocks from the machine's), its height,
@@ -1578,13 +1628,6 @@ impl Game<'_> {
                 let whisk = "kinetica:block/mechanical_mixer_whisk";
                 (4.0 / 16.0 - drop, 8.0 / 16.0, turn, whisk, "kinetica:block/mechanical_mixer_pole")
             } else {
-                let period = f64::from((1600.0 / speed.abs().max(1.0)).max(6.0));
-                let phase = (ticks / period).fract() as f32;
-                let down = if phase < 0.35 {
-                    phase / 0.35
-                } else {
-                    (1.0 - phase) / 0.65
-                };
                 // From inside the press to the top of what lies on the tray.
                 let rest = 1.0 / 64.0;
                 let lowest = 9.0 / 16.0 + 1.0 / 32.0 - drop;
@@ -1652,6 +1695,7 @@ impl Game<'_> {
         origin: Vec3,
         speed: f32,
         drop: f32,
+        down: f32,
         ticks: f64,
         light: u32,
         out: &mut Vec<Vertex>,
@@ -1673,13 +1717,6 @@ impl Game<'_> {
             self.submit_item_world(&state, pole, light, out);
             return;
         }
-        let period = f64::from((1600.0 / speed.abs().max(1.0)).max(6.0));
-        let phase = (ticks / period).fract() as f32;
-        let down = if phase < 0.35 {
-            phase / 0.35
-        } else {
-            (1.0 - phase) / 0.65
-        };
         // Its pole is 27 high over the plate's bottom: up, flush with the
         // press's top; down, on what lies on the depot (13 high).
         let rest = 1.0 - 27.0 / 16.0;

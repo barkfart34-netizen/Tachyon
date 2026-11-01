@@ -11,7 +11,8 @@
 //! (`basins` in the dimension's `kinetica-*.json`).
 
 use super::super::Game;
-use super::millstone::{Held, Output, add_all};
+use super::millstone::{Held, Output, add_all, roll_outputs};
+use super::press::{self, Beat};
 use horizon_client::items::ItemStack;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
@@ -167,21 +168,56 @@ impl Basin {
                 return Some(into);
             }
         }
-        // Mixed: its outputs, if they fit (else it waits).
-        let made: Vec<Held> = (recipe.outputs.iter())
-            .filter(|o| o.chance >= 1.0 || roll() < o.chance)
-            .map(|o| Held {
-                item: o.item.clone(),
-                count: o.count,
-            })
-            .collect();
+        // Mixed, if what it makes fits (else it waits).
+        if !self.apply(recipe, roll) {
+            return None;
+        }
+        self.progress = 0.0;
+        Some(into)
+    }
+
+    /// A tick of a press at `speed` (RPM) over the basin compacting by the
+    /// first of `recipes` it holds all the items for (Create's
+    /// `PressingBehaviour` in basin mode): its cycle runs, and its head
+    /// coming down in the middle compacts them once, if what it makes fits.
+    /// What it compacts into, while it does.
+    pub fn compact(
+        &mut self,
+        speed: f32,
+        recipes: &[Mixing],
+        roll: &mut impl FnMut() -> f32,
+    ) -> Option<String> {
+        // Nothing to compact: the next begins a cycle of its own.
+        let Some(recipe) = self.ready(recipes) else {
+            self.progress = 0.0;
+            return None;
+        };
+        if speed == 0.0 {
+            return None;
+        }
+        let into = recipe.outputs.first()?.item.clone();
+        let mut ticks = self.progress as i32;
+        match press::beat(&mut ticks, speed) {
+            Beat::Done => ticks = 0,
+            Beat::Press => {
+                self.apply(recipe, roll);
+            }
+            Beat::Running => {}
+        }
+        self.progress = ticks as f32;
+        Some(into)
+    }
+
+    /// `recipe` made once of what the basin holds: its outputs, each by its
+    /// chance, if they fit with what it made before. Whether it was.
+    fn apply(&mut self, recipe: &Mixing, roll: &mut impl FnMut() -> f32) -> bool {
+        let made = roll_outputs(&recipe.outputs, roll);
         let mut outputs = self.outputs.clone();
         add_all(&mut outputs, &made);
         if outputs.len() > STACKS {
-            return None;
+            return false;
         }
         self.outputs = outputs;
-        self.progress = 0.0;
         for i in &recipe.inputs {
             let mut n = i.count;
             for s in self.inputs.iter_mut().filter(|s| s.item == i.item) {
@@ -191,7 +227,7 @@ impl Basin {
             }
         }
         self.inputs.retain(|s| s.count > 0);
-        Some(into)
+        true
     }
 }
 
@@ -250,6 +286,26 @@ mod tests {
                 chance: 1.0,
             }],
         }
+    }
+
+    #[test]
+    fn a_press_over_a_basin_compacts_once_a_cycle() {
+        let block = [recipe(&[("x:nugget", 9)], ("x:ingot", 1), 100.0)];
+        let mut b = Basin::default();
+        b.put("x:nugget", 18);
+        // At 32 RPM the head comes down on the 31st tick of each 62.
+        for _ in 0..30 {
+            assert_eq!(b.compact(32.0, &block, &mut || 0.0), Some("x:ingot".into()));
+        }
+        assert!(b.outputs.is_empty());
+        b.compact(32.0, &block, &mut || 0.0);
+        assert_eq!(b.outputs[0].count, 1);
+        for _ in 31..62 * 2 {
+            b.compact(32.0, &block, &mut || 0.0);
+        }
+        assert_eq!(b.outputs[0].count, 2);
+        assert!(b.inputs.is_empty());
+        assert_eq!(b.compact(32.0, &block, &mut || 0.0), None);
     }
 
     #[test]
