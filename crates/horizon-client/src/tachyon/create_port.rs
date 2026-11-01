@@ -38,20 +38,22 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     // A hollow block with a floor.
     ("basin", "minecraft:composter", 2.0, "minecraft:copper_block"),
     // Turning wheels, a whole block to stand on: a crushing wheel along its
-    // axis, a water wheel the way it faces (its shaft's).
+    // axis, a small water wheel the way it faces (its shaft's).
     ("crushing_wheel", "minecraft:iron_chain", 2.0, "minecraft:stone"),
     ("water_wheel", "minecraft:waxed_lightning_rod", 1.5, "minecraft:oak_planks"),
+    ("large_water_wheel", "minecraft:iron_chain", 1.5, "minecraft:oak_planks"),
 ];
 
 /// The blocks a whole block in every state, by their template's property.
 const WHOLE: &[(&str, &str, &[&str])] = &[
     ("creative_motor", "facing", &["down", "up", "north", "south", "west", "east"]),
     ("water_wheel", "facing", &["down", "up", "north", "south", "west", "east"]),
+    ("large_water_wheel", "axis", &["x", "y", "z"]),
     ("crushing_wheel", "axis", &["x", "y", "z"]),
 ];
 
 /// The blocks drawn by the engine alone, turning whole.
-const TURNING: &[&str] = &["shaft", "cogwheel", "large_cogwheel", "crushing_wheel"];
+const TURNING: &[&str] = &["shaft", "cogwheel", "large_cogwheel", "crushing_wheel", "large_water_wheel"];
 
 /// Makes the Create ported into `dir` (`horizon-mods/create`) the engine's.
 pub fn fix(dir: &Path) -> Result<(), String> {
@@ -212,6 +214,24 @@ mod tests {
         assert_eq!(state["variants"][""]["model"], "create:block/tachyon_still/shaft");
         let still = read(&dir.join("assets/create/models/block/tachyon_still/shaft.json")).unwrap();
         assert_eq!(still["textures"]["particle"], "create:block/axis");
+        let large = read(&dir.join("data/create/horizon/block/large_water_wheel.json")).unwrap();
+        assert_eq!(large["template"], "minecraft:iron_chain");
+        assert_eq!(large["properties"]["hardness"], 1.5);
+        assert_eq!(large["shapes"]["property"], "axis");
+        for axis in ["x", "y", "z"] {
+            assert_eq!(
+                large["shapes"]["values"][axis],
+                json!([[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]])
+            );
+        }
+        let state = read(&states.join("large_water_wheel.json")).unwrap();
+        assert_eq!(
+            state["variants"][""]["model"],
+            "create:block/tachyon_still/large_water_wheel"
+        );
+        let still =
+            read(&dir.join("assets/create/models/block/tachyon_still/large_water_wheel.json")).unwrap();
+        assert_eq!(still["elements"], json!([]));
         let clutch = read(&states.join("clutch.json")).unwrap();
         assert_eq!(
             clutch["variants"].as_object().unwrap().keys().collect::<Vec<_>>(),

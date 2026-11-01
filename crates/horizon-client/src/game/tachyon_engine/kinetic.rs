@@ -147,6 +147,9 @@ pub enum Part {
     /// A water wheel on a shaft along its axis, turned by the water flowing
     /// past it.
     WaterWheel(Axis),
+    /// Create's large water wheel, as LargeWaterWheelBlock: its shaft along
+    /// the axis, its rim two blocks from the center.
+    LargeWaterWheel(Axis),
     /// Sails on a shaft along its axis, turned by the wind under open sky.
     Windmill(Axis),
     /// A millstone: turned by a shaft from below, or by small cogwheels
@@ -187,6 +190,7 @@ impl Part {
             | Part::Clutch(a)
             | Part::Gearshift(a)
             | Part::WaterWheel(a)
+            | Part::LargeWaterWheel(a)
             | Part::Windmill(a)
             | Part::Fan(a)
             | Part::CrushingWheel(a) => d.axis() == a,
@@ -341,11 +345,13 @@ pub type Speeds = HashMap<[i32; 3], [f32; 2]>;
 
 /// What a source can take turning at `speed` (its own RPM), in stress
 /// units: a creative motor any load; the others more the faster they turn.
+/// Water wheel capacities follow Create's AllBlocks defaults (CStress).
 pub fn capacity(part: Part, speed: f32) -> f32 {
     match part {
         Part::Motor(_) => CREATIVE_CAPACITY * speed.abs(),
         Part::Crank(_) => 8.0 * speed.abs(),
         Part::WaterWheel(_) => 32.0 * speed.abs(),
+        Part::LargeWaterWheel(_) => 128.0 * speed.abs(),
         Part::Windmill(_) => 32.0 * speed.abs(),
         _ => 0.0,
     }
@@ -555,6 +561,46 @@ mod tests {
         assert_eq!(s.speeds.get(&[1, 0, 0]), Some(&[16.0; 2]));
         assert_eq!(s.speeds.get(&[-1, 0, 0]), Some(&[16.0; 2]));
         assert_eq!(s.speeds.get(&[0, 0, 1]), None);
+    }
+
+    #[test]
+    fn a_large_water_wheel_drives_both_ends_of_its_axis() {
+        for axis in [Axis::X, Axis::Y, Axis::Z] {
+            let [neg, pos] = axis.dirs();
+            let beside = Dir::ALL.into_iter().find(|d| d.axis() != axis).unwrap();
+            let p = parts(&[
+                ([0, 0, 0], Part::LargeWaterWheel(axis)),
+                (neg.offset(), Part::Shaft(axis)),
+                (pos.offset(), Part::Shaft(axis)),
+                (beside.offset(), Part::Shaft(beside.axis())),
+            ]);
+            for speed in [-4.0, 4.0] {
+                let s = solve1(&p, &[([0, 0, 0], speed)]);
+                assert_eq!(s.speeds.get(&neg.offset()), Some(&[speed; 2]));
+                assert_eq!(s.speeds.get(&pos.offset()), Some(&[speed; 2]));
+                assert_eq!(s.speeds.get(&beside.offset()), None);
+                assert_eq!(s.stress[&[0, 0, 0]].capacity, 512.0);
+                assert!(s.jammed.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn water_wheels_capacity_is_for_each_rpm() {
+        for axis in [Axis::X, Axis::Y, Axis::Z] {
+            for (part, rate) in [
+                (Part::WaterWheel(axis), 32.0),
+                (Part::LargeWaterWheel(axis), 128.0),
+            ] {
+                assert_eq!(capacity(part, 0.0), 0.0);
+                assert_eq!(capacity(part, 1.0), rate);
+                assert_eq!(capacity(part, 4.0), rate * 4.0);
+                assert_eq!(capacity(part, -4.0), rate * 4.0);
+                assert_eq!(part.impact(), 0.0);
+            }
+        }
+        assert_eq!(capacity(Part::WaterWheel(Axis::X), 8.0), 256.0);
+        assert_eq!(capacity(Part::LargeWaterWheel(Axis::X), 4.0), 512.0);
     }
 
     #[test]

@@ -76,10 +76,11 @@ and its logo are trademarks of the Microsoft group of companies; Horizon is not 
 Tachyon's machines follow the code of [Create](https://github.com/Creators-of-Create/Create)
 (tag `mc1.21.1-6.0.10`): its crushing wheels (`crates/horizon-client/src/game/tachyon_engine/crusher.rs`,
 from `CrushingWheelBlock`, `CrushingWheelControllerBlock` and `CrushingWheelControllerBlockEntity`),
-its recipe format (`create_recipes.rs`), and its machines' numbers in `kinetic.rs`, `millstone.rs`,
-`basin.rs`, `fan.rs`, `belt.rs` and `tachyon_engine.rs` (capacities, the water wheel's flow, the
-millstone's work, the mixer's time, the fan's reach, the funnel's stack). Create's code is under the
-MIT license:
+its water wheels (`water_wheel.rs`, from `WaterWheelBlockEntity`, `LargeWaterWheelBlockEntity`,
+`LargeWaterWheelBlock` and `WaterWheelRenderer`), its recipe format (`create_recipes.rs`),
+and its machines' numbers in `kinetic.rs`, `millstone.rs`, `basin.rs`, `fan.rs`, `belt.rs` and
+`tachyon_engine.rs` (capacities, the water wheel's flow, the millstone's work, the mixer's time,
+the fan's reach, the funnel's stack). Create's code is under the MIT license:
 
 ```
 Copyright (c) The Create Team / The Creators of Create

@@ -25,6 +25,7 @@ mod fan;
 mod millstone;
 mod obj_model;
 mod press;
+mod water_wheel;
 
 use super::Game;
 use glam::{DVec3, Mat4, Vec3};
@@ -57,8 +58,6 @@ const CRANK_TICKS: u64 = 10;
 /// Ticks between looks at the water round the wheels and the sky above
 /// the sails.
 const NATURE_TICKS: u64 = 20;
-/// A water wheel's speed for each side water flows past squarely.
-const WATER_SPEED: f32 = 8.0;
 /// Ticks between full sends of the speeds, for players who just came.
 const RESEND: u64 = 100;
 /// How far turning parts are drawn, in blocks.
@@ -169,6 +168,8 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
         "crushing_wheel" => Part::CrushingWheel(axis()?),
         // Its facing is its shaft's way.
         "water_wheel" => Part::WaterWheel(facing()?.axis()),
+        // LargeWaterWheelBlock uses an axis, not a facing.
+        "large_water_wheel" => Part::LargeWaterWheel(axis()?),
         _ => return None,
     })
 }
@@ -717,6 +718,8 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         // Their OBJ models (`obj_model.rs`), about Y.
         Part::CrushingWheel(a) => vec![("create:block/crushing_wheel/block", positive(a), 1.0, 0, Dir::Up)],
         Part::WaterWheel(a) => vec![("create:block/water_wheel/wheel", positive(a), 1.0, 0, Dir::Up)],
+        // WaterWheelRenderer's LARGE partial, about Y too.
+        Part::LargeWaterWheel(a) => vec![(water_wheel::LARGE_MODEL, positive(a), 1.0, 0, Dir::Up)],
         Part::Windmill(_)
         | Part::Belt(_)
         | Part::Depot
@@ -768,7 +771,11 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
             const HUB: &str = "kinetica:block/belt_pulley";
             vec![(HUB, neg, 1.0, 0), (HUB, pos, 1.0, 0)]
         }
-        Part::Depot | Part::Basin | Part::Funnel(_) | Part::CrushingWheel(_) => Vec::new(),
+        Part::Depot
+        | Part::Basin
+        | Part::Funnel(_)
+        | Part::CrushingWheel(_)
+        | Part::LargeWaterWheel(_) => Vec::new(),
     }
 }
 
@@ -927,7 +934,12 @@ impl Game<'_> {
                         .index
                         .parts
                         .iter()
-                        .filter(|(_, part)| matches!(part, Part::WaterWheel(_) | Part::Windmill(_)))
+                        .filter(|(_, part)| {
+                            matches!(
+                                part,
+                                Part::WaterWheel(_) | Part::LargeWaterWheel(_) | Part::Windmill(_)
+                            )
+                        })
                         .map(|(p, part)| (*p, *part))
                         .collect()
                 });
@@ -995,7 +1007,7 @@ impl Game<'_> {
                             }
                             Part::Crank(out) => (out, owner.cranks.get(p)?.1),
                             // Their speeds are their own already.
-                            Part::WaterWheel(_) | Part::Windmill(_) => {
+                            Part::WaterWheel(_) | Part::LargeWaterWheel(_) | Part::Windmill(_) => {
                                 return owner.natural.get(p).map(|s| (*p, *s));
                             }
                             _ => return None,
@@ -1185,27 +1197,9 @@ impl Game<'_> {
         let mut out = HashMap::new();
         for &(p, part) in parts {
             let speed = match part {
-                Part::WaterWheel(axis) => {
-                    // As Create's: each side whose water runs round the
-                    // wheel (in its plane, more along its rim than across)
-                    // votes for that way; it turns at 8 RPM the way most
-                    // vote.
-                    let along = Vec3::from(positive(axis).offset().map(|c| c as f32));
-                    let score: i32 = Dir::ALL
-                        .into_iter()
-                        .filter(|d| d.axis() != axis)
-                        .map(|d| {
-                            let r = Vec3::from(d.offset().map(|c| c as f32));
-                            let mut flow = self.tachyon_water_flow(add(p, d.offset()));
-                            flow -= along * flow.dot(along);
-                            if flow.length_squared() == 0.0 {
-                                return 0;
-                            }
-                            let round = r.cross(flow.normalize()).dot(along);
-                            if round.abs() > 0.5 { round.signum() as i32 } else { 0 }
-                        })
-                        .sum();
-                    score.clamp(-1, 1) as f32 * WATER_SPEED
+                Part::WaterWheel(axis) | Part::LargeWaterWheel(axis) => {
+                    let large = matches!(part, Part::LargeWaterWheel(_));
+                    water_wheel::speed(axis, large, |offset| self.tachyon_water_flow(add(p, offset)))
                 }
                 Part::Windmill(_) => {
                     let above = self.world.light(p[0], p[1] + 1, p[2]) >> 4;
@@ -1577,8 +1571,11 @@ impl Game<'_> {
                     continue;
                 }
                 let o = (at - camera).as_vec3();
-                // Large cogwheels reach a block past their own.
-                if view.is_some_and(|v| !v.intersects(o - Vec3::splat(1.5), o + Vec3::splat(2.5))) {
+                // Large cogwheels reach a block past their own. A large
+                // water wheel uses WaterWheelBlockEntity's bounds inflated
+                // by its size.
+                let radius = if matches!(part, Part::LargeWaterWheel(_)) { 2.0 } else { 1.5 };
+                if view.is_some_and(|v| !v.intersects(o - Vec3::splat(radius), o + Vec3::splat(radius + 1.0))) {
                     continue;
                 }
                 let speed = shown.speeds.get(pos).copied().unwrap_or([0.0; 2]);
@@ -1618,7 +1615,20 @@ impl Game<'_> {
             let light = horizon_client::block_entity_render::vertex_light(packed);
             let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
             let origin = (at - camera).as_vec3();
+            let large_model = match part {
+                Part::LargeWaterWheel(axis) if create => {
+                    Some(water_wheel::large_model(axis, |offset| {
+                        let p = add(pos, offset);
+                        matches!(
+                            kinds.part(self.world.block(p[0], p[1], p[2]).0),
+                            Some(Part::LargeWaterWheel(_))
+                        )
+                    }))
+                }
+                _ => None,
+            };
             for (model, toward, factor, half, native) in pieces(part, create) {
+                let model = large_model.unwrap_or(model);
                 let speed = speed[half] * factor;
                 let axis = toward.axis();
                 let degrees = kinetic::angle(part, pos, speed, ticks);
@@ -1832,6 +1842,7 @@ impl Game<'_> {
             Part::Clutch(_) => ("clutch", "Clutch"),
             Part::Gearshift(_) => ("gearshift", "Gearshift"),
             Part::WaterWheel(_) => ("water_wheel", "Water Wheel"),
+            Part::LargeWaterWheel(_) => ("large_water_wheel", "Large Water Wheel"),
             Part::Windmill(_) => ("windmill", "Windmill"),
             Part::Millstone => ("millstone", "Millstone"),
             Part::Press(_) => ("mechanical_press", "Mechanical Press"),
@@ -2025,6 +2036,23 @@ mod tests {
         assert!(create.iter().all(|p| p.0 == "create:block/shaft_half" && p.4 == Dir::South));
         let halves: Vec<usize> = pieces(Part::Clutch(Axis::X), false).iter().map(|p| p.3).collect();
         assert_eq!(halves, [0, 1]);
+    }
+
+    #[test]
+    fn a_large_water_wheel_uses_its_axis_and_creates_model() {
+        for (axis, name) in [(Axis::X, "x"), (Axis::Y, "y"), (Axis::Z, "z")] {
+            let props = |k: &str| (k == "axis").then_some(name);
+            let part = Part::LargeWaterWheel(axis);
+            assert_eq!(part_of("create:large_water_wheel", props), Some(part));
+            assert_eq!(
+                pieces(part, true),
+                vec![(water_wheel::LARGE_MODEL, positive(axis), 1.0, 0, Dir::Up)]
+            );
+            assert!(pieces(part, false).is_empty());
+        }
+        let facing = |k: &str| (k == "facing").then_some("north");
+        assert_eq!(part_of("create:large_water_wheel", facing), None);
+        assert_eq!(part_of("create:large_water_wheel", |_| None), None);
     }
 
     #[test]

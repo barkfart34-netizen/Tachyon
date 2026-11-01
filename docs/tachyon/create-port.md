@@ -38,7 +38,7 @@ diambil dari kode Create sendiri. Rencana besarnya ada di [rencana-modpack.md](r
 |---|---|---|
 | Motor kreatif | Kapasitas 16384 per RPM | 16384 rata, tidak tergantung RPM |
 | Kincir air | 8 RPM dikali arah aliran di sekitarnya: skor aliran dibatasi -1..1, jadi bisa berbalik. Kapasitas 32 per RPM. Lava juga bisa. | 8 RPM, kapasitas 16 per RPM |
-| Kincir air besar | 4 RPM, kapasitas 128 per RPM | Belum ada |
+| Kincir air besar | Skor aliran dari 12 titik tepi, dibatasi -1..1; 4 RPM, kapasitas 128 per RPM. Bidang 3×3 diisi `water_wheel_structure`. | Pemungutan suara dan angka sama; model Create berputar sepanjang `axis`. Blok penyangga 3×3 belum dipasang. |
 | Kincir angin | Bearing + layar: RPM = jumlah layar / 8, dibatasi 1..16. Kapasitas 512 per RPM. Butuh contraption. | Blok tunggal, kapasitas 32 per RPM |
 | Millstone | Kerja per tick = `clamp(int(abs(RPM)/16), 1, 512)`, bilangan bulat dan minimal 1. Lama per resep (`processing_time`). Berhenti bila satu dari 9 slot hasil penuh. | `RPM/16` pecahan; berhenti bila hasil lebih dari 9 tumpukan |
 | Press | Satu siklus 240; tiap tick maju `lerp(clamp(abs(RPM)/512, 0, 1), 1, 60)`; menekan di tengah siklus. Satu barang per tekanan (`bulkPressing` mati). Mengerjakan barang yang tergeletak di blok tepat di bawahnya, sabuk/depot dua blok di bawah, dan baskom dua blok di bawah (*compacting*). | Depot satu atau dua blok di bawah; belum ada barang tergeletak dan compacting |
@@ -90,6 +90,7 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
 - **Langkah 2 sebagian:** angka yang sudah disamakan dengan Create:
   - kapasitas motor kreatif (16384 per RPM);
   - kincir air (pemungutan suara aliran, 8 RPM, 32 per RPM);
+  - kincir air besar (12 titik tepi, 4 RPM, 128 per RPM);
   - kerja millstone (bilangan bulat, 1..512);
   - jangkauan kipas;
   - corong (satu tumpukan per 8 tick);
@@ -128,6 +129,12 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - Partikelnya memakai soul fire flame dan sesekali asap; nama proses tampil di kacamata dalam bahasa
     Inggris dan Indonesia.
   - Hasil cuci dan haunting dikocok per barang, seperti `RecipeApplier` Create.
+- **Kincir air besar bisa berputar dan digambar** (`tachyon_engine/water_wheel.rs`):
+  - memeriksa 12 titik di tepi, dua blok dari tengah, bukan empat tetangga kincir kecil;
+  - suara berlawanan saling membatalkan; hasilnya -4, 0, atau 4 RPM, kapasitas 128 per RPM (512 SU saat berputar);
+  - memakai model `create:block/large_water_wheel/block`, atau `block_extension` bila ada kincir besar
+    di sisi negatif poros, seperti `LargeWaterWheelBlock` dan `WaterWheelRenderer`;
+  - belum memasang `water_wheel_structure` di bidang 3×3: tumbukan dan pemilihan masih hanya di blok tengah.
 - **Belum:**
   - tarikan mob dan pemain melalui celah crushing wheel, serta posisi keluarnya sebelum mati.
 - Pemberitahuan MIT Create sudah ada di `THIRD_PARTY_NOTICES.md`.
@@ -144,6 +151,7 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
    - jangkauan dan waktu kipas;
    - jumlah corong;
    - kincir air: kapasitas 32, kecepatan mengikuti arah aliran;
+   - kincir air besar: kapasitas 128, 4 RPM menurut suara aliran di 12 titik tepi;
    - kapasitas motor kreatif.
 
    Kinetica ikut berubah supaya keduanya terasa sama.
@@ -153,7 +161,6 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
    - deployer;
    - blaze burner (panas untuk mixing);
    - belt connector;
-   - kincir air besar;
    - chute;
    - mechanical arm.
 4. **Kincir angin dan bearing** menunggu contraption (Tahap 4).
