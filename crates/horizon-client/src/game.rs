@@ -12433,7 +12433,7 @@ impl Game<'_> {
         );
         // Unselected tabs behind the panel, then the panel, then the selected tab.
         for (i, t) in tabs.iter().enumerate() {
-            if i != selected {
+            if i != selected && self.creative_screen.on_page(t) {
                 let (tx, ty) = Creative::tab_position(t);
                 batch.sprite(&self.gui.atlas, &tab_sprite(t, false), ox + tx, oy + ty);
                 let mouse = (self.cursor.0 - ox, self.cursor.1 - oy);
@@ -12458,7 +12458,7 @@ impl Game<'_> {
         }
         let (tx, ty) = Creative::tab_position(tab);
         batch.sprite(&self.gui.atlas, &tab_sprite(tab, true), ox + tx, oy + ty);
-        for t in &tabs {
+        for t in tabs.iter().filter(|t| self.creative_screen.on_page(t)) {
             let (tx, ty) = Creative::tab_position(t);
             let stack = ItemStack {
                 item: Arc::from(t.icon.as_str()),
@@ -12471,6 +12471,34 @@ impl Game<'_> {
                 &stack,
                 ox + tx + 5.0,
                 oy + ty + if t.top { 9.0 } else { 7.0 },
+            );
+        }
+        // Tachyon: NeoForge's page turners over the screen, and the page.
+        let pages = self.creative_screen.pages();
+        if pages > 1 {
+            let page = self.creative_screen.page;
+            let layout = Creative::page_layout(oy);
+            let mouse = (self.cursor.0 - ox, self.cursor.1 - oy);
+            for ((x, y), label, by) in [(layout.back, "<", -1), (layout.next, ">", 1)] {
+                let active = if by < 0 { page > 0 } else { page + 1 < pages };
+                let hover = self.creative_screen.page_button_at(mouse, oy) == Some(by);
+                let label = horizon_client::text::Text::literal(label);
+                horizon_client::ui::button(batch, &self.gui.atlas, ox + x, oy + y, 20.0, 20.0, &label, active, hover);
+            }
+            let (x, y, width) = layout.label;
+            let label = if layout.narrow {
+                format!("{}/{pages}", page + 1)
+            } else {
+                format!("{} / {pages}", page + 1)
+            };
+            horizon_client::ui::centered_text(
+                batch,
+                &self.gui.atlas,
+                &horizon_client::text::Text::literal(label),
+                ox + x,
+                oy + y,
+                width,
+                u32::MAX,
             );
         }
         let atlas = &self.gui.atlas;
@@ -12578,7 +12606,7 @@ impl Game<'_> {
                 oy + Creative::SCROLL_Y + self.creative_screen.scroller_offset(),
             );
         }
-        for t in &tabs {
+        for t in tabs.iter().filter(|t| self.creative_screen.on_page(t)) {
             let (tx, ty) = Creative::tab_position(t);
             if self.cursor.0 >= ox + tx
                 && self.cursor.0 < ox + tx + 26.0
@@ -12642,8 +12670,21 @@ impl Game<'_> {
         let batch = HudBatch::new(size);
         let (ox, oy) = Self::creative_origin(&batch);
         let (cx, cy) = self.cursor;
+        // Buttons take the left button only; their release must not drop a
+        // carried stack outside the panel.
+        if !right && let Some(by) = self.creative_screen.page_button_at((cx - ox, cy - oy), oy) {
+            self.creative_screen.turn_page(by);
+            self.audio.play_button_click();
+            self.inv_clicks.skip_release();
+            self.inv_drag = None;
+            self.last_inv_click = None;
+            return;
+        }
         let tabs = self.creative_screen.tabs.clone();
         for (i, t) in tabs.iter().enumerate() {
+            if !self.creative_screen.on_page(t) {
+                continue;
+            }
             let (tx, ty) = Creative::tab_position(t);
             if cx >= ox + tx && cx < ox + tx + 26.0 && cy >= oy + ty && cy < oy + ty + 32.0 {
                 select_creative_tab(&mut self.creative_screen, &mut self.inv_clicks, i);
