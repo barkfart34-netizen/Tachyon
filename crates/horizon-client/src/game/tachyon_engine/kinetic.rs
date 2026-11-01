@@ -171,6 +171,10 @@ pub enum Part {
     Belt(Axis),
     /// A funnel on a container's face, facing out of it, which doesn't turn.
     Funnel(Dir),
+    /// Create's crushing wheel on a shaft along its axis: two a block apart
+    /// turning against each other crush what falls between them
+    /// (tachyon_engine/crusher.rs).
+    CrushingWheel(Axis),
 }
 
 impl Part {
@@ -184,7 +188,8 @@ impl Part {
             | Part::Gearshift(a)
             | Part::WaterWheel(a)
             | Part::Windmill(a)
-            | Part::Fan(a) => d.axis() == a,
+            | Part::Fan(a)
+            | Part::CrushingWheel(a) => d.axis() == a,
             Part::Gearbox(a) => d.axis() != a,
             Part::Motor(out) | Part::Crank(out) => d == out,
             Part::Millstone => d == Dir::Down,
@@ -203,6 +208,7 @@ impl Part {
             Part::Press(_) => 8.0,
             Part::Mixer => 4.0,
             Part::Fan(_) => 2.0,
+            Part::CrushingWheel(_) => 8.0,
             _ => 0.0,
         }
     }

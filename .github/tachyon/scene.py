@@ -388,6 +388,15 @@ CREATE_SHOWCASE = [
     ("setblock", (-4, 2, 8), "create:mechanical_mixer"),
     ("setblock", (-4, 3, 8), "create:creative_motor[facing=down]"),
     ("setblock", (-4, -1, 8), "minecraft:hopper[facing=down]"),
+    # Two crushing wheels a block apart along x, turning against each other
+    # (their motors on opposite sides), a hopper under the gap between.
+    ("setblock", (-2, 1, 11), "create:crushing_wheel[axis=z]"),
+    ("setblock", (-2, 1, 12), "create:creative_motor[facing=north]"),
+    ("setblock", (0, 1, 11), "create:crushing_wheel[axis=z]"),
+    ("setblock", (0, 1, 10), "create:creative_motor[facing=south]"),
+    ("setblock", (-1, 0, 11), "minecraft:hopper[facing=down]"),
+    # Create's water wheel (an OBJ model), along x.
+    ("setblock", (3, 1, 4), "create:water_wheel[facing=east]"),
 ]
 
 
@@ -439,6 +448,10 @@ def create(control, out):
         time.sleep(0.5)
         control.send("mouse right click")
         time.sleep(0.5)
+    # Four raw iron dropped into the crushing wheels' gap.
+    x, y, z = base[0] - 1 + 0.5, base[1] + 2.3, base[2] + 11 + 0.5
+    item = '{Item:{id:"minecraft:raw_iron",count:4},PickupDelay:40s}'
+    control.send(f"chat /summon minecraft:item {x} {y} {z} {item}")
     # The whole showcase, twice a second apart (the parts turn between).
     visit((0, 0, -1), (0, 0, 5))
     control.send("look 0 25")
@@ -454,6 +467,8 @@ def create(control, out):
     control.send("screenshot " + os.path.join(out, "create-press.png"))
     visit((-4, 0, 10), (-4, 1, 8))
     control.send("screenshot " + os.path.join(out, "create-mixer.png"))
+    visit((-1, 0, 8), (-1, 1, 11))
+    control.send("screenshot " + os.path.join(out, "create-crusher.png"))
     # What they made, by now: the millstone's taken with an empty hand, the
     # depot's and the basin's out of the hoppers under them.
     control.send("chat /item replace entity @s weapon.mainhand with minecraft:air")
@@ -467,8 +482,11 @@ def create(control, out):
     control.send(f"chat /item replace entity @s weapon.mainhand from block {at((-4, -1, 8))} container.0")
     time.sleep(1)
     alloy = count("create:andesite_alloy")
-    print("create made: flour", flour, "sheets", sheets, "alloy", alloy)
-    return good and flour >= 4 and sheets >= 3 and alloy >= 1
+    control.send(f"chat /item replace entity @s weapon.mainhand from block {at((-1, 0, 11))} container.0")
+    time.sleep(1)
+    crushed = count("create:crushed_raw_iron")
+    print("create made: flour", flour, "sheets", sheets, "alloy", alloy, "crushed", crushed)
+    return good and flour >= 4 and sheets >= 3 and alloy >= 1 and crushed >= 4
 
 
 def lost_realms(control, out):

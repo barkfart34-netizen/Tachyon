@@ -37,10 +37,21 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("mechanical_mixer", "minecraft:polished_andesite", 2.5, "minecraft:copper_block"),
     // A hollow block with a floor.
     ("basin", "minecraft:composter", 2.0, "minecraft:copper_block"),
+    // Turning wheels, a whole block to stand on: a crushing wheel along its
+    // axis, a water wheel the way it faces (its shaft's).
+    ("crushing_wheel", "minecraft:iron_chain", 2.0, "minecraft:stone"),
+    ("water_wheel", "minecraft:waxed_lightning_rod", 1.5, "minecraft:oak_planks"),
+];
+
+/// The blocks a whole block in every state, by their template's property.
+const WHOLE: &[(&str, &str, &[&str])] = &[
+    ("creative_motor", "facing", &["down", "up", "north", "south", "west", "east"]),
+    ("water_wheel", "facing", &["down", "up", "north", "south", "west", "east"]),
+    ("crushing_wheel", "axis", &["x", "y", "z"]),
 ];
 
 /// The blocks drawn by the engine alone, turning whole.
-const TURNING: &[&str] = &["shaft", "cogwheel", "large_cogwheel"];
+const TURNING: &[&str] = &["shaft", "cogwheel", "large_cogwheel", "crushing_wheel"];
 
 /// Makes the Create ported into `dir` (`horizon-mods/create`) the engine's.
 pub fn fix(dir: &Path) -> Result<(), String> {
@@ -52,14 +63,17 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         declaration["template"] = json!(template);
         declaration["properties"]["hardness"] = json!(hardness);
         declaration["properties"]["sounds"] = json!(sounds);
-        // A motor is a box, not its template's rod.
-        if *block == "creative_motor" {
-            let body = [[0.0625, 0.0625, 0.0625, 0.9375, 0.9375, 0.9375]];
-            let values: serde_json::Map<String, Value> = ["down", "up", "north", "south", "west", "east"]
-                .into_iter()
-                .map(|f| (f.to_owned(), json!(body)))
+        // A motor is a box, not its template's rod; a wheel a whole block.
+        if let Some((_, property, values)) = WHOLE.iter().find(|(b, _, _)| b == block) {
+            let body = if *block == "creative_motor" {
+                [[0.0625, 0.0625, 0.0625, 0.9375, 0.9375, 0.9375]]
+            } else {
+                [[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]]
+            };
+            let values: serde_json::Map<String, Value> = (values.iter())
+                .map(|v| ((*v).to_owned(), json!(body)))
                 .collect();
-            declaration["shapes"] = json!({"property": "facing", "values": values});
+            declaration["shapes"] = json!({"property": property, "values": values});
         }
         write(&file, &declaration)?;
     }

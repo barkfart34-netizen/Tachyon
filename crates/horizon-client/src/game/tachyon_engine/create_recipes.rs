@@ -27,6 +27,8 @@ const MOST_SETS: usize = 64;
 #[derive(Default)]
 pub(super) struct Recipes {
     pub milling: Vec<Milling>,
+    /// The crushing wheels', before milling.
+    pub crushing: Vec<Milling>,
     pub pressing: Vec<Milling>,
     pub splashing: Vec<Milling>,
     /// A mixer's, over a basin.
@@ -48,7 +50,7 @@ impl Recipes {
     pub fn read(dir: &Path, game: &Lookup) -> Self {
         let mut recipes = Self::default();
         let mut files = Vec::new();
-        for kind in ["milling", "pressing", "splashing", "mixing", "compacting"] {
+        for kind in ["milling", "crushing", "pressing", "splashing", "mixing", "compacting"] {
             walk(&dir.join(kind), &mut files);
         }
         files.sort();
@@ -98,6 +100,8 @@ impl Recipes {
         };
         match kind {
             "create:milling" => single(&mut self.milling, MILLING_TIME),
+            // Create's own default: none, crushed at once.
+            "create:crushing" => single(&mut self.crushing, 0.0),
             "create:pressing" => single(&mut self.pressing, super::millstone::TIME),
             "create:splashing" => single(&mut self.splashing, super::fan::TIME as f32),
             "create:mixing" | "create:compacting" => {
@@ -120,6 +124,9 @@ impl Recipes {
 
     pub fn milling(&self, item: &str) -> Option<&Milling> {
         self.milling.iter().find(|r| r.input == item)
+    }
+    pub fn crushing(&self, item: &str) -> Option<&Milling> {
+        self.crushing.iter().find(|r| r.input == item)
     }
     pub fn pressing(&self, item: &str) -> Option<&Milling> {
         self.pressing.iter().find(|r| r.input == item)
@@ -167,7 +174,7 @@ fn holds(condition: &Value, game: &Lookup) -> bool {
             .is_some_and(|v| v.iter().any(|c| holds(c, game))),
         "neoforge:tag_empty" => condition["tag"]
             .as_str()
-            .is_none_or(|t| (game.tagged)(t).is_empty()),
+            .is_none_or(|t| tagged(t, game).is_empty()),
         "neoforge:true" => true,
         _ => false,
     }
@@ -232,11 +239,51 @@ fn alternatives(ingredient: &Value, game: &Lookup) -> Option<Vec<String>> {
         return Some(if (game.known)(item) { vec![item.to_owned()] } else { Vec::new() });
     }
     if let Some(tag) = ingredient["tag"].as_str() {
-        let mut items = (game.tagged)(tag);
+        let mut items = tagged(tag, game);
         items.sort();
         return Some(items);
     }
     None
+}
+
+/// The items of a tag: the game's, else for a NeoForge convention tag
+/// (`c:`) its likely members by the tag's name.
+fn tagged(tag: &str, game: &Lookup) -> Vec<String> {
+    let items = (game.tagged)(tag);
+    if items.is_empty() {
+        convention(tag, game.known)
+    } else {
+        items
+    }
+}
+
+/// NeoForge's convention tags (`c:ingots/iron`) are the loader's: a port
+/// gets only those an oracle saw. Their likely members by the tag's name,
+/// vanilla's and Create's, those the game has.
+fn convention(tag: &str, known: &dyn Fn(&str) -> bool) -> Vec<String> {
+    let Some(path) = tag.strip_prefix("c:") else {
+        return Vec::new();
+    };
+    let (group, m) = path.split_once('/').unwrap_or((path, ""));
+    let names: Vec<String> = match (group, m) {
+        ("ingots", m) => vec![format!("{m}_ingot")],
+        ("nuggets", m) => vec![format!("{m}_nugget")],
+        ("raw_materials", m) => vec![format!("raw_{m}")],
+        ("storage_blocks", m) => vec![format!("{m}_block")],
+        ("ores", m) => vec![format!("{m}_ore"), format!("deepslate_{m}_ore"), format!("nether_{m}_ore")],
+        ("gems", "lapis") => vec!["lapis_lazuli".to_owned()],
+        ("gems", "amethyst") => vec!["amethyst_shard".to_owned()],
+        ("gems", m) => vec![m.to_owned()],
+        ("dusts", "glowstone") => vec!["glowstone_dust".to_owned()],
+        ("dusts", m) => vec![m.to_owned()],
+        ("cobblestones", "") => ["cobblestone", "cobbled_deepslate", "mossy_cobblestone"].map(str::to_owned).to_vec(),
+        ("eggs", "") => ["egg", "blue_egg", "brown_egg"].map(str::to_owned).to_vec(),
+        _ => Vec::new(),
+    };
+    (names.into_iter())
+        .flat_map(|n| [format!("minecraft:{n}"), format!("create:{n}")])
+        .filter(|item| known(item))
+        .collect()
 }
 
 /// The sets of items a mixing's ingredients stand for (an item asked twice
@@ -307,7 +354,8 @@ mod tests {
             "c:raw_materials/iron" => vec!["minecraft:raw_iron".to_owned()],
             _ => Vec::new(),
         };
-        let known = |item: &str| !item.starts_with("ae2:");
+        // No nickel here: its convention tag stays empty.
+        let known = |item: &str| !item.starts_with("ae2:") && !item.contains("nickel");
         (tagged, known)
     }
 
@@ -380,6 +428,25 @@ mod tests {
         assert_eq!(alloy.inputs[1].item, "minecraft:iron_nugget");
         let ice = &r.compacting[0];
         assert_eq!((r.mixing.len(), ice.inputs.len(), ice.inputs[0].count), (1, 1, 2));
+    }
+
+    #[test]
+    fn a_convention_tag_the_game_lacks_stands_for_its_likely_items() {
+        let tagged = |_: &str| Vec::new();
+        let known = |item: &str| matches!(item, "minecraft:iron_ingot" | "minecraft:raw_iron" | "create:zinc_nugget");
+        let game = Lookup {
+            tagged: &tagged,
+            known: &known,
+        };
+        assert_eq!(tagged_in_game("c:ingots/iron", &game), ["minecraft:iron_ingot"]);
+        assert_eq!(tagged_in_game("c:raw_materials/iron", &game), ["minecraft:raw_iron"]);
+        assert_eq!(tagged_in_game("c:nuggets/zinc", &game), ["create:zinc_nugget"]);
+        assert!(tagged_in_game("c:ingots/tin", &game).is_empty());
+        assert!(tagged_in_game("minecraft:logs", &game).is_empty());
+    }
+
+    fn tagged_in_game(tag: &str, game: &Lookup) -> Vec<String> {
+        tagged(tag, game)
     }
 
     #[test]

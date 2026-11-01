@@ -20,8 +20,10 @@ pub(crate) mod kinetic;
 mod basin;
 mod belt;
 mod create_recipes;
+mod crusher;
 mod fan;
 mod millstone;
+mod obj_model;
 
 use super::Game;
 use glam::{DVec3, Mat4, Vec3};
@@ -163,6 +165,9 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
         "basin" => Part::Basin,
         "encased_fan" => Part::Fan(axis()?),
         "andesite_funnel" | "brass_funnel" => Part::Funnel(facing()?),
+        "crushing_wheel" => Part::CrushingWheel(axis()?),
+        // Its facing is its shaft's way.
+        "water_wheel" => Part::WaterWheel(facing()?.axis()),
         _ => return None,
     })
 }
@@ -317,6 +322,12 @@ struct Owner {
     funnels_out: HashSet<[i32; 3]>,
     /// What each funnel does, for the goggles ("inserting").
     funnel_work: HashMap<[i32; 3], String>,
+    /// The dropped items crushing wheels crush: in which gap, and what is
+    /// left of their countdown.
+    crushing: HashMap<u32, ([i32; 3], f32)>,
+    /// The dropped items a gap doesn't crush (none of its recipes, or what
+    /// it made), by the gap.
+    passed: HashMap<u32, [i32; 3]>,
 }
 
 impl Owner {
@@ -664,8 +675,10 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         // Its cogwheel; the head is drawn as it mixes.
         Part::Mixer => vec![("create:block/cogwheel_shaftless", Dir::Up, 1.0, 0, Dir::Up)],
         Part::Fan(a) => vec![("create:block/encased_fan/propeller", positive(a), 1.0, 0, Dir::South)],
-        Part::WaterWheel(_)
-        | Part::Windmill(_)
+        // Their OBJ models (`obj_model.rs`), about Y.
+        Part::CrushingWheel(a) => vec![("create:block/crushing_wheel/block", positive(a), 1.0, 0, Dir::Up)],
+        Part::WaterWheel(a) => vec![("create:block/water_wheel/wheel", positive(a), 1.0, 0, Dir::Up)],
+        Part::Windmill(_)
         | Part::Belt(_)
         | Part::Depot
         | Part::Basin
@@ -716,7 +729,7 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
             const HUB: &str = "kinetica:block/belt_pulley";
             vec![(HUB, neg, 1.0, 0), (HUB, pos, 1.0, 0)]
         }
-        Part::Depot | Part::Basin | Part::Funnel(_) => Vec::new(),
+        Part::Depot | Part::Basin | Part::Funnel(_) | Part::CrushingWheel(_) => Vec::new(),
     }
 }
 
@@ -808,8 +821,9 @@ impl Game<'_> {
             };
             let r = create_recipes::Recipes::read(&dir, &lookup);
             log::info!(
-                "Tachyon: Create's recipes: {} milling, {} pressing, {} splashing, {} mixing, {} compacting",
+                "Tachyon: Create's recipes: {} milling, {} crushing, {} pressing, {} splashing, {} mixing, {} compacting",
                 r.milling.len(),
+                r.crushing.len(),
                 r.pressing.len(),
                 r.splashing.len(),
                 r.mixing.len(),
@@ -902,6 +916,7 @@ impl Game<'_> {
         self.tachyon_fans();
         self.tachyon_belts();
         self.tachyon_funnels();
+        self.tachyon_crushers();
         let create = self.tachyon_create_recipes();
         let random = &mut self.world.random;
         let send = OWNERS.with_borrow_mut(|owners| {
@@ -1663,7 +1678,14 @@ impl Game<'_> {
                 .models
                 .entry(model)
                 .or_insert_with(|| {
-                    let baked = self.pack.item_renderer.bake(model);
+                    // An OBJ model of a ported mod's (Create's wheels), else
+                    // the item renderer's.
+                    let mods = Self::options_path().with_file_name(horizon_client::mod_list::DIR);
+                    let baked = (model.starts_with("create:"))
+                        .then(|| obj_model::bake(&mods, model))
+                        .flatten()
+                        .map(Arc::new)
+                        .unwrap_or_else(|| self.pack.item_renderer.bake(model));
                     Arc::new(ItemRenderState {
                         display: horizon_assets::item_model::DisplayContext::None,
                         layers: vec![LayerRender {
@@ -1730,6 +1752,7 @@ impl Game<'_> {
             Part::Fan(_) => ("encased_fan", "Encased Fan"),
             Part::Belt(_) => ("belt", "Mechanical Belt"),
             Part::Funnel(_) => ("funnel", "Funnel"),
+            Part::CrushingWheel(_) => ("crushing_wheel", "Crushing Wheel"),
         };
         // Create's blocks by Create's names.
         let state = self.world.block(hit.pos[0], hit.pos[1], hit.pos[2]);
