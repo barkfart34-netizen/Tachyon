@@ -27,6 +27,7 @@ pub(super) mod loading;
 mod millstone;
 mod obj_model;
 mod press;
+mod speed_controller;
 mod water_wheel;
 
 use super::Game;
@@ -189,6 +190,13 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
         "water_wheel" => Part::WaterWheel(facing()?.axis()),
         // LargeWaterWheelBlock uses an axis, not a facing.
         "large_water_wheel" => Part::LargeWaterWheel(axis()?),
+        // The four-way template's facing gives HorizontalAxisKineticBlock's
+        // shaft across the player's facing, below the cogwheel.
+        "rotation_speed_controller" => Part::SpeedController(match facing()?.axis() {
+            Axis::X => Axis::Z,
+            Axis::Z => Axis::X,
+            Axis::Y => return None,
+        }),
         _ => return None,
     })
 }
@@ -317,9 +325,12 @@ struct Owner {
     /// The creative motors' speeds the players set (RPM; the default is
     /// [`MOTOR_SPEED`]), kept in the world's folder.
     motors: HashMap<[i32; 3], f32>,
-    /// `motors` was read from the world's folder.
+    /// Rotation speed controllers' signed targets, kept per block as
+    /// SpeedControllerBlockEntity's scroll value (RPM, initially 16).
+    controllers: HashMap<[i32; 3], i32>,
+    /// The saved state was read from the world's folder.
     loaded: bool,
-    /// The speeds need solving again (a motor's speed changed).
+    /// The speeds need solving again (a motor's speed or a target changed).
     dirty: bool,
     /// The hand cranks turning: until which tick, and their speed.
     cranks: HashMap<[i32; 3], (u64, f32)>,
@@ -363,8 +374,34 @@ struct Owner {
 }
 
 impl Owner {
-    /// The motors' and millstones' file in the world's folder, for this
-    /// dimension.
+    /// New controllers start at Create's default. Broken ones forget their
+    /// target; unloaded ones keep it until their chunks come back.
+    fn sync_controllers(&mut self, removed: &[[i32; 3]]) -> bool {
+        let before = self.controllers.len();
+        let parts = &self.index.parts;
+        let known = &self.index.known;
+        self.controllers.retain(|p, _| {
+            !removed.contains(p) && match parts.get(p) {
+                Some(Part::SpeedController(_)) => true,
+                Some(_) => false,
+                None => !known.contains(&(p[0] >> 4, p[2] >> 4)),
+            }
+        });
+        let mut changed = self.controllers.len() != before;
+        for (&p, part) in parts {
+            if matches!(part, Part::SpeedController(_))
+                && let std::collections::hash_map::Entry::Vacant(entry) = self.controllers.entry(p)
+            {
+                entry.insert(speed_controller::DEFAULT_SPEED);
+                changed = true;
+            }
+        }
+        self.dirty |= changed;
+        changed
+    }
+
+    /// The motors', controllers' and machines' file in the world's folder,
+    /// for this dimension.
     fn file(root: &std::path::Path, dimension: &str) -> std::path::PathBuf {
         let name = dimension.replace([':', '/'], "_");
         root.join("tachyon").join(format!("kinetica-{name}.json"))
@@ -381,6 +418,12 @@ impl Owner {
         self.motors = rows
             .into_iter()
             .map(|[x, y, z, s]| ([x as i32, y as i32, z as i32], s as f32))
+            .collect();
+        let controllers: Vec<([i32; 3], i32)> =
+            serde_json::from_value(value["controllers"].clone()).unwrap_or_default();
+        self.controllers = controllers
+            .into_iter()
+            .map(|(p, s)| (p, speed_controller::limit(s)))
             .collect();
         let mills: Vec<([i32; 3], millstone::Mill)> =
             serde_json::from_value(value["mills"].clone()).unwrap_or_default();
@@ -410,6 +453,8 @@ impl Owner {
             })
             .collect();
         rows.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let mut controllers: Vec<(&[i32; 3], &i32)> = self.controllers.iter().collect();
+        controllers.sort_by_key(|(p, _)| **p);
         let mut mills: Vec<(&[i32; 3], &millstone::Mill)> =
             self.mills.iter().filter(|(_, m)| !m.is_empty()).collect();
         mills.sort_by_key(|(p, _)| **p);
@@ -426,6 +471,7 @@ impl Owner {
         let file = Self::file(root, dimension);
         let text = serde_json::json!({
             "motors": rows,
+            "controllers": controllers,
             "mills": mills,
             "basins": basins,
             "funnels": funnels,
@@ -606,11 +652,12 @@ struct Shown {
     crushers: HashMap<[i32; 3], String>,
     /// Chute items' previous and current heights, and the open pull below.
     chutes: HashMap<[i32; 3], [f32; 3]>,
+    targets: HashMap<[i32; 3], i32>,
 }
 
 /// What the parts show as a payload: the turning parts (each half's
 /// speed), the jammed ones, the stress of each part's network, the
-/// machines at work and the stacks they hold.
+/// machines at work, the stacks they hold and the controllers' targets.
 fn encode(shown: &Shown) -> Vec<u8> {
     let Shown {
         speeds,
@@ -620,8 +667,11 @@ fn encode(shown: &Shown) -> Vec<u8> {
         held,
         crushers,
         chutes,
+        targets,
     } = shown;
-    let mut out = Vec::with_capacity(29 + speeds.len() * 20 + jammed.len() * 12 + stress.len() * 20);
+    let mut out = Vec::with_capacity(
+        33 + speeds.len() * 20 + jammed.len() * 12 + stress.len() * 20 + targets.len() * 16,
+    );
     let pos = |out: &mut Vec<u8>, p: &[i32; 3]| {
         for v in p {
             out.extend_from_slice(&v.to_le_bytes());
@@ -677,11 +727,16 @@ fn encode(shown: &Shown) -> Vec<u8> {
             out.extend_from_slice(&v.to_le_bytes());
         }
     }
+    out.extend_from_slice(&(targets.len() as u32).to_le_bytes());
+    for (p, target) in targets {
+        pos(&mut out, p);
+        out.extend_from_slice(&target.to_le_bytes());
+    }
     out
 }
 
 /// The payload's form.
-const VERSION: u8 = 7;
+const VERSION: u8 = 8;
 
 fn decode(data: &[u8]) -> Option<Shown> {
     let mut at = 0usize;
@@ -772,6 +827,12 @@ fn decode(data: &[u8]) -> Option<Shown> {
             f32::from_le_bytes(word(&b[8..12])),
         ]);
     }
+    let count = u32::from_le_bytes(word(next(4)?)) as usize;
+    let mut targets = HashMap::with_capacity(count.min(1 << 10));
+    for _ in 0..count {
+        let b = next(16)?;
+        targets.insert(pos(b), speed_controller::limit(i32::from_le_bytes(word(&b[12..16]))));
+    }
     Some(Shown {
         speeds,
         jammed,
@@ -780,6 +841,7 @@ fn decode(data: &[u8]) -> Option<Shown> {
         held,
         crushers,
         chutes,
+        targets,
     })
 }
 
@@ -800,12 +862,17 @@ fn pieces(part: Part, create: bool) -> Vec<(&'static str, Dir, f32, usize, Dir)>
 /// EncasedCogRenderer and EncasedCogVisual (Create, MIT) turn shaftless
 /// cogwheels when EncasedCogwheelBlock's ends are closed. A gauge has a
 /// shaft, as GaugeRenderer extends ShaftRenderer; its casing stays in the
-/// chunk mesh.
+/// chunk mesh. SpeedControllerRenderer draws a whole shaft through its
+/// controller's casing.
 fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
     const HALF: &str = "create:block/shaft_half";
     const SHAFT: &str = "create:block/shaft";
     match part {
-        Part::Shaft(a) | Part::Press(a) | Part::SpeedGauge(a) | Part::StressGauge(a) => {
+        Part::Shaft(a)
+        | Part::Press(a)
+        | Part::SpeedGauge(a)
+        | Part::StressGauge(a)
+        | Part::SpeedController(a) => {
             vec![(SHAFT, positive(a), 1.0, 0, Dir::Up)]
         }
         Part::Cog(a) => vec![("create:block/cogwheel", positive(a), 1.0, 0, Dir::Up)],
@@ -895,7 +962,8 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::EncasedCog(_)
         | Part::EncasedLargeCog(_)
         | Part::SpeedGauge(_)
-        | Part::StressGauge(_) => Vec::new(),
+        | Part::StressGauge(_)
+        | Part::SpeedController(_) => Vec::new(),
     }
 }
 
@@ -1020,15 +1088,18 @@ impl Game<'_> {
             owner.ticks += 1;
             // Sculk reads the writes after this: they stay.
             let mut removed = Vec::new();
+            let revision = owner.index.revision;
             let changed = owner
                 .index
                 .sync(&mut self.world, &kinds, false, &mut removed);
-            // A motor broken forgets its speed.
+            // A motor or controller broken forgets its speed or target.
             let before = owner.motors.len();
             owner.motors.retain(|p, _| !removed.contains(p));
+            let controllers = (changed || owner.dirty || owner.index.revision != revision)
+                && owner.sync_controllers(&removed);
             let funnels = owner.funnels_out.len();
             owner.funnels_out.retain(|p| !removed.contains(p));
-            if owner.motors.len() != before || owner.funnels_out.len() != funnels {
+            if owner.motors.len() != before || owner.funnels_out.len() != funnels || controllers {
                 owner.save(&root, dimension);
             }
             // A millstone, a depot or a basin broken drops what it held.
@@ -1149,7 +1220,13 @@ impl Game<'_> {
                         Some((*p, if out.positive() { set } else { -set }))
                     })
                     .collect();
-                let solved = kinetic::solve(&owner.index.parts, &sources, &owner.powered);
+                let solved = kinetic::solve(&owner.index.parts, &sources, &owner.powered, &owner.controllers);
+                let targets: HashMap<[i32; 3], i32> = owner
+                    .controllers
+                    .iter()
+                    .filter(|(p, _)| matches!(owner.index.parts.get(*p), Some(Part::SpeedController(_))))
+                    .map(|(p, s)| (*p, *s))
+                    .collect();
                 let shown = &mut owner.shown;
                 if solved.speeds != shown.speeds
                     || solved.jammed != shown.jammed
@@ -1158,6 +1235,10 @@ impl Game<'_> {
                     shown.speeds = solved.speeds;
                     shown.jammed = solved.jammed;
                     shown.stress = solved.stress;
+                    send = true;
+                }
+                if targets != shown.targets {
+                    shown.targets = targets;
                     send = true;
                 }
             }
@@ -1821,6 +1902,29 @@ impl Game<'_> {
                 let state = self.tachyon_model(model);
                 self.submit_item_world(&state, pose, light, out);
             }
+            // SpeedControllerRenderer's bracket is stationary, one block
+            // up, whenever a horizontal large cogwheel is present.
+            if create
+                && let Part::SpeedController(axis) = part
+                && matches!(
+                    kinds.part(self.world.block(pos[0], pos[1] + 1, pos[2]).0),
+                    Some(Part::LargeCog(Axis::X | Axis::Z))
+                )
+            {
+                let turn = if axis == Axis::X {
+                    std::f32::consts::PI
+                } else {
+                    std::f32::consts::FRAC_PI_2
+                };
+                let pose = Mat4::from_translation(origin + Vec3::new(0.5, 1.5, 0.5))
+                    * Mat4::from_rotation_y(turn)
+                    * Mat4::from_translation(Vec3::splat(-0.5));
+                let light = horizon_client::block_entity_render::vertex_light(
+                    self.world.light(pos[0], pos[1] + 1, pos[2]),
+                );
+                let state = self.tachyon_model(speed_controller::BRACKET_MODEL);
+                self.submit_item_world(&state, pose, light, out);
+            }
         }
         // A press at work: its head down onto what lies on the depot under
         // it (`drop` blocks down) and up, by its cycle (`press.rs`). A mixer
@@ -2009,9 +2113,10 @@ impl Game<'_> {
                 shown.stress.get(&hit.pos).copied(),
                 shown.work.get(&hit.pos).cloned(),
                 shown.held.get(&hit.pos).cloned(),
+                shown.targets.get(&hit.pos).copied(),
             ))
         });
-        let Some((part, speed, jammed, stress, work, held)) = seen else {
+        let Some((part, speed, jammed, stress, work, held, target)) = seen else {
             return;
         };
         let (block, english) = match part {
@@ -2035,6 +2140,7 @@ impl Game<'_> {
             Part::Basin => ("basin", "Basin"),
             Part::Fan(_) => ("encased_fan", "Encased Fan"),
             Part::Belt(_) => ("belt", "Mechanical Belt"),
+            Part::SpeedController(_) => ("rotation_speed_controller", "Rotation Speed Controller"),
             Part::Funnel(_) => ("funnel", "Funnel"),
             Part::CrushingWheel(_) => ("crushing_wheel", "Crushing Wheel"),
             Part::Chute(_, _) => ("chute", "Chute"),
@@ -2062,6 +2168,12 @@ impl Game<'_> {
                     .replace("%s", &speed.abs().round().to_string())
             };
             // Other parts show the network's load, not its remaining capacity.
+        if matches!(part, Part::SpeedController(_)) {
+            let target = target.unwrap_or(speed_controller::DEFAULT_SPEED);
+            let text = self.translate("kinetica.hud.target", "target %s RPM")
+                .replace("%s", &target.to_string());
+            state = format!("{state} | {text}");
+        }
             if let Some(s) = stress {
                 let su = self
                     .translate("kinetica.hud.stress", "%s / %s SU")
@@ -2149,9 +2261,10 @@ mod tests {
                 ([3, 64, 2], [0.8, 0.6, 0.0]),
                 ([-3, 65, 2], [-0.5, -0.3, 3.0]),
             ]),
+            targets: HashMap::from([([4, 64, 2], -64), ([5, 64, 2], 0), ([6, 64, 2], 256)]),
         };
         let data = encode(&shown);
-        assert_eq!(data[0], 7);
+        assert_eq!(data[0], 8);
         assert_eq!(decode(&data), Some(shown.clone()));
         assert_eq!(decode(&encode(&Shown::default())), Some(Shown::default()));
         assert!(decode(&[1]).is_none());
@@ -2459,6 +2572,76 @@ mod tests {
         ] {
             assert!(!is_goggles_item(item));
         }
+    }
+
+    #[test]
+    fn a_controller_uses_a_horizontal_template_and_creates_shaft() {
+        for (facing, axis) in [("north", Axis::X), ("south", Axis::X), ("west", Axis::Z), ("east", Axis::Z)] {
+            let props = |k: &str| (k == "facing").then_some(facing);
+            let part = Part::SpeedController(axis);
+            assert_eq!(part_of("create:rotation_speed_controller", props), Some(part));
+            assert_eq!(pieces(part, true), vec![("create:block/shaft", positive(axis), 1.0, 0, Dir::Up)]);
+            assert!(pieces(part, false).is_empty());
+            assert!(!takes_use(part));
+        }
+        assert_eq!(part_of("create:rotation_speed_controller", |k| (k == "facing").then_some("up")), None);
+        assert_eq!(part_of("create:rotation_speed_controller", |_| None), None);
+    }
+
+    #[test]
+    fn controller_targets_survive_unloading_but_not_breaking_or_replacement() {
+        let p = [1, 64, 3];
+        let mut owner = Owner::default();
+        owner.index.parts.insert(p, Part::SpeedController(Axis::X));
+        assert!(owner.sync_controllers(&[]));
+        assert_eq!(owner.controllers[&p], speed_controller::DEFAULT_SPEED);
+        owner.controllers.insert(p, -64);
+        owner.index.parts.clear();
+        assert!(!owner.sync_controllers(&[]));
+        assert_eq!(owner.controllers[&p], -64);
+        // The same controller comes back, even if its facing changed.
+        owner.index.known.insert((0, 0));
+        owner.index.parts.insert(p, Part::SpeedController(Axis::Z));
+        assert!(!owner.sync_controllers(&[]));
+        assert_eq!(owner.controllers[&p], -64);
+        owner.index.parts.insert(p, Part::Shaft(Axis::X));
+        assert!(owner.sync_controllers(&[]));
+        assert!(!owner.controllers.contains_key(&p));
+        owner.index.parts.insert(p, Part::SpeedController(Axis::X));
+        assert!(owner.sync_controllers(&[]));
+        assert_eq!(owner.controllers[&p], speed_controller::DEFAULT_SPEED);
+        owner.index.parts.remove(&p);
+        assert!(owner.sync_controllers(&[p]));
+        assert!(!owner.controllers.contains_key(&p));
+        // A loaded chunk no longer has the saved controller in it.
+        owner.controllers.insert(p, -64);
+        assert!(owner.sync_controllers(&[]));
+        assert!(!owner.controllers.contains_key(&p));
+    }
+
+    #[test]
+    fn controller_targets_are_saved_per_block_and_old_files_get_the_default() {
+        let root = std::env::temp_dir().join(format!("tachyon-controller-save-{}", std::process::id()));
+        let dimension = "minecraft:overworld";
+        let (a, b, c) = ([1, 64, 3], [-5, -20, 9], [9, 64, 9]);
+        let mut owner = Owner::default();
+        owner.motors.insert([0, 64, 0], 128.0);
+        owner.controllers.extend([(a, -64), (b, 0), (c, 1000)]);
+        owner.save(&root, dimension);
+        let mut loaded = Owner::default();
+        loaded.load(&root, dimension);
+        assert_eq!(loaded.controllers, HashMap::from([(a, -64), (b, 0), (c, 256)]));
+        assert_eq!(loaded.motors, owner.motors);
+        let legacy_dimension = "minecraft:the_nether";
+        std::fs::write(Owner::file(&root, legacy_dimension), r#"{"motors":[[0,64,0,32]]}"#).unwrap();
+        let mut legacy = Owner::default();
+        legacy.load(&root, legacy_dimension);
+        assert!(legacy.controllers.is_empty());
+        legacy.index.parts.insert(a, Part::SpeedController(Axis::X));
+        assert!(legacy.sync_controllers(&[]));
+        assert_eq!(legacy.controllers[&a], speed_controller::DEFAULT_SPEED);
+        assert_eq!(legacy.motors[&[0, 64, 0]], 32.0);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

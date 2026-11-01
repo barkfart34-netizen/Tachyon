@@ -183,6 +183,19 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - hanya tiga orientasi bawaan dipertahankan, satu per sumbu, dengan model `gauge/base` dan `gauge/base_wall`
     serta rotasinya tetap. Tumbukan memakai blok penuh pilar kuarsa, bukan bentuk `GaugeShaper`;
   - kepala dan jarum, partikel, comparator, serta sambungan display belum dikerjakan.
+- **Rotation speed controller bekerja** (`tachyon_engine/speed_controller.rs`):
+  - poros horizontal di casing memutar roda gigi besar tepat di atasnya, dengan poros roda pada sumbu
+    horizontal yang tegak lurus, seperti `SpeedControllerBlock` dan `RotationPropagator`;
+  - target awal 16 RPM, dibatasi -256..256; tanda target menentukan arah, terlepas dari arah putaran
+    masukan; target nol menghentikan keluaran, dan tanpa masukan tidak menghasilkan putaran;
+  - roda di atas juga bisa menjadi masukan: poros casing lalu berputar pada target, tanpa mengubah
+    kecepatan roda yang menggerakkannya;
+  - target disimpan per blok di file mesin; bongkar blok menghapus target, lepas muat chunk tetap
+    menyimpannya; kacamata menampilkan target dalam bahasa Inggris dan Indonesia;
+  - mesin setelah controller memakai beban pada RPM keluarannya; kapasitas tetap dari sumber asli,
+    controller sendiri tidak memakai beban, seperti `CStress.setNoImpact()`;
+  - casing, poros dan bracket memakai model Create dari perangkat pemain; belum ada antarmuka
+    untuk mengubah target atau pembantu pemasangan yang menyelaraskan poros otomatis.
 - **Belum:**
   - tarikan mob dan pemain melalui celah crushing wheel, serta posisi keluarnya sebelum mati.
 - Pemberitahuan MIT Create sudah ada di `THIRD_PARTY_NOTICES.md`.

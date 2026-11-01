@@ -123,6 +123,8 @@ from `GaugeBlock`, `DirectionalAxisKineticBlock`, `GaugeGenerator`, `Directional
 `GaugeBlockEntity`, `SpeedGaugeBlockEntity`, `StressGaugeBlockEntity`, `IRotate`, `GaugeRenderer`,
 `ShaftRenderer` and `AllBlocks`), its goggles (`tachyon_engine.rs` and `tachyon/create_port.rs`,
 from `AllItems.GOGGLES` and `GogglesItem`),
+its rotation speed controllers (`speed_controller.rs`, from `SpeedControllerBlock`,
+`SpeedControllerBlockEntity`, `SpeedControllerRenderer` and `RotationPropagator`),
 and its machines' numbers in `kinetic.rs`, `millstone.rs`, `basin.rs`, `fan.rs`, `belt.rs` and
 `tachyon_engine.rs` (capacities, the water wheel's flow, the millstone's work, the mixer's time,
 the fan's reach, the funnel's stack). Create's code is under the MIT license:

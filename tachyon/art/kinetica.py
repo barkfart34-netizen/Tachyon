@@ -1150,6 +1150,7 @@ HUD = {
     "kinetica.hud.still": ("still", "diam"),
     "kinetica.hud.jammed": ("jammed", "macet"),
     "kinetica.hud.rpm": ("%s RPM", "%s RPM"),
+    "kinetica.hud.target": ("target %s RPM", "sasaran %s RPM"),
     "kinetica.hud.overstressed": ("overstressed", "kelebihan beban"),
     "kinetica.hud.stress": ("%s / %s SU", "%s / %s SU"),
     "kinetica.hud.pressing": ("Pressing", "Penekanan"),

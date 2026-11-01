@@ -8,6 +8,8 @@
 //! them and a gearshift turns one against the other. The rules follow
 //! Create's (MIT); the code is Tachyon's. Cogwheel links follow ICogWheel
 //! and RotationPropagator, including EncasedCogwheelBlock's closed shafts.
+//! A rotation speed controller sets the speed across its link to the large
+//! cogwheel above it ([`super::speed_controller`]), without becoming a motor.
 //!
 //! [`solve`] gives every half of every part its speed from the sources it
 //! is joined to. A network whose parts disagree (two motors at odds, a loop
@@ -18,6 +20,7 @@
 //! ([`Part::impact`]), and its sources can take so much ([`capacity`], in
 //! stress units). A network loaded past its capacity is overstressed and
 //! stays still too.
+use super::speed_controller;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// The fastest a part may turn.
@@ -179,6 +182,9 @@ pub enum Part {
     Gearbox(Axis),
     /// A motor turning its shaft out of one side.
     Motor(Dir),
+    /// Create's SpeedControllerBlock: a horizontal shaft under a large
+    /// cogwheel on the other horizontal axis, driven at a saved target RPM.
+    SpeedController(Axis),
     /// A hand crank turning the shaft it sits on, out of this side.
     Crank(Dir),
     /// Two half shafts along the axis, parted while powered.
@@ -246,6 +252,7 @@ impl Part {
             Part::Millstone => d == Dir::Down,
             Part::Press(a) => d.axis() == a && d != Dir::Down,
             Part::Mixer => d == Dir::Up,
+            Part::SpeedController(a) => a != Axis::Y && d.axis() == a,
             // Its pulleys' shafts, out of its sides.
             Part::Belt(a) => d.axis() != a && d.axis() != Axis::Y,
             Part::EncasedCog(_)
@@ -265,6 +272,8 @@ impl Part {
             Part::Mixer => 4.0,
             Part::Fan(_) => 2.0,
             Part::CrushingWheel(_) => 8.0,
+            // AllBlocks registers CStress.setNoImpact for the controller.
+            Part::SpeedController(_) => 0.0,
             _ => 0.0,
         }
     }
@@ -437,11 +446,13 @@ pub struct Solved {
 
 /// Solves the speeds of `parts`, with `sources` (positions of motors and
 /// cranks among them) turning at their own speeds, and the clutches and
-/// gearshifts at `powered` powered.
+/// gearshifts at `powered` powered. A controller's target is at `targets`,
+/// or SpeedControllerBlockEntity.DEFAULT_SPEED when absent.
 pub fn solve(
     parts: &HashMap<[i32; 3], Part>,
     sources: &HashMap<[i32; 3], f32>,
     powered: &HashSet<[i32; 3]>,
+    targets: &HashMap<[i32; 3], i32>,
 ) -> Solved {
     let mut halves: HashMap<Node, f32> = HashMap::new();
     let mut jammed: HashSet<[i32; 3]> = HashSet::new();
@@ -455,6 +466,8 @@ pub fn solve(
         }
         // One network: every half reached from this source.
         let mut network: HashMap<Node, f32> = HashMap::new();
+        // The first neighbour feeding each controller: its shaft or wheel.
+        let mut controller_sources: HashMap<[i32; 3], [i32; 3]> = HashMap::new();
         let mut bad = speed.abs() > MAX_SPEED;
         network.insert((start, 0), speed);
         let mut queue = VecDeque::from([(start, 0)]);
@@ -502,13 +515,38 @@ pub fn solve(
                 let Some(&other) = parts.get(&next) else {
                     continue;
                 };
-                let Some((from, to, factor)) = link(part, other, diff) else {
-                    continue;
+                let (from, to, want) = if let Some(targeting) = speed_controller::connection(part, other, diff) {
+                    let (controller, wheel) = if targeting { (next, pos) } else { (pos, next) };
+                    let target = targets.get(&controller).copied()
+                        .unwrap_or(speed_controller::DEFAULT_SPEED);
+                    // A target does not generate rotation. At zero the two
+                    // sides are disconnected, as Create's stopped output.
+                    if here == 0.0 || target == 0 {
+                        continue;
+                    }
+                    let shaft_speed = network.get(&(controller, 0)).copied().unwrap_or(0.0);
+                    let wheel_speed = network.get(&(wheel, 0)).copied().unwrap_or(0.0);
+                    let drive = match controller_sources.get(&controller) {
+                        None => speed_controller::Drive::None,
+                        Some(p) if *p == wheel => speed_controller::Drive::Wheel,
+                        Some(_) => speed_controller::Drive::Shaft,
+                    };
+                    (0, 0, speed_controller::conveyed(
+                        target, shaft_speed, wheel_speed, drive, targeting,
+                    ))
+                } else {
+                    let Some((from, to, factor)) = link(part, other, diff) else {
+                        continue;
+                    };
+                    (from, to, here * factor)
                 };
                 if from != half {
                     continue;
                 }
-                if reached((next, to), here * factor, &mut network, &mut bad) {
+                if reached((next, to), want, &mut network, &mut bad) {
+                    if matches!(other, Part::SpeedController(_)) {
+                        controller_sources.insert(next, pos);
+                    }
                     queue.push_back((next, to));
                 }
             }
@@ -586,7 +624,7 @@ mod tests {
     }
 
     fn solve1(p: &HashMap<[i32; 3], Part>, sources: &[([i32; 3], f32)]) -> Solved {
-        solve(p, &sources.iter().copied().collect(), &HashSet::new())
+        solve(p, &sources.iter().copied().collect(), &HashSet::new(), &HashMap::new())
     }
 
     #[test]
@@ -879,14 +917,14 @@ mod tests {
         let on = HashSet::from([[1, 0, 0]]);
         let off = HashSet::new();
         let clutch = line(Part::Clutch(Axis::X));
-        assert_eq!(solve(&clutch, &sources, &off).speeds[&[2, 0, 0]][0], 32.0);
-        let parted = solve(&clutch, &sources, &on);
+        assert_eq!(solve(&clutch, &sources, &off, &HashMap::new()).speeds[&[2, 0, 0]][0], 32.0);
+        let parted = solve(&clutch, &sources, &on, &HashMap::new());
         assert_eq!(parted.speeds.get(&[2, 0, 0]), None);
         // The motor's half turns, the other doesn't.
         assert_eq!(parted.speeds[&[1, 0, 0]], [32.0, 0.0]);
         let shift = line(Part::Gearshift(Axis::X));
-        assert_eq!(solve(&shift, &sources, &off).speeds[&[2, 0, 0]][0], 32.0);
-        let reversed = solve(&shift, &sources, &on);
+        assert_eq!(solve(&shift, &sources, &off, &HashMap::new()).speeds[&[2, 0, 0]][0], 32.0);
+        let reversed = solve(&shift, &sources, &on, &HashMap::new());
         assert_eq!(reversed.speeds[&[2, 0, 0]][0], -32.0);
         assert_eq!(reversed.speeds[&[1, 0, 0]], [32.0, -32.0]);
     }

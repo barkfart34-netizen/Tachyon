@@ -42,6 +42,7 @@
   "kinetica.hud.still": "still",
   "kinetica.hud.jammed": "jammed",
   "kinetica.hud.rpm": "%s RPM",
+  "kinetica.hud.target": "target %s RPM",
   "kinetica.hud.overstressed": "overstressed",
   "kinetica.hud.stress": "%s / %s SU",
   "kinetica.hud.pressing": "Pressing",

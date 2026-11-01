@@ -47,6 +47,8 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("chute", "minecraft:polished_andesite_stairs", 3.0, "minecraft:netherite_block"),
     // Four ways, a whole block.
     ("mechanical_press", "minecraft:white_glazed_terracotta", 2.5, "minecraft:copper_block"),
+    // HorizontalAxisKineticBlock's shaft is across the player's facing.
+    ("rotation_speed_controller", "minecraft:white_glazed_terracotta", 3.0, "minecraft:gold_block"),
     ("millstone", "minecraft:polished_andesite", 2.0, "minecraft:stone"),
     ("mechanical_mixer", "minecraft:polished_andesite", 2.5, "minecraft:copper_block"),
     // A hollow block with a floor.
@@ -97,6 +99,19 @@ pub fn fix(dir: &Path) -> Result<(), String> {
             });
             declaration["shapes"] = chute_shape();
         }
+        // AllShapes.SPEED_CONTROLLER: the base, casing and top plate.
+        if *block == "rotation_speed_controller" {
+            let body = [
+                [0.0, 0.0, 0.0, 1.0, 0.25, 1.0],
+                [0.0625, 0.0625, 0.0625, 0.9375, 0.8125, 0.9375],
+                [0.0, 0.5, 0.0, 1.0, 0.875, 1.0],
+            ];
+            let values: serde_json::Map<String, Value> = ["north", "south", "west", "east"]
+                .into_iter()
+                .map(|f| (f.to_owned(), json!(body)))
+                .collect();
+            declaration["shapes"] = json!({"property": "facing", "values": values});
+        }
         write(&file, &declaration)?;
     }
     // A turning block's chunk model: its particle alone.
@@ -124,6 +139,7 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         };
         Some(format!("axis={axis}"))
     })?;
+    controller_state(&blockstates.join("rotation_speed_controller.json"))?;
     // DirectionalAxisKineticBlock's shaft is perpendicular to its facing.
     for gauge in ["speedometer", "stressometer"] {
         rekey(&blockstates.join(format!("{gauge}.json")), |k| {
@@ -232,6 +248,30 @@ fn chute_models(file: &Path) -> Result<(), String> {
         write(file, &json!({"variants": kept}))?;
     }
     Ok(())
+}
+
+/// SpeedControllerBlock's two horizontal axes as the four-way template's
+/// facings. Leave the casing in the chunk model; SpeedControllerRenderer's
+/// shaft and bracket are drawn by the engine from the device's models.
+fn controller_state(file: &Path) -> Result<(), String> {
+    let Some(state) = read(file) else {
+        return Ok(());
+    };
+    let Some(variants) = state["variants"].as_object() else {
+        return Ok(());
+    };
+    let mut kept = serde_json::Map::new();
+    for (facing, axis) in [("north", "x"), ("south", "x"), ("west", "z"), ("east", "z")] {
+        if let Some(model) = variants.get(&format!("axis={axis}"))
+            .or_else(|| variants.get(&format!("facing={facing}")))
+        {
+            kept.insert(format!("facing={facing}"), model.clone());
+        }
+    }
+    if kept.is_empty() {
+        return Ok(());
+    }
+    write(file, &json!({"variants": kept}))
 }
 
 /// The particle texture of a block's model, as its blockstate names it.
@@ -552,6 +592,37 @@ mod tests {
         }
         assert_eq!(read(&goggles_file), Some(goggles));
         assert_eq!(read(&model_file), Some(model));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_controller_keeps_its_casing_and_gets_four_horizontal_states() {
+        let dir = scratch("controller");
+        let state_file = dir.join("assets/create/blockstates/rotation_speed_controller.json");
+        write(&state_file, &json!({"variants": {
+            "axis=x": {"model": "create:block/rotation_speed_controller/block", "y": 90},
+            "axis=z": {"model": "create:block/rotation_speed_controller/block", "y": 0},
+        }})).unwrap();
+        fix(&dir).unwrap();
+        let declaration = read(&dir.join("data/create/horizon/block/rotation_speed_controller.json")).unwrap();
+        assert_eq!(declaration["template"], "minecraft:white_glazed_terracotta");
+        assert_eq!(declaration["properties"]["hardness"], 3.0);
+        assert_eq!(declaration["shapes"]["property"], "facing");
+        let state = read(&state_file).unwrap();
+        assert_eq!(state["variants"].as_object().unwrap().len(), 4);
+        for (facing, turn) in [("north", 90), ("south", 90), ("west", 0), ("east", 0)] {
+            let model = &state["variants"][format!("facing={facing}")];
+            assert_eq!(model["model"], "create:block/rotation_speed_controller/block");
+            assert_eq!(model["y"], turn);
+            assert_eq!(declaration["shapes"]["values"][facing], json!([
+                [0.0, 0.0, 0.0, 1.0, 0.25, 1.0],
+                [0.0625, 0.0625, 0.0625, 0.9375, 0.8125, 0.9375],
+                [0.0, 0.5, 0.0, 1.0, 0.875, 1.0],
+            ]));
+        }
+        assert!(!TURNING.contains(&"rotation_speed_controller"));
+        fix(&dir).unwrap();
+        assert_eq!(read(&state_file), Some(state));
         let _ = fs::remove_dir_all(&dir);
     }
 }

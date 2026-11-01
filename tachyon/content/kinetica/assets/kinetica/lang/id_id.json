@@ -42,6 +42,7 @@
   "kinetica.hud.still": "diam",
   "kinetica.hud.jammed": "macet",
   "kinetica.hud.rpm": "%s RPM",
+  "kinetica.hud.target": "sasaran %s RPM",
   "kinetica.hud.overstressed": "kelebihan beban",
   "kinetica.hud.stress": "%s / %s SU",
   "kinetica.hud.pressing": "Penekanan",
