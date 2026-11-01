@@ -314,10 +314,10 @@ struct Owner {
     mills_changed: bool,
     /// What each fan turning does, for the goggles ("washing", "pull:air").
     fan_work: HashMap<[i32; 3], String>,
-    /// The dropped items and the depots where a fan's air works them: for
-    /// how many ticks, and how.
-    fan_items: HashMap<u32, (fan::Process, u32)>,
-    fan_depots: HashMap<[i32; 3], (fan::Process, u32)>,
+    /// The dropped items and the depots where a fan's air works them: how,
+    /// for how many ticks, and when it is due.
+    fan_items: HashMap<u32, (fan::Process, u32, u32)>,
+    fan_depots: HashMap<[i32; 3], (fan::Process, u32, u32)>,
     /// The funnels taking out of their containers (the others put in).
     funnels_out: HashSet<[i32; 3]>,
     /// What each funnel does, for the goggles ("inserting").
@@ -492,9 +492,9 @@ pub(in crate::game) fn processing() -> [Vec<Processing>; 4] {
             (inputs, r.time, outputs(&r.outputs))
         })
         .collect();
-    // A fan's air works an item in TIME ticks, whatever its speed.
+    // A fan's air works an item in the same ticks whatever its speed.
     let washing = (fan::washing().iter())
-        .map(|r| (vec![(r.input.clone(), 1)], fan::TIME as f32, outputs(&r.outputs)))
+        .map(|r| (vec![(r.input.clone(), 1)], fan::time(1) as f32, outputs(&r.outputs)))
         .collect();
     [list(millstone::recipes()), list(millstone::pressing()), mixing, washing]
 }

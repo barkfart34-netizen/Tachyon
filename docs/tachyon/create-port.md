@@ -106,8 +106,8 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
     kincir air.
   - **Tag konvensi** `c:` yang tidak ada di game ditebak dari namanya (`c:ingots/iron` →
     `minecraft:iron_ingot`), jadi resep press, mixer, dan crushing yang memakai tag ikut terbaca.
+- **Waktu kipas** sekarang menurut besar tumpukan, seperti Create: `150 * ((jumlah - 1) / 16 + 1) + 1` tick.
 - **Belum:**
-  - waktu kipas menurut besar tumpukan;
   - siklus press (240, satu barang per tekanan, barang yang tergeletak);
   - compacting memakai waktu mixer, belum siklus press;
   - partikel barang di celah crushing wheel dan crushing wheel yang melukai mob.

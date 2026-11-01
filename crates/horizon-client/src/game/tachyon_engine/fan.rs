@@ -5,8 +5,8 @@
 //! full collision stops it, and pushes the dropped items in it.
 //!
 //! What the air goes through works the items further on, dropped ones and
-//! those on a depot alike, after `TIME` ticks in it (as Create's bulk
-//! processing): water (or a waterlogged block) washes them by
+//! those on a depot alike, after [`time`] ticks in it, longer for a bigger
+//! stack (as Create's bulk processing): water (or a waterlogged block) washes them by
 //! `kinetica/data/kinetica/tachyon/washing.json`, fire or a lit campfire
 //! smokes them and lava blasts them by the furnaces' recipes.
 
@@ -22,8 +22,15 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::OnceLock;
 
-/// Ticks an item spends where the air works it before it is worked.
+/// Ticks an item spends where the air works it before it is worked, for
+/// each 16 of a stack.
 pub(super) const TIME: u32 = 150;
+
+/// The ticks a stack of `count` spends where the air works it before it is
+/// worked, as Create's: `TIME` for each 16 items begun, and one.
+pub(super) fn time(count: u32) -> u32 {
+    TIME * ((count.max(1) - 1) / 16 + 1) + 1
+}
 
 /// What the air works the items with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,24 +96,24 @@ pub(super) fn front(
 }
 
 /// Each one's ticks in its process go up (from 1 when it came or its
-/// process changed); the others are forgotten. Those that reached `TIME`
-/// (their count back to 0).
+/// process changed, due after the [`time`] of its stack's count then, as
+/// Create's); the others are forgotten. Those that came due (started again
+/// after).
 fn tick<K: Copy + Eq + Hash>(
-    timers: &mut HashMap<K, (Process, u32)>,
-    seen: Vec<(K, Process)>,
+    timers: &mut HashMap<K, (Process, u32, u32)>,
+    seen: Vec<(K, Process, u32)>,
 ) -> Vec<(K, Process)> {
     let mut ready = Vec::new();
     let mut next = HashMap::with_capacity(seen.len());
-    for (k, p) in seen {
-        let ticks = match timers.get(&k) {
-            Some((q, t)) if *q == p => t + 1,
-            _ => 1,
+    for (k, p, count) in seen {
+        let (ticks, due) = match timers.get(&k) {
+            Some((q, t, due)) if *q == p => (t + 1, *due),
+            _ => (1, time(count)),
         };
-        if ticks >= TIME {
+        if ticks >= due {
             ready.push((k, p));
-            next.insert(k, (p, 0));
         } else {
-            next.insert(k, (p, ticks));
+            next.insert(k, (p, ticks, due));
         }
     }
     *timers = next;
@@ -229,7 +236,7 @@ impl Game<'_> {
             };
             push(&mut item.velocity, *way);
             if let Some(process) = process {
-                items.push((item.id, *process));
+                items.push((item.id, *process, item.stack.count));
             }
         }
         let (items, depots) = OWNERS.with_borrow_mut(|owners| {
@@ -237,12 +244,10 @@ impl Game<'_> {
             owner.fan_work = work;
             let items = tick(&mut owner.fan_items, items);
             // The depots where the air works, holding something to work.
-            let depots: Vec<([i32; 3], Process)> = (cells.iter())
+            let depots: Vec<([i32; 3], Process, u32)> = (cells.iter())
                 .filter_map(|(at, (_, p))| Some((*at, (*p)?)))
-                .filter(|(at, _)| {
-                    owner.index.parts.get(at) == Some(&Part::Depot)
-                        && owner.mills.get(at).is_some_and(|m| m.input.is_some())
-                })
+                .filter(|(at, _)| owner.index.parts.get(at) == Some(&Part::Depot))
+                .filter_map(|(at, p)| Some((at, p, owner.mills.get(&at)?.input.as_ref()?.count)))
                 .collect();
             let depots: Vec<([i32; 3], Process, Held)> = tick(&mut owner.fan_depots, depots)
                 .into_iter()
@@ -428,12 +433,15 @@ mod tests {
     #[test]
     fn what_stays_in_the_air_long_enough_is_worked() {
         let mut timers = HashMap::new();
-        for _ in 0..TIME - 1 {
-            assert!(tick(&mut timers, vec![(7u32, Process::Washing)]).is_empty());
+        // Up to 16 items: 151 ticks; 17 to 32: 301.
+        assert_eq!((time(1), time(16), time(17), time(64)), (151, 151, 301, 601));
+        for _ in 0..time(16) - 1 {
+            assert!(tick(&mut timers, vec![(7u32, Process::Washing, 16)]).is_empty());
         }
-        assert_eq!(tick(&mut timers, vec![(7, Process::Washing)]), [(7, Process::Washing)]);
+        // Due when it began, though the stack grew since.
+        assert_eq!(tick(&mut timers, vec![(7, Process::Washing, 17)]), [(7, Process::Washing)]);
         // Out of the air, it starts again.
-        tick(&mut timers, vec![(7, Process::Washing)]);
+        tick(&mut timers, vec![(7, Process::Washing, 16)]);
         assert!(tick(&mut timers, Vec::new()).is_empty());
         assert!(timers.is_empty());
     }
