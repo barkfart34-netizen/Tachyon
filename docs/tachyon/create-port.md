@@ -42,6 +42,7 @@ diambil dari kode Create sendiri. Rencana besarnya ada di [rencana-modpack.md](r
 | Kincir air | 8 RPM dikali arah aliran di sekitarnya: skor aliran dibatasi -1..1, jadi bisa berbalik. Kapasitas 32 per RPM. Lava juga bisa. | 8 RPM, kapasitas 16 per RPM |
 | Kincir air besar | Skor aliran dari 12 titik tepi, dibatasi -1..1; 4 RPM, kapasitas 128 per RPM. Bidang 3×3 diisi `water_wheel_structure`. | Pemungutan suara dan angka sama; model Create berputar sepanjang `axis`. Blok penyangga 3×3 belum dipasang. |
 | Kincir angin | Bearing + layar: RPM = jumlah layar / 8, dibatasi 1..16. Kapasitas 512 per RPM. Butuh contraption. | Blok tunggal, kapasitas 32 per RPM |
+| Speedometer dan stressometer | Meneruskan putaran lewat kedua ujung poros, tanpa beban. Kacamata membaca RPM mutlak atau persentase beban dan sisa kapasitas. Orientasi memakai `facing` dan `axis_along_first`, dengan bentuk `GaugeShaper`. | Putaran dan pembacaan memakai jaringan yang sama, tanpa beban atau kapasitas sumber. Satu orientasi bawaan per sumbu X/Y/Z, casing Create tetap, tumbukan blok penuh; kepala dan jarum belum digambar. |
 | Millstone | Kerja per tick = `clamp(int(abs(RPM)/16), 1, 512)`, bilangan bulat dan minimal 1. Lama per resep (`processing_time`). Berhenti bila satu dari 9 slot hasil penuh. | `RPM/16` pecahan; berhenti bila hasil lebih dari 9 tumpukan |
 | Press | Satu siklus 240; tiap tick maju `lerp(clamp(abs(RPM)/512, 0, 1), 1, 60)`; menekan di tengah siklus. Satu barang per tekanan (`bulkPressing` mati). Mengerjakan barang yang tergeletak di blok tepat di bawahnya, sabuk/depot dua blok di bawah, dan baskom dua blok di bawah (*compacting*). | Depot satu atau dua blok di bawah; belum ada barang tergeletak dan compacting |
 | Mixer | Kepala turun 20 tick (kurva kosinus). Mengaduk `max(log2(int(512/abs(RPM))) * ceil(t/100*15) + 1, 1)` tick, dengan `t` = `processing_time` resep. Naik 20 tick. Juga mengerjakan resep crafting shapeless vanilla. Ada syarat panas (blaze burner) dan fluida. | Waktu sendiri, tanpa panas dan fluida |
@@ -170,6 +171,18 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
     `create:block/large_cogwheel_shaftless`;
   - kedua ujung poros tetap tertutup, sesuai default Create. Template `minecraft:quartz_pillar`
     hanya memberi `axis=x/y/z`, belum mendukung `top_shaft` dan `bottom_shaft`.
+- **Speedometer dan stressometer: putaran dan pembacaan kacamata selesai** (`kinetic.rs`, `tachyon_engine.rs`,
+  `tachyon/create_port.rs`):
+  - meneruskan RPM bertanda lewat kedua ujung poros X/Y/Z, tanpa membangkitkan putaran atau menambah beban;
+    dampak stress dan kapasitas sumber keduanya nol;
+  - kacamata Create (`create:goggles`) maupun Kinetica bekerja di kepala atau di tangan mana pun;
+    speedometer membaca RPM mutlak, termasuk 0 RPM saat tidak digerakkan;
+  - stressometer membaca persentase beban (dipotong ke bilangan bulat) dan sisa/total kapasitas:
+    128 dari 512 menjadi `25%`, `384 / 512 SU`; kelebihan beban 384 dari 256 tetap terbaca
+    `150%`, `-128 / 256 SU` saat poros berhenti. Status macet didahulukan;
+  - hanya tiga orientasi bawaan dipertahankan, satu per sumbu, dengan model `gauge/base` dan `gauge/base_wall`
+    serta rotasinya tetap. Tumbukan memakai blok penuh pilar kuarsa, bukan bentuk `GaugeShaper`;
+  - kepala dan jarum, partikel, comparator, serta sambungan display belum dikerjakan.
 - **Belum:**
   - tarikan mob dan pemain melalui celah crushing wheel, serta posisi keluarnya sebelum mati.
 - Pemberitahuan MIT Create sudah ada di `THIRD_PARTY_NOTICES.md`.

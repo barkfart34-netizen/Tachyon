@@ -158,6 +158,9 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
             Part::EncasedLargeCog(axis()?)
         }
         "gearbox" => Part::Gearbox(axis()?),
+        // GaugeBlock's facing isn't its shaft; create_port keeps an axis.
+        "speedometer" => Part::SpeedGauge(axis()?),
+        "stressometer" => Part::StressGauge(axis()?),
         "clutch" => Part::Clutch(axis()?),
         "gearshift" => Part::Gearshift(axis()?),
         // Its facing is where its shaft points.
@@ -481,6 +484,60 @@ fn next_motor_speed(speed: f32, sneaking: bool) -> f32 {
     faster.copysign(speed)
 }
 
+/// The goggles Kinetica and Create supply, as AllItems.GOGGLES and
+/// GogglesItem (worn in the head slot, or held for Tachyon's HUD).
+fn is_goggles_item(item: &str) -> bool {
+    matches!(item, GOGGLES | "create:goggles")
+}
+
+/// A gauge's compact goggles text, as GaugeBlockEntity,
+/// SpeedGaugeBlockEntity, StressGaugeBlockEntity and IRotate: absolute RPM
+/// or utilization and remaining capacity. Shown keeps an overloaded
+/// network's stress even though its parts have no speed entry.
+fn gauge_readout(
+    part: Part,
+    speed: f32,
+    jammed: bool,
+    stress: Option<kinetic::Stress>,
+    translate: impl Fn(&str, &str) -> String,
+) -> Option<String> {
+    if !matches!(part, Part::SpeedGauge(_) | Part::StressGauge(_)) {
+        return None;
+    }
+    if jammed {
+        return Some(translate("kinetica.hud.jammed", "jammed"));
+    }
+    let over = stress.is_some_and(kinetic::Stress::over);
+    if matches!(part, Part::SpeedGauge(_)) {
+        return Some(if over {
+            translate("kinetica.hud.overstressed", "overstressed")
+        } else {
+            translate("kinetica.hud.rpm", "%s RPM")
+                .replace("%s", &speed.abs().round().to_string())
+        });
+    }
+    let Some(s) = stress else {
+        return Some(translate("create.gui.stressometer.no_rotation", "No Rotation"));
+    };
+    if speed == 0.0 && s.load == 0.0 && s.capacity == 0.0 {
+        return Some(translate("create.gui.stressometer.no_rotation", "No Rotation"));
+    }
+    let capacity = f64::from(s.capacity);
+    let load = f64::from(s.load);
+    let divisor = if capacity == 0.0 { 1.0 } else { capacity };
+    let percent = (load / divisor * 100.0) as i32;
+    let su = translate("kinetica.hud.stress", "%s / %s SU")
+        .replacen("%s", &((capacity - load).round() as i64).to_string(), 1)
+        .replacen("%s", &(capacity.round() as i64).to_string(), 1);
+    let label = translate("create.gui.stressometer.capacity", "Remaining Capacity");
+    let mut state = format!("{percent}% | {label}: {su}");
+    if over {
+        let status = translate("kinetica.hud.overstressed", "overstressed");
+        state = format!("{state} | {status}");
+    }
+    Some(state)
+}
+
 /// What a client keeps.
 #[derive(Default)]
 struct Client {
@@ -741,12 +798,16 @@ fn pieces(part: Part, create: bool) -> Vec<(&'static str, Dir, f32, usize, Dir)>
 /// Create's partial models (AllPartialModels): a half shaft points south,
 /// a propeller turns about Z, the others about Y.
 /// EncasedCogRenderer and EncasedCogVisual (Create, MIT) turn shaftless
-/// cogwheels when EncasedCogwheelBlock's ends are closed.
+/// cogwheels when EncasedCogwheelBlock's ends are closed. A gauge has a
+/// shaft, as GaugeRenderer extends ShaftRenderer; its casing stays in the
+/// chunk mesh.
 fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
     const HALF: &str = "create:block/shaft_half";
     const SHAFT: &str = "create:block/shaft";
     match part {
-        Part::Shaft(a) | Part::Press(a) => vec![(SHAFT, positive(a), 1.0, 0, Dir::Up)],
+        Part::Shaft(a) | Part::Press(a) | Part::SpeedGauge(a) | Part::StressGauge(a) => {
+            vec![(SHAFT, positive(a), 1.0, 0, Dir::Up)]
+        }
         Part::Cog(a) => vec![("create:block/cogwheel", positive(a), 1.0, 0, Dir::Up)],
         Part::LargeCog(a) => vec![("create:block/large_cogwheel", positive(a), 1.0, 0, Dir::Up)],
         Part::EncasedCog(a) => vec![("create:block/cogwheel_shaftless", positive(a), 1.0, 0, Dir::Up)],
@@ -832,7 +893,9 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::LargeWaterWheel(_)
         | Part::Chute(_, _)
         | Part::EncasedCog(_)
-        | Part::EncasedLargeCog(_) => Vec::new(),
+        | Part::EncasedLargeCog(_)
+        | Part::SpeedGauge(_)
+        | Part::StressGauge(_) => Vec::new(),
     }
 }
 
@@ -1271,7 +1334,7 @@ impl Game<'_> {
         [self.armor[0].as_ref(), self.held(), self.offhand.as_ref()]
             .into_iter()
             .flatten()
-            .any(|s| &*s.item == GOGGLES)
+            .any(|s| is_goggles_item(&s.item))
     }
 
     /// The speeds of the water wheels and windmills among `parts`, each
@@ -1953,6 +2016,8 @@ impl Game<'_> {
         };
         let (block, english) = match part {
             Part::Shaft(_) => ("shaft", "Shaft"),
+            Part::SpeedGauge(_) => ("speedometer", "Speedometer"),
+            Part::StressGauge(_) => ("stressometer", "Stressometer"),
             Part::Cog(_) | Part::EncasedCog(_) => ("cogwheel", "Cogwheel"),
             Part::LargeCog(_) | Part::EncasedLargeCog(_) => ("large_cogwheel", "Large Cogwheel"),
             Part::Gearbox(_) => ("gearbox", "Gearbox"),
@@ -1981,25 +2046,31 @@ impl Game<'_> {
             Some(create) => self.translate(&format!("block.create.{create}"), english),
             None => self.translate(&format!("block.kinetica.{block}"), english),
         };
-        let mut state = if jammed {
-            self.translate("kinetica.hud.jammed", "jammed")
-        } else if stress.is_some_and(kinetic::Stress::over) {
-            self.translate("kinetica.hud.overstressed", "overstressed")
-        } else if speed == 0.0 {
-            self.translate("kinetica.hud.still", "still")
+        let mut state = if let Some(gauge) = gauge_readout(part, speed, jammed, stress, |k, fallback| {
+            self.translate(k, fallback)
+        }) {
+            gauge
         } else {
-            self.translate("kinetica.hud.rpm", "%s RPM")
-                .replace("%s", &speed.abs().round().to_string())
+            let mut state = if jammed {
+                self.translate("kinetica.hud.jammed", "jammed")
+            } else if stress.is_some_and(kinetic::Stress::over) {
+                self.translate("kinetica.hud.overstressed", "overstressed")
+            } else if speed == 0.0 {
+                self.translate("kinetica.hud.still", "still")
+            } else {
+                self.translate("kinetica.hud.rpm", "%s RPM")
+                    .replace("%s", &speed.abs().round().to_string())
+            };
+            // Other parts show the network's load, not its remaining capacity.
+            if let Some(s) = stress {
+                let su = self
+                    .translate("kinetica.hud.stress", "%s / %s SU")
+                    .replacen("%s", &(s.load.round() as i64).to_string(), 1)
+                    .replacen("%s", &(s.capacity.round() as i64).to_string(), 1);
+                state = format!("{state} | {su}");
+            }
+            state
         };
-        // The network's load against its capacity, and what a millstone
-        // grinds.
-        if let Some(s) = stress {
-            let su = self
-                .translate("kinetica.hud.stress", "%s / %s SU")
-                .replacen("%s", &(s.load.round() as i64).to_string(), 1)
-                .replacen("%s", &(s.capacity.round() as i64).to_string(), 1);
-            state = format!("{state} | {su}");
-        }
         // A funnel: whether it puts in or takes out, only.
         if let (Part::Funnel(_), Some(w)) = (part, &work) {
             state = self.translate(&format!("kinetica.hud.{w}"), w);
@@ -2049,6 +2120,10 @@ impl Game<'_> {
 mod tests {
     use super::*;
 
+    fn english(_key: &str, fallback: &str) -> String {
+        fallback.to_owned()
+    }
+
     #[test]
     fn speeds_go_and_come_back() {
         let shown = Shown {
@@ -2086,6 +2161,31 @@ mod tests {
         let mut old = data;
         old[0] = VERSION - 1;
         assert!(decode(&old).is_none());
+    }
+
+    #[test]
+    fn overstressed_stress_goes_and_comes_back_without_speed() {
+        let pos = [2, 64, -3];
+        let shown = Shown {
+            stress: HashMap::from([(pos, kinetic::Stress { load: 384.0, capacity: 256.0 })]),
+            ..Shown::default()
+        };
+        let data = encode(&shown);
+        assert_eq!(data[0], VERSION);
+        let back = decode(&data).unwrap();
+        assert_eq!(back, shown);
+        assert!(!back.speeds.contains_key(&pos));
+        assert_eq!(
+            gauge_readout(
+                Part::StressGauge(Axis::Y),
+                back.speeds.get(&pos).map_or(0.0, |s| s[0]),
+                back.jammed.contains(&pos),
+                back.stress.get(&pos).copied(),
+                english,
+            )
+            .as_deref(),
+            Some("150% | Remaining Capacity: -128 / 256 SU | overstressed")
+        );
     }
 
     #[test]
@@ -2225,6 +2325,139 @@ mod tests {
                 }
                 assert_eq!(part_of(id, |k| (k == "facing").then_some("north")), None);
             }
+        }
+    }
+
+    #[test]
+    fn create_gauges_use_their_axes_and_creates_shaft() {
+        for (axis, name) in [(Axis::X, "x"), (Axis::Y, "y"), (Axis::Z, "z")] {
+            let props = |k: &str| (k == "axis").then_some(name);
+            for (id, part) in [
+                ("create:speedometer", Part::SpeedGauge(axis)),
+                ("create:stressometer", Part::StressGauge(axis)),
+            ] {
+                assert_eq!(part_of(id, props), Some(part));
+                assert_eq!(
+                    pieces(part, true),
+                    vec![("create:block/shaft", positive(axis), 1.0, 0, Dir::Up)]
+                );
+                assert!(pieces(part, false).is_empty());
+                assert!(!takes_use(part));
+            }
+        }
+        for block in ["speedometer", "stressometer"] {
+            let id = format!("create:{block}");
+            assert_eq!(part_of(&id, |_| None), None);
+            assert_eq!(part_of(&id, |k| (k == "facing").then_some("north")), None);
+            for invalid in ["", "north", "w"] {
+                assert_eq!(part_of(&id, |k| (k == "axis").then_some(invalid)), None);
+            }
+            assert_eq!(
+                part_of(&format!("kinetica:{block}"), |k| (k == "axis").then_some("x")),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn a_speedometer_shows_absolute_rpm_even_when_idle() {
+        let part = Part::SpeedGauge(Axis::X);
+        for speed in [-32.0, 32.0] {
+            assert_eq!(
+                gauge_readout(part, speed, false, None, english).as_deref(),
+                Some("32 RPM")
+            );
+        }
+        assert_eq!(
+            gauge_readout(part, 0.0, false, None, english).as_deref(),
+            Some("0 RPM")
+        );
+        let stress = kinetic::Stress { load: 128.0, capacity: 512.0 };
+        assert_eq!(
+            gauge_readout(part, -32.0, false, Some(stress), english).as_deref(),
+            Some("32 RPM")
+        );
+        let over = kinetic::Stress { load: 384.0, capacity: 256.0 };
+        assert_eq!(
+            gauge_readout(part, 0.0, false, Some(over), english).as_deref(),
+            Some("overstressed")
+        );
+    }
+
+    #[test]
+    fn a_stressometer_shows_utilization_and_remaining_capacity() {
+        let part = Part::StressGauge(Axis::Z);
+        for (load, capacity, speed, expected) in [
+            (128.0, 512.0, 32.0, "25% | Remaining Capacity: 384 / 512 SU"),
+            (129.0, 512.0, -32.0, "25% | Remaining Capacity: 383 / 512 SU"),
+            (384.0, 256.0, 0.0, "150% | Remaining Capacity: -128 / 256 SU | overstressed"),
+            (16.0, 0.0, 0.0, "1600% | Remaining Capacity: -16 / 0 SU | overstressed"),
+            (0.0, 512.0, 0.0, "0% | Remaining Capacity: 512 / 512 SU"),
+            (0.0, 0.0, 32.0, "0% | Remaining Capacity: 0 / 0 SU"),
+        ] {
+            let stress = Some(kinetic::Stress { load, capacity });
+            assert_eq!(
+                gauge_readout(part, speed, false, stress, english).as_deref(),
+                Some(expected)
+            );
+        }
+        for speed in [0.0, 32.0] {
+            assert_eq!(
+                gauge_readout(part, speed, false, None, english).as_deref(),
+                Some("No Rotation")
+            );
+        }
+        assert_eq!(
+            gauge_readout(part, 0.0, false, Some(kinetic::Stress::default()), english).as_deref(),
+            Some("No Rotation")
+        );
+    }
+
+    #[test]
+    fn gauges_keep_jammed_precedence_and_use_translations() {
+        let over = Some(kinetic::Stress { load: 384.0, capacity: 256.0 });
+        let text = |key: &str, fallback: &str| match key {
+            "kinetica.hud.jammed" => "macet".to_owned(),
+            "kinetica.hud.overstressed" => "kelebihan beban".to_owned(),
+            "kinetica.hud.rpm" => "%s putaran".to_owned(),
+            "kinetica.hud.stress" => "%s / %s beban".to_owned(),
+            "create.gui.stressometer.capacity" => "Sisa kapasitas".to_owned(),
+            "create.gui.stressometer.no_rotation" => "Tanpa putaran".to_owned(),
+            _ => fallback.to_owned(),
+        };
+        for part in [Part::SpeedGauge(Axis::X), Part::StressGauge(Axis::Y)] {
+            assert_eq!(
+                gauge_readout(part, 0.0, true, over, english).as_deref(),
+                Some("jammed")
+            );
+            assert_eq!(
+                gauge_readout(part, 0.0, true, over, text).as_deref(),
+                Some("macet")
+            );
+        }
+        assert_eq!(gauge_readout(Part::Shaft(Axis::X), 32.0, true, over, text), None);
+        assert_eq!(
+            gauge_readout(Part::SpeedGauge(Axis::X), -32.0, false, None, text).as_deref(),
+            Some("32 putaran")
+        );
+        assert_eq!(
+            gauge_readout(Part::StressGauge(Axis::Y), 0.0, false, None, text).as_deref(),
+            Some("Tanpa putaran")
+        );
+        assert_eq!(
+            gauge_readout(Part::StressGauge(Axis::Y), 0.0, false, over, text).as_deref(),
+            Some("150% | Sisa kapasitas: -128 / 256 beban | kelebihan beban")
+        );
+    }
+
+    #[test]
+    fn create_and_kinetica_goggles_are_not_ordinary_helmets() {
+        assert!(is_goggles_item("create:goggles"));
+        assert!(is_goggles_item("kinetica:engineers_goggles"));
+        for item in [
+            "minecraft:leather_helmet", "minecraft:iron_helmet", "minecraft:stick", "create:shaft",
+        ] {
+            assert!(!is_goggles_item(item));
         }
     }
 

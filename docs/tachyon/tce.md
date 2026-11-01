@@ -142,9 +142,15 @@ Lapisan yang memberi blok modpack perilaku di luar template vanilla-nya. Rencana
   - Barang yang diambil hopper tetapi tidak muat dikembalikan ke tempat asalnya.
   - Komponen barang (nama, enchantment) tidak ikut tersimpan di mesin; tidak masalah untuk bahan
     mentah.
-- **HUD:** dengan Kacamata Insinyur dipakai di kepala atau dipegang, bagian kinetik yang dilihat
+- **HUD:** dengan Kacamata Insinyur Kinetica atau `create:goggles` dipakai di kepala atau dipegang
+  di tangan mana pun, bagian kinetik yang dilihat
   menampilkan kecepatannya di pojok kiri atas, dalam bahasa pemain. Ditambah beban/kapasitas
   jaringannya ("128 / 256 SU"), status kelebihan beban, dan barang yang sedang digiling atau dipress.
+  Speedometer Create membaca RPM mutlak, termasuk 0 RPM; stressometer membaca persentase beban
+  dan sisa/total kapasitas, bukan beban/total: 128 dari 512 menjadi "25% | 384 / 512 SU".
+  Angka kelebihan beban tetap terlihat saat putaran berhenti, tanpa membatasi persentase atau sisa
+  kapasitas; status macet didahulukan. Stressometer tanpa jaringan, atau dengan stress nol saat berhenti,
+  menampilkan tidak ada putaran.
 - **Payload** `tachyon:kinetic` versi 5 berisi kecepatan, bagian yang macet, stress tiap bagian,
   mesin yang sedang bekerja (dan barangnya), serta isi tiap depot dan baskom (sampai 4 tumpukan).
 - **State** disimpan per thread (`thread_local`). Jendela game dan thread server masing-masing

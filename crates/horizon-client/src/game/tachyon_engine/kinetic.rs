@@ -159,6 +159,12 @@ impl ChuteShape {
 pub enum Part {
     /// A shaft along its axis.
     Shaft(Axis),
+    /// Create's speedometer, as GaugeBlock and DirectionalAxisKineticBlock:
+    /// a through shaft with no stress impact (AllBlocks).
+    SpeedGauge(Axis),
+    /// Create's stressometer: the same through shaft, with no stress impact
+    /// (DirectionalAxisKineticBlock and AllBlocks).
+    StressGauge(Axis),
     /// A small cogwheel on a shaft along its axis.
     Cog(Axis),
     /// A large cogwheel on a shaft along its axis.
@@ -224,6 +230,8 @@ impl Part {
     pub fn shaft_toward(self, d: Dir) -> bool {
         match self {
             Part::Shaft(a)
+            | Part::SpeedGauge(a)
+            | Part::StressGauge(a)
             | Part::Cog(a)
             | Part::LargeCog(a)
             | Part::Clutch(a)
@@ -597,6 +605,65 @@ mod tests {
     }
 
     #[test]
+    fn gauges_pass_rotation_from_both_ends_without_meshing() {
+        for axis in [Axis::X, Axis::Y, Axis::Z] {
+            let beside = Dir::ALL.into_iter().find(|d| d.axis() != axis).unwrap();
+            for gauge in [Part::SpeedGauge(axis), Part::StressGauge(axis)] {
+                assert_eq!(gauge.impact(), 0.0);
+                assert!(!gauge.split());
+                assert_eq!(gauge.cog(), None);
+                for side in Dir::ALL {
+                    assert_eq!(gauge.shaft_toward(side), side.axis() == axis);
+                    assert_eq!(gauge.half(side), 0);
+                }
+                assert_eq!(link(gauge, Part::Cog(axis), beside.offset()), None);
+                for speed in [-32.0, 0.0, 32.0] {
+                    assert_eq!(capacity(gauge, speed), 0.0);
+                }
+                for end in axis.dirs() {
+                    assert_eq!(link(gauge, Part::Shaft(beside.axis()), end.offset()), None);
+                    let p = parts(&[
+                        (end.offset(), Part::Motor(end.opposite())),
+                        ([0, 0, 0], gauge),
+                        (end.opposite().offset(), Part::Shaft(axis)),
+                        (beside.offset(), Part::Shaft(beside.axis())),
+                    ]);
+                    assert!(solve1(&p, &[]).speeds.is_empty());
+                    for speed in [-32.0, 32.0] {
+                        let s = solve1(&p, &[(end.offset(), speed)]);
+                        assert_eq!(s.speeds.get(&[0, 0, 0]), Some(&[speed; 2]));
+                        assert_eq!(s.speeds.get(&end.opposite().offset()), Some(&[speed; 2]));
+                        assert_eq!(s.speeds.get(&beside.offset()), None);
+                        assert!(s.jammed.is_empty());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn gauges_do_not_change_a_networks_stress() {
+        for axis in [Axis::X, Axis::Y, Axis::Z] {
+            let [neg, pos] = axis.dirs();
+            for speed in [-32.0, 32.0] {
+                let mut p = parts(&[
+                    (neg.offset(), Part::Motor(pos)),
+                    ([0, 0, 0], Part::Shaft(axis)),
+                    (pos.offset(), Part::Fan(axis)),
+                ]);
+                let shaft = solve1(&p, &[(neg.offset(), speed)]);
+                assert_eq!(shaft.stress[&[0, 0, 0]].load, 64.0);
+                for gauge in [Part::SpeedGauge(axis), Part::StressGauge(axis)] {
+                    p.insert([0, 0, 0], gauge);
+                    let s = solve1(&p, &[(neg.offset(), speed)]);
+                    assert_eq!(s.stress, shaft.stress);
+                    assert_eq!(s.speeds, shaft.speeds);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn a_water_wheel_drives_the_shafts_along_its_axis() {
         let p = parts(&[
             ([0, 0, 0], Part::WaterWheel(Axis::X)),
@@ -861,6 +928,28 @@ mod tests {
         let s = solve1(&p2, &[([0, 0, 0], 32.0)]);
         assert_eq!(s.speeds[&[2, 1, 0]][0], 32.0);
         assert_eq!(s.stress[&[0, 0, 0]].capacity, CREATIVE_CAPACITY * 32.0);
+    }
+
+    #[test]
+    fn gauges_keep_an_overstressed_networks_stress_without_speed() {
+        for gauge in [Part::SpeedGauge(Axis::Y), Part::StressGauge(Axis::Y)] {
+            let p = parts(&[
+                ([0, 0, 0], Part::Crank(Dir::Up)),
+                ([0, 1, 0], gauge),
+                ([0, 2, 0], Part::Millstone),
+                ([1, 2, 0], Part::Cog(Axis::Y)),
+                ([2, 2, 0], Part::Millstone),
+                ([1, 2, 1], Part::Millstone),
+            ]);
+            let s = solve1(&p, &[([0, 0, 0], 32.0)]);
+            assert!(s.speeds.is_empty());
+            assert!(s.jammed.is_empty());
+            assert_eq!(
+                s.stress[&[0, 1, 0]],
+                Stress { load: 384.0, capacity: 256.0 }
+            );
+            assert!(s.stress[&[0, 1, 0]].over());
+        }
     }
 
     #[test]

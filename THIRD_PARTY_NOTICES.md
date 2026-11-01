@@ -118,6 +118,11 @@ its water wheels (`water_wheel.rs`, from `WaterWheelBlockEntity`, `LargeWaterWhe
 `EncasedCogwheelBlock`, `ICogWheel`, `RotationPropagator`, `KineticBlockEntityVisual`,
 `EncasedCogRenderer`, `EncasedCogVisual`, `AllPartialModels` and `BuilderTransformers`),
 its recipe format (`create_recipes.rs`),
+its gauges (`kinetic.rs`, `tachyon_engine.rs` and `crates/horizon-client/src/tachyon/create_port.rs`,
+from `GaugeBlock`, `DirectionalAxisKineticBlock`, `GaugeGenerator`, `DirectionalAxisBlockStateGen`,
+`GaugeBlockEntity`, `SpeedGaugeBlockEntity`, `StressGaugeBlockEntity`, `IRotate`, `GaugeRenderer`,
+`ShaftRenderer` and `AllBlocks`), its goggles (`tachyon_engine.rs` and `tachyon/create_port.rs`,
+from `AllItems.GOGGLES` and `GogglesItem`),
 and its machines' numbers in `kinetic.rs`, `millstone.rs`, `basin.rs`, `fan.rs`, `belt.rs` and
 `tachyon_engine.rs` (capacities, the water wheel's flow, the millstone's work, the mixer's time,
 the fan's reach, the funnel's stack). Create's code is under the MIT license:

@@ -7,6 +7,10 @@
 //!
 //! Only files Tachyon writes change here: the porter's declarations, and
 //! blockstates pointing at Create's own models in other ways.
+//!
+//! GaugeBlock's facing and axis_along_first become one orientation per
+//! shaft axis, keeping GaugeGenerator and DirectionalAxisBlockStateGen's
+//! casing models and rotations. GogglesItem supplies the head slot.
 //! Encased cogwheels keep the casings from BuilderTransformers and the
 //! closed shaft defaults of EncasedCogwheelBlock (Create, MIT).
 use serde_json::{Value, json};
@@ -27,6 +31,8 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("andesite_encased_large_cogwheel", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
     ("brass_encased_large_cogwheel", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
     ("gearbox", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
+    ("speedometer", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
+    ("stressometer", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
     ("clutch", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
     ("gearshift", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
     ("encased_fan", "minecraft:quartz_pillar", 2.0, "minecraft:copper_block"),
@@ -118,6 +124,23 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         };
         Some(format!("axis={axis}"))
     })?;
+    // DirectionalAxisKineticBlock's shaft is perpendicular to its facing.
+    for gauge in ["speedometer", "stressometer"] {
+        rekey(&blockstates.join(format!("{gauge}.json")), |k| {
+            if matches!(k, "axis=x" | "axis=y" | "axis=z") {
+                return Some(k.to_owned());
+            }
+            let facing = k.split(',').find_map(|p| p.strip_prefix("facing="))?;
+            let first = k.split(',').find_map(|p| p.strip_prefix("axis_along_first="))?;
+            let axis = match (facing, first) {
+                ("up", "true") => "x",
+                ("north", "false") => "y",
+                ("up", "false") => "z",
+                _ => return None,
+            };
+            Some(format!("axis={axis}"))
+        })?;
+    }
     rekey(&blockstates.join("basin.json"), |k| (k == "facing=down").then(String::new))?;
     // EncasedCogwheelBlock's default ends are closed. Keep
     // BuilderTransformers' material-specific casings in the chunk mesh.
@@ -146,6 +169,12 @@ pub fn fix(dir: &Path) -> Result<(), String> {
                 && !k.contains("waterlogged=true");
             inserting.then(|| format!("facing={facing}"))
         })?;
+    }
+    // AllItems.GOGGLES and GogglesItem: worn in the head slot, its model kept.
+    let file = dir.join("data/create/horizon/item/goggles.json");
+    if let Some(mut goggles) = read(&file) {
+        goggles["template"] = json!("minecraft:leather_helmet");
+        write(&file, &goggles)?;
     }
     chute_models(&blockstates.join("chute.json"))?;
     Ok(())
@@ -448,6 +477,81 @@ mod tests {
             assert!(read(&dir.join(format!("assets/create/blockstates/{block}.json"))).is_none());
             assert!(!dir.join(format!("assets/create/models/block/tachyon_still/{block}.json")).exists());
         }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn create_gauges_keep_three_native_orientations_and_wearable_goggles() {
+        let dir = scratch("gauges");
+        let states = dir.join("assets/create/blockstates");
+        let declarations = dir.join("data/create/horizon/block");
+        let x = json!({"model": "create:block/gauge/base", "x": 0, "y": 90});
+        let y = json!({"model": "create:block/gauge/base_wall", "x": 90, "y": 270});
+        let z = json!({"model": "create:block/gauge/base", "x": 0, "y": 0});
+        for (block, reversed) in [("speedometer", false), ("stressometer", true)] {
+            write(
+                &declarations.join(format!("{block}.json")),
+                &json!({"template": "minecraft:oak_log"}),
+            )
+            .unwrap();
+            let mut variants = serde_json::Map::new();
+            for facing in ["down", "up", "north", "south", "west", "east"] {
+                for first in ["false", "true"] {
+                    let key = if reversed {
+                        format!("axis_along_first={first},facing={facing}")
+                    } else {
+                        format!("facing={facing},axis_along_first={first}")
+                    };
+                    let variant = match (facing, first) {
+                        ("up", "true") => x.clone(),
+                        ("north", "false") => y.clone(),
+                        ("up", "false") => z.clone(),
+                        _ => json!({"model": "create:block/gauge/base_wall", "x": 180, "y": 180}),
+                    };
+                    variants.insert(key, variant);
+                }
+            }
+            write(&states.join(format!("{block}.json")), &json!({"variants": variants})).unwrap();
+        }
+        let goggles_file = dir.join("data/create/horizon/item/goggles.json");
+        let mut goggles = json!({
+            "template": "minecraft:stick",
+            "components": {"minecraft:max_stack_size": 1},
+        });
+        write(&goggles_file, &goggles).unwrap();
+        let model_file = dir.join("assets/create/models/item/goggles.json");
+        let model = json!({"parent": "minecraft:item/generated"});
+        write(&model_file, &model).unwrap();
+        fix(&dir).unwrap();
+        let expected = json!({"variants": {"axis=x": x, "axis=y": y, "axis=z": z}});
+        let mut normalized = Vec::new();
+        for block in ["speedometer", "stressometer"] {
+            let declaration = read(&declarations.join(format!("{block}.json"))).unwrap();
+            assert_eq!(declaration["template"], "minecraft:quartz_pillar");
+            assert_eq!(declaration["properties"]["hardness"], 2.0);
+            assert_eq!(declaration["properties"]["sounds"], "minecraft:oak_planks");
+            assert!(declaration.get("shapes").is_none());
+            let file = states.join(format!("{block}.json"));
+            let state = read(&file).unwrap();
+            assert_eq!(
+                state["variants"].as_object().unwrap().keys().collect::<Vec<_>>(),
+                ["axis=x", "axis=y", "axis=z"]
+            );
+            assert_eq!(state, expected);
+            assert!(
+                !dir.join(format!("assets/create/models/block/tachyon_still/{block}.json")).exists()
+            );
+            normalized.push((file.clone(), fs::read(&file).unwrap()));
+        }
+        goggles["template"] = json!("minecraft:leather_helmet");
+        assert_eq!(read(&goggles_file), Some(goggles.clone()));
+        assert_eq!(read(&model_file), Some(model.clone()));
+        fix(&dir).unwrap();
+        for (file, bytes) in normalized {
+            assert_eq!(fs::read(file).unwrap(), bytes);
+        }
+        assert_eq!(read(&goggles_file), Some(goggles));
+        assert_eq!(read(&model_file), Some(model));
         let _ = fs::remove_dir_all(&dir);
     }
 }
