@@ -188,8 +188,10 @@ jobs:
           exit $code
 
       # Create got from Modrinth as the Installations page's Download does
-      # (its file by its SHA-512, then ported), then the game with its
-      # content on. Only logs leave the runner: the mod's assets are its
+      # (its file by its SHA-512, then ported), then Create's scene: its
+      # blocks turned by Kinetica's engine, its machines working by its own
+      # recipes. Only logs and screenshots leave the runner (this private
+      # repository's artifact), never the mod's files: its assets are its
       # authors'.
       - name: A Java mod imported, and the game with it
         shell: bash
@@ -202,16 +204,13 @@ jobs:
           cat "$home/tachyon-import.txt" || true
           echo
           cat "$home/horizon-mods.txt" || true
-          cd "$home"
-          export TACHYON_GAME=1 HORIZON_HOME="$home" HORIZON_NO_HEARTBEAT=1 HORIZON_NO_DISCORD=1
-          args=(--world Modded --creative --seed 5 --render-distance 4 --world-frames 20)
-          timeout 900 "$GITHUB_WORKSPACE/dist/Tachyon/Tachyon.exe" "${args[@]}" \
-            --smoke-report "$home/report.json" || echo "the game ended with $?"
-          cat "$home/report.json" || true
-          grep -i "mod\|content\|warn\|error\|panic" "$home/logs/latest.log" | head -80 || true
+          code=0
+          timeout 900 python .github/tachyon/scene.py "$GITHUB_WORKSPACE/dist/Tachyon/Tachyon.exe" "$home" \
+            "$GITHUB_WORKSPACE/snapshots/create" create || code=$?
+          grep -i "create\|mod\|content\|warn\|error\|panic" "$home/logs/latest.log" | head -80 || true
           cp "$home/logs/latest.log" "$GITHUB_WORKSPACE/snapshots/modded-game.log" || true
-          cp "$home/report.json" "$GITHUB_WORKSPACE/snapshots/modded-report.json" || true
           cp "$home/tachyon-import.txt" "$GITHUB_WORKSPACE/snapshots/" || true
+          exit $code
 
       - uses: actions/upload-artifact@v4
         if: always()

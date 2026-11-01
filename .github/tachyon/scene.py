@@ -360,6 +360,117 @@ def kinetica(control, out):
     return good
 
 
+# Create, got from Modrinth, on a stone floor south of the player: its
+# blocks turned by Kinetica's engine (a Create motor's facing is its shaft's
+# way). A gear train; a millstone on a motor, a hopper over it; a press two
+# blocks over a depot (Create's way), a hopper beside the depot and one
+# under it; a mixer two blocks over a basin, a motor over it, a hopper
+# under the basin.
+CREATE_SHOWCASE = [
+    ("fill", (-8, -1, -2), (8, -1, 12), "minecraft:smooth_stone"),
+    ("fill", (-8, 0, -2), (8, 12, 12), "minecraft:air"),
+    ("setblock", (-4, 0, 4), "create:creative_motor[facing=east]"),
+    ("setblock", (-3, 0, 4), "create:shaft[axis=x]"),
+    ("setblock", (-2, 0, 4), "create:cogwheel[axis=x]"),
+    ("setblock", (-2, 1, 5), "create:large_cogwheel[axis=x]"),
+    ("setblock", (-1, 0, 4), "create:gearbox[axis=y]"),
+    ("setblock", (0, 0, 4), "create:encased_fan[axis=x]"),
+    ("setblock", (-1, 0, 3), "create:shaft[axis=z]"),
+    ("setblock", (2, -1, 7), "create:creative_motor[facing=up]"),
+    ("setblock", (2, 0, 7), "create:millstone"),
+    ("setblock", (2, 1, 7), "minecraft:hopper[facing=down]"),
+    ("setblock", (5, 0, 7), "create:depot[facing=north]"),
+    ("setblock", (5, 2, 7), "create:mechanical_press[facing=north]"),
+    ("setblock", (5, 2, 6), "create:creative_motor[facing=south]"),
+    ("setblock", (6, 0, 7), "minecraft:hopper[facing=west]"),
+    ("setblock", (5, -1, 7), "minecraft:hopper[facing=down]"),
+    ("setblock", (-4, 0, 8), "create:basin"),
+    ("setblock", (-4, 2, 8), "create:mechanical_mixer"),
+    ("setblock", (-4, 3, 8), "create:creative_motor[facing=down]"),
+    ("setblock", (-4, -1, 8), "minecraft:hopper[facing=down]"),
+]
+
+
+def create(control, out):
+    """Create's blocks placed by commands and turned, in pictures; its
+    millstone, press and mixer working by Create's own recipes (what they
+    make is Create's items). Whether every command ran and each made its
+    item."""
+    player = control.send("status").get("player") or {}
+    px, py, pz = player.get("position", [0.5, 64.0, 0.5])
+    base = [math.floor(px), math.floor(py), math.floor(pz)]
+    at = lambda o: " ".join(str(b + d) for b, d in zip(base, o))
+    good = True
+    commands = [f"{c[0]} {at(c[1])} {at(c[2])} {c[3]}" if c[0] == "fill" else f"{c[0]} {at(c[1])} {c[2]}"
+                for c in CREATE_SHOWCASE]
+    wear = ["item replace entity @s armor.head with kinetica:engineers_goggles", "kill @e[type=item]"]
+    for command in commands + wear:
+        if "error" in control.send("chat /" + command):
+            good = False
+    time.sleep(2)
+    chat = " ".join(str(line) for line in control.send("chat-log 30").get("chat", []))
+    for word in ["Unknown", "Incorrect", "Invalid", "Could not", "Failed"]:
+        if word in chat:
+            print("chat says", word, ":", chat)
+            good = False
+
+    def visit(stand, target):
+        x, y, z = [b + d for b, d in zip(base, stand)]
+        control.send(f"chat /tp @s {x + 0.5} {y} {z + 0.5}")
+        time.sleep(1.5)
+        look_at(control, [x + 0.5, y + 1.62, z + 0.5], [b + d for b, d in zip(base, target)])
+        time.sleep(1)
+
+    def count(item):
+        control.send(f"chat /clear @s {item} 0")
+        time.sleep(1)
+        lines = " ".join(str(line) for line in control.send("chat-log 2").get("chat", []))
+        found = re.search(r"Found (\d+)", lines)
+        print(item, ":", lines)
+        return int(found.group(1)) if found else 0
+
+    # The work: wheat in the millstone's hopper, iron in the depot's, and
+    # andesite with iron nuggets put in the basin with uses.
+    control.send(f"chat /item replace block {at((2, 1, 7))} container.0 with minecraft:wheat 4")
+    control.send(f"chat /item replace block {at((6, 0, 7))} container.0 with minecraft:iron_ingot 4")
+    visit((-4, 0, 10), (-4, 0, 8))
+    for item in ["minecraft:andesite 2", "minecraft:iron_nugget 2"]:
+        control.send(f"chat /item replace entity @s weapon.mainhand with {item}")
+        time.sleep(0.5)
+        control.send("mouse right click")
+        time.sleep(0.5)
+    # The whole showcase, twice a second apart (the parts turn between).
+    visit((0, 0, -1), (0, 0, 5))
+    control.send("look 0 25")
+    time.sleep(2)
+    for name in ["create", "create-later"]:
+        if not control.send("screenshot " + os.path.join(out, f"{name}.png")).get("ok"):
+            good = False
+        time.sleep(1)
+    # The cogwheels with the goggles' speed, the press's head, the mixer.
+    visit((-2, 0, 2), (-2, 0, 4))
+    control.send("screenshot " + os.path.join(out, "create-cogs.png"))
+    visit((5, 0, 4), (5, 1, 7))
+    control.send("screenshot " + os.path.join(out, "create-press.png"))
+    visit((-4, 0, 10), (-4, 1, 8))
+    control.send("screenshot " + os.path.join(out, "create-mixer.png"))
+    # What they made, by now: the millstone's taken with an empty hand, the
+    # depot's and the basin's out of the hoppers under them.
+    control.send("chat /item replace entity @s weapon.mainhand with minecraft:air")
+    visit((2, 0, 9), (2, 0.5, 7))
+    control.send("mouse right click")
+    time.sleep(1)
+    flour = count("create:wheat_flour")
+    control.send(f"chat /item replace entity @s weapon.mainhand from block {at((5, -1, 7))} container.0")
+    time.sleep(1)
+    sheets = count("create:iron_sheet")
+    control.send(f"chat /item replace entity @s weapon.mainhand from block {at((-4, -1, 8))} container.0")
+    time.sleep(1)
+    alloy = count("create:andesite_alloy")
+    print("create made: flour", flour, "sheets", sheets, "alloy", alloy)
+    return good and flour >= 4 and sheets >= 3 and alloy >= 1
+
+
 def lost_realms(control, out):
     """Lost Realms' structures where the world made them: the nearest of
     each, the player set down at it (a picture), which does Chronicles'
@@ -426,6 +537,8 @@ def chronicles(control, out):
 
 def main():
     game, home, out = sys.argv[1:4]
+    # "create": Create's scene alone, in a game folder Create was got into.
+    mode = sys.argv[4] if len(sys.argv) > 4 else "tachyon"
     os.makedirs(home, exist_ok=True)
     os.makedirs(out, exist_ok=True)
     endpoint = os.path.join(home, "control.json")
@@ -437,7 +550,8 @@ def main():
         HORIZON_NO_HEARTBEAT="1",
         HORIZON_NO_DISCORD="1",
     )
-    args = [game, "--world", "Scene", "--creative", "--seed", "5", "--render-distance", "4",
+    world = "Create" if mode == "create" else "Scene"
+    args = [game, "--world", world, "--creative", "--seed", "5", "--render-distance", "4",
             "--width", "1280", "--height", "720", "--control", "--no-pause"]
     proc = subprocess.Popen(args, cwd=home, env=env)
     failed = []
@@ -457,6 +571,11 @@ def main():
         control.send("resume")
         time.sleep(20)
         control.send("resume")
+        if mode == "create":
+            if not create(control, out):
+                failed.append("create")
+            control.send("quit")
+            return finish(failed, "the create scene is done")
         for name in ["world", "world-again"]:
             reply = control.send("screenshot " + os.path.join(out, f"{name}.png"))
             if not reply.get("ok"):
@@ -481,6 +600,17 @@ def main():
             proc.wait(timeout=60)
         except subprocess.TimeoutExpired:
             proc.kill()
+    finish_tachyon(home, failed)
+
+
+def finish(failed, done):
+    if failed:
+        raise SystemExit("failed: " + ", ".join(failed))
+    print(done)
+
+
+def finish_tachyon(home, failed):
+    """The Tachyon scene's checks of the world's folder, then its end."""
     # The motor's speed is kept in the world's folder.
     kept = [os.path.join(d, f) for d, _, files in os.walk(home) for f in files if f.startswith("kinetica-")]
     for path in kept:
@@ -501,9 +631,7 @@ def main():
                   "conveyor", "lost_workshop", "watchtower"]:
         if not any(quest in p.get("done", []) for p in progress):
             failed.append("quest " + quest)
-    if failed:
-        raise SystemExit("failed: " + ", ".join(failed))
-    print("the scene is done")
+    finish(failed, "the scene is done")
 
 
 if __name__ == "__main__":

@@ -808,11 +808,12 @@ impl Game<'_> {
             };
             let r = create_recipes::Recipes::read(&dir, &lookup);
             log::info!(
-                "Tachyon: Create's recipes: {} milling, {} pressing, {} splashing, {} mixing",
+                "Tachyon: Create's recipes: {} milling, {} pressing, {} splashing, {} mixing, {} compacting",
                 r.milling.len(),
                 r.pressing.len(),
                 r.splashing.len(),
-                r.mixing.len()
+                r.mixing.len(),
+                r.compacting.len()
             );
             r
         } else {
@@ -1019,17 +1020,22 @@ impl Game<'_> {
                 if !stacks.is_empty() {
                     held.insert(*p, stacks);
                 }
-                let Some(at) = worker(&owner.index.parts, *p, |q| *q == Part::Mixer) else {
+                // A mixer over a basin mixes: a Create one by Create's
+                // recipes first, a Kinetica one by Kinetica's (the other's
+                // when it holds none of these). A press over one compacts,
+                // by Create's.
+                let (at, recipes) = if let Some(at) = worker(&owner.index.parts, *p, |q| *q == Part::Mixer) {
+                    let (mut first, mut second) = (basin::recipes(), create.mixing.as_slice());
+                    if owner.index.create.contains(&at) {
+                        std::mem::swap(&mut first, &mut second);
+                    }
+                    (at, if b.ready(first).is_some() { first } else { second })
+                } else if let Some(at) = worker(&owner.index.parts, *p, |q| matches!(q, Part::Press(_))) {
+                    (at, create.compacting.as_slice())
+                } else {
                     continue;
                 };
                 let speed = owner.shown.speeds.get(&at).map_or(0.0, |s| s[0]);
-                // A Create mixer by Create's recipes first, a Kinetica one
-                // by Kinetica's: the other's when it holds none of these.
-                let (mut first, mut second) = (basin::recipes(), create.mixing.as_slice());
-                if owner.index.create.contains(&at) {
-                    std::mem::swap(&mut first, &mut second);
-                }
-                let recipes = if b.ready(first).is_some() { first } else { second };
                 if let Some(into) = b.mix(speed, recipes, &mut || random.next_float()) {
                     owner.mills_changed = true;
                     work.insert(at, into);

@@ -29,7 +29,10 @@ pub(super) struct Recipes {
     pub milling: Vec<Milling>,
     pub pressing: Vec<Milling>,
     pub splashing: Vec<Milling>,
+    /// A mixer's, over a basin.
     pub mixing: Vec<Mixing>,
+    /// A press's over a basin.
+    pub compacting: Vec<Mixing>,
 }
 
 /// What a recipe reader asks of the game.
@@ -97,11 +100,14 @@ impl Recipes {
             "create:milling" => single(&mut self.milling, MILLING_TIME),
             "create:pressing" => single(&mut self.pressing, super::millstone::TIME),
             "create:splashing" => single(&mut self.splashing, super::fan::TIME as f32),
-            // A press over a basin compacts as a mixer mixes: one list for
-            // the basin, either working it.
             "create:mixing" | "create:compacting" => {
+                let list = if kind == "create:mixing" {
+                    &mut self.mixing
+                } else {
+                    &mut self.compacting
+                };
                 for set in sets(&ingredients) {
-                    self.mixing.push(Mixing {
+                    list.push(Mixing {
                         inputs: set,
                         time: time.unwrap_or(MIXING_TIME).max(1.0),
                         outputs: copy(&outputs),
@@ -372,7 +378,8 @@ mod tests {
         );
         let alloy = &r.mixing[0];
         assert_eq!(alloy.inputs[1].item, "minecraft:iron_nugget");
-        assert_eq!((r.mixing[1].inputs.len(), r.mixing[1].inputs[0].count), (1, 2));
+        let ice = &r.compacting[0];
+        assert_eq!((r.mixing.len(), ice.inputs.len(), ice.inputs[0].count), (1, 1, 2));
     }
 
     #[test]
