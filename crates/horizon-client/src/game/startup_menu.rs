@@ -274,8 +274,11 @@ pub(super) fn spawn_loader(
 impl Loading {
     pub(super) fn poll_menu_resources(&mut self) -> Result<()> {
         // Once `Done` arrived the generation is over: the caller may have taken
-        // its result, and the finished loader's channel is closed.
-        if self.loaded.is_none() && !self.delivered {
+        // its result, and the finished loader's channel is closed. Off the
+        // screen (Android) the window has no surface for a new renderer, the
+        // title artwork's or the game's: what came waits for it.
+        let detached = self.renderer.as_ref().is_some_and(Renderer::detached);
+        if self.loaded.is_none() && !self.delivered && !detached {
             loop {
                 match self.receiver.try_recv() {
                     Ok(LoaderMsg::Ui(gui, root)) => self.set_ui(gui, root),

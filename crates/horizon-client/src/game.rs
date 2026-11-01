@@ -17052,7 +17052,10 @@ impl ApplicationHandler for App {
                     event_loop.exit();
                     return;
                 }
-                match if loading.menu.reload_packs {
+                // Off the screen (Android) the window has no surface for the
+                // game's renderer: it waits for the window to come back.
+                let detached = loading.renderer.as_ref().is_some_and(Renderer::detached);
+                match if loading.menu.reload_packs || detached {
                     None
                 } else {
                     loading.loaded.take()

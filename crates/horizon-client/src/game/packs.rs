@@ -5,7 +5,7 @@ use super::{
 };
 use horizon_client::{
     assets::Assets,
-    gfx::PreparedTextures,
+    gfx::{PreparedTextures, Renderer},
     hud::HudAtlas,
     lang,
     pack_screen::{self, Compat, PackInfo, Source as PackSource},
@@ -227,6 +227,11 @@ impl Game<'_> {
     /// applied on the render thread, and its outcome goes to whoever asked
     /// (`reloadResourcePacks`' callback, or `PackReloadConfig.Callbacks`).
     pub(super) fn drive_pack_reload(&mut self) {
+        // Off the screen (Android) the window has no surface for the new
+        // renderer: a finished reload waits for it to come back.
+        if self.renderer.as_ref().is_some_and(Renderer::detached) {
+            return;
+        }
         let Some((kind, staged)) = self.pack_reload.as_mut().and_then(PackReload::finished) else {
             return;
         };

@@ -2943,6 +2943,12 @@ impl Renderer {
             view_formats: &config.view_formats,
         })
     }
+    /// Whether this renderer has given its window surface up and draws nowhere
+    /// until `recreate_surface`: an Android app off the screen. Elsewhere a
+    /// renderer without one failed to recreate it, which a new one retries.
+    pub fn detached(&self) -> bool {
+        cfg!(target_os = "android") && self.surface.is_none() && self.offscreen.is_none()
+    }
     /// Hand the window surface over to the renderer that replaces this one on
     /// the same device (it takes `spare_surface`).
     pub fn release_surface(&mut self) {
