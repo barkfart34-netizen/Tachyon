@@ -286,6 +286,11 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
    dari antrean sendiri, di cabang sendiri, dan dicek CI. Ia tetap jalan saat batas pemakaian
    Claude habis. Claude meninjau lalu menggabungkan hasilnya.
 
+3. **Ide untuk nanti: auto updater.** Paket update "ramping" (tanpa aset Minecraft dan Create)
+   di repo rilis publik terpisah; rilis lengkap tetap private untuk instal pertama. Launcher
+   mengecek versi baru dan menawarkan update. Butuh secret `RELEASES_TOKEN` yang dibuat
+   pemilik repo. Belum dijadwalkan.
+
 ### Tahap A: kontrol sentuh ala Bedrock di Android (M–L)
 
 **Sumber:**
