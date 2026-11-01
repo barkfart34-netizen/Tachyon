@@ -10,6 +10,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[path = "creative_kinds.rs"]
+mod kinds;
+
 #[derive(Clone, Debug)]
 pub struct Tab {
     pub id: String,
@@ -235,7 +238,7 @@ pub fn item_group_key(id: &str) -> Option<&'static str> {
         "spawn_eggs" => "itemGroup.spawnEggs",
         "op_blocks" => "itemGroup.op",
         "inventory" => "itemGroup.inventory",
-        _ => return None,
+        _ => return kinds::item_group_key(id),
     })
 }
 impl Creative {
@@ -307,10 +310,10 @@ impl Creative {
         creative.add_mod_tabs(root);
         Ok(creative)
     }
-    /// Tachyon: each content mod's items (the item registry's past vanilla's,
-    /// in its order) in a tab of its own, ten to a page after vanilla's, as
-    /// NeoForge's: the build's own mods first, then any others. The search
-    /// tab finds them too.
+    /// Tachyon: content mods' items in registry order, split by their kind
+    /// table where there is one, otherwise a tab per mod. Ten tabs to a page
+    /// after vanilla's, as NeoForge's: the build's own mods first, then any
+    /// others. The search tab keeps its order independently of the kinds.
     fn add_mod_tabs(&mut self, root: &Path) {
         let Ok(bytes) = fs::read(root.join("registries.json")) else {
             return;
@@ -336,16 +339,12 @@ impl Creative {
             }
         }
         namespaces.sort_by_key(|n| !own.iter().any(|o| o == n));
-        for (i, namespace) in namespaces.into_iter().enumerate() {
+        let mut tab_index = 0;
+        for namespace in namespaces {
             let items: Vec<ItemStack> = (ids.iter())
                 .filter(|(_, id)| id.split(':').next() == Some(namespace))
                 .map(|(_, id)| ItemStack::new(id, 1))
                 .collect();
-            let icon = (items.iter())
-                .find(|s| s.item.ends_with(":cogwheel"))
-                .unwrap_or(&items[0])
-                .item
-                .to_string();
             for s in &items {
                 if self.exported_search.iter().any(|(x, _, _)| x.item == s.item) {
                     continue;
@@ -362,25 +361,71 @@ impl Creative {
                     search.operator.push(false);
                 }
             }
-            let slot = i % MOD_TABS_A_PAGE;
-            self.exported.push(Exported {
-                operator: vec![false; items.len()],
-                tab: Tab {
-                    id: format!("{namespace}:tachyon_tab"),
-                    title: mod_title(root, namespace),
-                    icon,
+            if let Some(table) = kinds::for_namespace(namespace) {
+                let mut grouped: Vec<Vec<ItemStack>> =
+                    (0..table.kinds.len()).map(|_| Vec::new()).collect();
+                for item in items {
+                    grouped[table.kind_of(&item.item)].push(item);
+                }
+                for (kind, items) in table.kinds.iter().zip(grouped) {
+                    if items.is_empty() {
+                        continue;
+                    }
+                    self.add_mod_tab(
+                        format!("{namespace}:tachyon_tab/{}", kind.id),
+                        kind.title.to_owned(),
+                        kind.icon,
+                        items,
+                        tab_index,
+                    );
+                    tab_index += 1;
+                }
+            } else {
+                self.add_mod_tab(
+                    format!("{namespace}:tachyon_tab"),
+                    mod_title(root, namespace),
+                    &format!("{namespace}:cogwheel"),
                     items,
-                    top: slot < 5,
-                    column: (slot % 5) as u32,
-                    search: false,
-                    inventory: false,
-                    hotbar: false,
-                    page: Some(1 + i / MOD_TABS_A_PAGE),
-                },
-                category: false,
-            });
+                    tab_index,
+                );
+                tab_index += 1;
+            }
         }
         self.rebuild();
+    }
+    /// A nonempty mod tab, with an icon from its own items and a slot counted
+    /// across all emitted tabs, not namespaces.
+    fn add_mod_tab(
+        &mut self,
+        id: String,
+        title: String,
+        preferred_icon: &str,
+        items: Vec<ItemStack>,
+        index: usize,
+    ) {
+        let icon = items
+            .iter()
+            .find(|s| s.item.as_ref() == preferred_icon)
+            .unwrap_or(&items[0])
+            .item
+            .to_string();
+        let slot = index % MOD_TABS_A_PAGE;
+        self.exported.push(Exported {
+            operator: vec![false; items.len()],
+            tab: Tab {
+                id,
+                title,
+                icon,
+                items,
+                top: slot < 5,
+                column: (slot % 5) as u32,
+                search: false,
+                inventory: false,
+                hotbar: false,
+                page: Some(1 + index / MOD_TABS_A_PAGE),
+            },
+            category: false,
+        });
     }
     /// Tachyon: how many pages of tabs there are.
     pub fn pages(&self) -> usize {
