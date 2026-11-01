@@ -32,6 +32,42 @@ The Android app (`android/build.sh`) carries the OpenJDK 25 runtime for Android 
 Launcher 2 ships, built from OpenJDK, which is licensed under the GNU General Public License 2.0
 with the Classpath Exception. It runs only the preparation's exporters, as a separate program.
 
+## horizon-android touch controls
+
+Tachyon's Bedrock-style touch formats and value contracts in
+`crates/horizon-client-render/src/touch.rs` and `touch/{layout,custom}.rs` follow
+[Vasysik/horizon-android](https://github.com/Vasysik/horizon-android), branch `android`, commit
+`7301f6fdd7f470b11317276e7a11b4dc615c137a`. The source files followed are
+`crates/horizon-client-render/src/touch.rs`,
+`crates/horizon-client-render/src/touch/layout.rs` and
+`crates/horizon-client-render/src/touch/custom.rs`. The fork's code is licensed under MIT:
+
+```
+MIT License
+
+Copyright (c) 2026 Ludovic Marie and the Horizon contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+This notice covers code, not Mojang's artwork. No touch textures or other assets are included.
+
 ## AMD FidelityFX SDK (FSR 3.1 frame generation)
 
 `crates/horizon-client-render/src/gfx/frame_gen/optical_flow.wgsl` is a port to WGSL of the

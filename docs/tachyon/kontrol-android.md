@@ -1,8 +1,10 @@
 # Port kontrol sentuh Android bergaya Bedrock
 
 Dokumen ini menganalisis `Vasysik/horizon-android`, branch `android`, dan merencanakan port ke
-Tachyon. Belum ada perubahan Rust, unduhan tekstur, build, atau pengujian. Perilaku yang dijelaskan
-sebagai perilaku fork berasal dari pembacaan sumber, bukan pembandingan langsung dengan Bedrock.
+Tachyon. Tahap 1 sudah diimplementasikan: format dan kontrak nilai murni, belum menerima sentuhan.
+Zalith tetap aktif. Tidak ada unduhan tekstur, build, atau tes yang dijalankan di mesin kerja ini.
+Perilaku yang dijelaskan sebagai perilaku fork berasal dari pembacaan sumber, bukan pembandingan
+langsung dengan Bedrock.
 
 Referensi fork adalah commit `7301f6fdd7f470b11317276e7a11b4dc615c137a`, di
 `_ref/horizon-android/`. Tachyon yang diperiksa adalah `17b1cc7fbafb59c00729f8ceeb11f1da153bc2e6`.
@@ -230,8 +232,9 @@ Tidak perlu menyalin seluruh `gamepad.rs` atau membawa perbaikan 8BitDo untuk me
 
 ## Rancangan port ke API sekarang
 
-Bagian selanjutnya adalah **usulan**, bukan API yang sudah tersedia. Engine Bedrock dan Zalith
-harus saling eksklusif untuk satu jari/gesture. Controller fisik tetap pada `Pads` sekarang.
+Format dan kontrak nilai tahap 1 sudah tersedia; wiring dan engine dalam bagian selanjutnya masih
+**usulan**. Engine Bedrock dan Zalith harus saling eksklusif untuk satu jari/gesture. Controller
+fisik tetap pada `Pads` sekarang.
 
 ### Berkas dan pemilik state
 
@@ -377,7 +380,7 @@ jangan meninggalkan referensi ke modul tahap berikutnya. Zalith tetap aktif samp
 
 | Tahap | Hasil mandiri | Perkiraan |
 | --- | --- | --- |
-| 1. Kontrak dan format | `Mode`/`Placement`/konfigurasi, tipe custom minimal, kontrak frame, sanitasi dan roundtrip; belum mengambil input. Notice MIT masuk bersama kode pertama. | 350–500 baris |
+| 1. Kontrak dan format — selesai | `Mode`/`Placement`/konfigurasi, tipe custom minimal, kontrak frame, sanitasi dan roundtrip; belum mengambil input. Notice MIT masuk bersama kode pertama. | 350–500 baris |
 | 2. Engine gerak/tombol | Kepemilikan jari, joystick/D-pad, edges dan helper gerak delapan arah; API murni dengan tes, belum dipasang pada event Android. | 350–500 baris |
 | 3. HUD | Port gambar/indikator dalam modul terpisah bila perlu, fallback prosedural, geometri gambar/hit-test sama. Preview opsional, tanpa unduhan. | 350–500 baris |
 | 4. Adapter Android | `Overlay` memilih engine secara opt-in, frame menuju `TouchInput`, fixed actions, ledger sumber dan cleanup suspend/screen/cancel. Semua initializer diperbarui. | 350–500 baris |
@@ -393,6 +396,34 @@ jangan meninggalkan referensi ke modul tahap berikutnya. Zalith tetap aktif samp
 Perkiraan total sekitar 4–6 ribu baris ditambah metadata; bukan port beberapa ratus baris.
 Jika bagian membesar, pecah lagi menjadi PR sekitar 500 baris yang tetap lengkap. CI perlu mengecek
 desktop, Android tanpa default features, dan server; kode UI/Android tidak boleh bocor ke server.
+
+### Hasil tahap 1
+
+- `horizon_client_render::touch`, juga di-re-export sebagai `horizon_client::touch`, tersedia di
+  semua platform. `layout.rs` membawa tiga `Mode`, empat `SCHEMES`, urutan 14 `Control`, posisi dan
+  default fork, geometri persegi, mirror left-handed, swap jump/sneak D-pad, serta visibility bersama.
+- `Settings::parse()` dan `to_json()` hanya mengolah string milik caller. Format JSON memakai
+  `version: 1`; versi tanpa field itu diterima sebagai format lama fork, versi JSON lain ditolak. Tiga
+  baris dengan 10/12/14 kontrol dan visibility lama 12 entri diisi dari default tanpa memindahkan
+  kontrol tersimpan. Sanitasi mengganti nilai nonfinite, membatasi geometri dan sensitivitas, serta
+  menyimpan maksimal 32 custom button; visibility di luar 0/1/2 kembali ke default skema.
+- `CustomButton` baru menyimpan token dan tiga placement, dengan validator keyboard/action fork.
+  Tombol kosong `key.keyboard.unknown` tetap disimpan. Belum ada dispatch key, ownership jari, editor,
+  gambar, atau penyimpanan berkas. Migrasi posisi factory dalam `load_from()` fork belum dibawa.
+- `TouchContext`, `TouchFrame`, `TouchTap`, `TouchRequest`, dan `TouchFeedback` adalah nilai owned,
+  tanpa `Game`, JNI, clock, atau `RefCell`. Aim berupa titik layar ternormalisasi; proyeksi ray baru
+  pada tahap 6. Setiap tap dalam `VecDeque` membawa aim dan snapshot niat use sendiri, bukan satu
+  `Option` yang tertimpa. Kontrak cleanup dan handoff borrow belum merupakan adapter yang berjalan.
+- Perbedaan sengaja: tidak ada load/save CWD tersembunyi; `virtual_mouse` menjadi opsi format dengan
+  default off; preferensi gyro tidak diduplikasi karena nanti memakai `touchGyroscope`/JNI Tachyon.
+  Belum ada `touchEngine`, migrasi preferensi, atau perubahan default aplikasi maupun layout Zalith.
+- Tes berada di `crates/horizon-client/src/desktop/touch_tests.rs`, didaftarkan sebagai modul
+  `desktop::tests` dengan `#[cfg(test)]`. Filter CI sekarang
+  `cargo test -p horizon-client --bin tachyon-desktop -- tachyon desktop native_hooks` mencakup tes
+  default/skema, roundtrip, format lama/invalid, sanitasi, token, geometri, dan antrian dua tap.
+  Tes ditulis tetapi tidak dijalankan; hasil kompilasi dan pengujian menunggu CI Linux.
+- `THIRD_PARTY_NOTICES.md` memuat commit, berkas asal, copyright, dan seluruh notice MIT fork.
+  Tidak ada tekstur, manifest unduhan, maupun aset lain yang dibawa.
 
 ## Pengujian implementasi di emulator CI
 

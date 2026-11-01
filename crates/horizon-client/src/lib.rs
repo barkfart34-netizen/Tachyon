@@ -16,7 +16,7 @@ pub use horizon_client_render::{
     potent_sulfur, providers, screen_draw, screen_effects, sculk, section_mask, settings,
     shader_pack_list, signs, skins, sound_engine, sound_events, sound_preview, spans, split_layout,
     sprites, streaming, structure_block, tab_list, telemetry, test_block, test_instance_block,
-    testgen, title_edition, trims, ui, vault, weather, widgets, world, worldborder, zip,
+    testgen, title_edition, touch, trims, ui, vault, weather, widgets, world, worldborder, zip,
 };
 pub mod attack_strength;
 pub mod attribute_updates;

@@ -2,6 +2,9 @@
 //! environment, the game the launcher started in an installation's folder.
 mod launcher;
 mod store;
+#[cfg(test)]
+#[path = "touch_tests.rs"]
+mod tests;
 
 use crate::tachyon::brand;
 use horizon_client::{crash, logging};
