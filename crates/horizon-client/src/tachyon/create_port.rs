@@ -7,6 +7,8 @@
 //!
 //! Only files Tachyon writes change here: the porter's declarations, and
 //! blockstates pointing at Create's own models in other ways.
+//! Encased cogwheels keep the casings from BuilderTransformers and the
+//! closed shaft defaults of EncasedCogwheelBlock (Create, MIT).
 use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
@@ -20,6 +22,10 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     // Whole blocks round an axis, with no use of their own.
     ("andesite_encased_shaft", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
     ("brass_encased_shaft", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
+    ("andesite_encased_cogwheel", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
+    ("brass_encased_cogwheel", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
+    ("andesite_encased_large_cogwheel", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
+    ("brass_encased_large_cogwheel", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
     ("gearbox", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
     ("clutch", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
     ("gearshift", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
@@ -113,6 +119,23 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         Some(format!("axis={axis}"))
     })?;
     rekey(&blockstates.join("basin.json"), |k| (k == "facing=down").then(String::new))?;
+    // EncasedCogwheelBlock's default ends are closed. Keep
+    // BuilderTransformers' material-specific casings in the chunk mesh.
+    for block in [
+        "andesite_encased_cogwheel",
+        "brass_encased_cogwheel",
+        "andesite_encased_large_cogwheel",
+        "brass_encased_large_cogwheel",
+    ] {
+        rekey(&blockstates.join(format!("{block}.json")), |k| {
+            let axis = k.split(',').find_map(|p| p.strip_prefix("axis="))?;
+            let closed = k.split(',').any(|p| p == "top_shaft=false")
+                && k.split(',').any(|p| p == "bottom_shaft=false");
+            let key = format!("axis={axis}");
+            // Axis-only keys already came through fix.
+            (matches!(axis, "x" | "y" | "z") && (closed || k == key.as_str())).then_some(key)
+        })?;
+    }
     for funnel in ["andesite_funnel", "brass_funnel"] {
         rekey(&blockstates.join(format!("{funnel}.json")), |k| {
             let facing = k
@@ -341,6 +364,90 @@ mod tests {
         assert!(!TURNING.contains(&"chute"));
         fix(&dir).unwrap();
         assert_eq!(read(&file).unwrap(), state);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn encased_cogwheels_keep_only_their_closed_casing_models() {
+        let dir = scratch("encased-cogs");
+        let states = dir.join("assets/create/blockstates");
+        let declarations = dir.join("data/create/horizon/block");
+        let blocks = [
+            "andesite_encased_cogwheel",
+            "brass_encased_cogwheel",
+            "andesite_encased_large_cogwheel",
+            "brass_encased_large_cogwheel",
+        ];
+        for block in blocks {
+            write(
+                &declarations.join(format!("{block}.json")),
+                &json!({"template": "minecraft:oak_log", "properties": {
+                    "hardness": 0.5, "sounds": "minecraft:stone"}}),
+            )
+            .unwrap();
+            let mut variants = serde_json::Map::new();
+            for (axis, x, y) in [("x", 90, 90), ("y", 0, 0), ("z", 90, 0)] {
+                for (top, bottom, suffix) in [
+                    (false, false, ""),
+                    (true, false, "_top"),
+                    (false, true, "_bottom"),
+                    (true, true, "_top_bottom"),
+                ] {
+                    let key = match axis {
+                        "x" => format!("top_shaft={top},axis={axis},bottom_shaft={bottom}"),
+                        "y" => format!("bottom_shaft={bottom},top_shaft={top},axis={axis}"),
+                        _ => format!("axis={axis},bottom_shaft={bottom},top_shaft={top}"),
+                    };
+                    variants.insert(key, json!({
+                        "model": format!("create:block/{block}{suffix}"),
+                        "x": x, "y": y, "uvlock": true, "weight": 2,
+                    }));
+                }
+            }
+            write(&states.join(format!("{block}.json")), &json!({"variants": variants})).unwrap();
+        }
+        fix(&dir).unwrap();
+        let mut fixed = Vec::new();
+        for block in blocks {
+            let declaration = read(&declarations.join(format!("{block}.json"))).unwrap();
+            assert_eq!(declaration["template"], "minecraft:quartz_pillar");
+            assert_eq!(declaration["properties"]["hardness"], 2.0);
+            assert_eq!(declaration["properties"]["sounds"], "minecraft:oak_planks");
+            assert!(declaration.get("shapes").is_none());
+            let state = read(&states.join(format!("{block}.json"))).unwrap();
+            assert_eq!(state["variants"].as_object().unwrap().len(), 3);
+            for (axis, x, y) in [("x", 90, 90), ("y", 0, 0), ("z", 90, 0)] {
+                let key = format!("axis={axis}");
+                assert_eq!(state["variants"][key.as_str()], json!({
+                    "model": format!("create:block/{block}"),
+                    "x": x, "y": y, "uvlock": true, "weight": 2,
+                }));
+            }
+            assert!(!dir.join(format!("assets/create/models/block/tachyon_still/{block}.json")).exists());
+            fixed.push((block, declaration, state));
+        }
+        fix(&dir).unwrap();
+        for (block, declaration, state) in fixed {
+            assert_eq!(read(&declarations.join(format!("{block}.json"))).unwrap(), declaration);
+            assert_eq!(read(&states.join(format!("{block}.json"))).unwrap(), state);
+            assert!(!dir.join(format!("assets/create/models/block/tachyon_still/{block}.json")).exists());
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_encased_cogwheel_states_are_left_alone() {
+        let dir = scratch("encased-missing");
+        fix(&dir).unwrap();
+        for block in [
+            "andesite_encased_cogwheel",
+            "brass_encased_cogwheel",
+            "andesite_encased_large_cogwheel",
+            "brass_encased_large_cogwheel",
+        ] {
+            assert!(read(&dir.join(format!("assets/create/blockstates/{block}.json"))).is_none());
+            assert!(!dir.join(format!("assets/create/models/block/tachyon_still/{block}.json")).exists());
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 }

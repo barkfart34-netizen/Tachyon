@@ -21,6 +21,7 @@ diambil dari kode Create sendiri. Rencana besarnya ada di [rencana-modpack.md](r
   - roda gigi kecil bersebelahan berbalik arah (-1);
   - roda gigi besar ke kecil secara diagonal (-2 dan -0,5);
   - dua roda gigi besar bersudut siku;
+  - roda gigi bercasing andesite dan brass memakai aturan persinggungan gigi yang sama;
   - arah sisi gearbox.
 - Batas kecepatan 256 RPM.
 - Beban per RPM:
@@ -36,6 +37,7 @@ diambil dari kode Create sendiri. Rencana besarnya ada di [rencana-modpack.md](r
 
 | Bagian | Create | Tachyon sekarang |
 |---|---|---|
+| Roda gigi bercasing | Andesite/brass, kecil/besar: casing diam, gigi tetap bertaut. Koneksi poros mengikuti `top_shaft` dan `bottom_shaft`, keduanya `false` secara default. | Keempat blok memakai aturan roda gigi yang sama; casing impor diam, model shaftless berputar. Kedua ujung poros selalu tertutup karena template hanya punya `axis`. |
 | Motor kreatif | Kapasitas 16384 per RPM | 16384 rata, tidak tergantung RPM |
 | Kincir air | 8 RPM dikali arah aliran di sekitarnya: skor aliran dibatasi -1..1, jadi bisa berbalik. Kapasitas 32 per RPM. Lava juga bisa. | 8 RPM, kapasitas 16 per RPM |
 | Kincir air besar | Skor aliran dari 12 titik tepi, dibatasi -1..1; 4 RPM, kapasitas 128 per RPM. Bidang 3×3 diisi `water_wheel_structure`. | Pemungutan suara dan angka sama; model Create berputar sepanjang `axis`. Blok penyangga 3×3 belum dipasang. |
@@ -160,6 +162,14 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - Unit test ditulis untuk gerak, transfer, ejeksi, cabang udara, alias/model, penyimpanan komponen,
     dan pemulihan tinggi serta isi chute lain ketika ada entri simpanan rusak.
     Build, test, dan permainan tidak dijalankan pada pengerjaan ini; verifikasi diserahkan ke CI.
+- **Roda gigi bercasing bisa bertaut dan digambar**:
+  - `create:andesite_encased_cogwheel`, `create:brass_encased_cogwheel`,
+    `create:andesite_encased_large_cogwheel`, dan `create:brass_encased_large_cogwheel`;
+  - aturan putaran dan offset gigi sama dengan roda tanpa casing; casing tetap diam;
+  - bagian berputar memakai `create:block/cogwheel_shaftless` dan
+    `create:block/large_cogwheel_shaftless`;
+  - kedua ujung poros tetap tertutup, sesuai default Create. Template `minecraft:quartz_pillar`
+    hanya memberi `axis=x/y/z`, belum mendukung `top_shaft` dan `bottom_shaft`.
 - **Belum:**
   - tarikan mob dan pemain melalui celah crushing wheel, serta posisi keluarnya sebelum mati.
 - Pemberitahuan MIT Create sudah ada di `THIRD_PARTY_NOTICES.md`.

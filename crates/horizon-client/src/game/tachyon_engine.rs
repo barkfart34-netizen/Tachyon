@@ -152,6 +152,11 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
         "shaft" | "andesite_encased_shaft" | "brass_encased_shaft" => Part::Shaft(axis()?),
         "cogwheel" => Part::Cog(axis()?),
         "large_cogwheel" => Part::LargeCog(axis()?),
+        // EncasedCogwheelBlock's default closes both shaft ends.
+        "andesite_encased_cogwheel" | "brass_encased_cogwheel" => Part::EncasedCog(axis()?),
+        "andesite_encased_large_cogwheel" | "brass_encased_large_cogwheel" => {
+            Part::EncasedLargeCog(axis()?)
+        }
         "gearbox" => Part::Gearbox(axis()?),
         "clutch" => Part::Clutch(axis()?),
         "gearshift" => Part::Gearshift(axis()?),
@@ -733,8 +738,10 @@ fn pieces(part: Part, create: bool) -> Vec<(&'static str, Dir, f32, usize, Dir)>
         .collect()
 }
 
-/// Create's partial models: a half shaft points south, a propeller turns
-/// about Z, the others about Y.
+/// Create's partial models (AllPartialModels): a half shaft points south,
+/// a propeller turns about Z, the others about Y.
+/// EncasedCogRenderer and EncasedCogVisual (Create, MIT) turn shaftless
+/// cogwheels when EncasedCogwheelBlock's ends are closed.
 fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
     const HALF: &str = "create:block/shaft_half";
     const SHAFT: &str = "create:block/shaft";
@@ -742,6 +749,10 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         Part::Shaft(a) | Part::Press(a) => vec![(SHAFT, positive(a), 1.0, 0, Dir::Up)],
         Part::Cog(a) => vec![("create:block/cogwheel", positive(a), 1.0, 0, Dir::Up)],
         Part::LargeCog(a) => vec![("create:block/large_cogwheel", positive(a), 1.0, 0, Dir::Up)],
+        Part::EncasedCog(a) => vec![("create:block/cogwheel_shaftless", positive(a), 1.0, 0, Dir::Up)],
+        Part::EncasedLargeCog(a) => {
+            vec![("create:block/large_cogwheel_shaftless", positive(a), 1.0, 0, Dir::Up)]
+        }
         Part::Gearbox(_) => Dir::ALL
             .into_iter()
             .filter(|d| part.shaft_toward(*d))
@@ -819,7 +830,9 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::Funnel(_)
         | Part::CrushingWheel(_)
         | Part::LargeWaterWheel(_)
-        | Part::Chute(_, _) => Vec::new(),
+        | Part::Chute(_, _)
+        | Part::EncasedCog(_)
+        | Part::EncasedLargeCog(_) => Vec::new(),
     }
 }
 
@@ -1940,8 +1953,8 @@ impl Game<'_> {
         };
         let (block, english) = match part {
             Part::Shaft(_) => ("shaft", "Shaft"),
-            Part::Cog(_) => ("cogwheel", "Cogwheel"),
-            Part::LargeCog(_) => ("large_cogwheel", "Large Cogwheel"),
+            Part::Cog(_) | Part::EncasedCog(_) => ("cogwheel", "Cogwheel"),
+            Part::LargeCog(_) | Part::EncasedLargeCog(_) => ("large_cogwheel", "Large Cogwheel"),
             Part::Gearbox(_) => ("gearbox", "Gearbox"),
             Part::Motor(_) => ("creative_motor", "Creative Motor"),
             Part::Crank(_) => ("hand_crank", "Hand Crank"),
@@ -2175,6 +2188,44 @@ mod tests {
         let facing = |k: &str| (k == "facing").then_some("north");
         assert_eq!(part_of("create:large_water_wheel", facing), None);
         assert_eq!(part_of("create:large_water_wheel", |_| None), None);
+    }
+
+    #[test]
+    fn encased_cogwheels_use_their_axis_and_shaftless_create_models() {
+        for (axis, name) in [(Axis::X, "x"), (Axis::Y, "y"), (Axis::Z, "z")] {
+            let props = |k: &str| (k == "axis").then_some(name);
+            for (id, part, model) in [
+                (
+                    "create:andesite_encased_cogwheel",
+                    Part::EncasedCog(axis),
+                    "create:block/cogwheel_shaftless",
+                ),
+                (
+                    "create:brass_encased_cogwheel",
+                    Part::EncasedCog(axis),
+                    "create:block/cogwheel_shaftless",
+                ),
+                (
+                    "create:andesite_encased_large_cogwheel",
+                    Part::EncasedLargeCog(axis),
+                    "create:block/large_cogwheel_shaftless",
+                ),
+                (
+                    "create:brass_encased_large_cogwheel",
+                    Part::EncasedLargeCog(axis),
+                    "create:block/large_cogwheel_shaftless",
+                ),
+            ] {
+                assert_eq!(part_of(id, props), Some(part));
+                assert_eq!(pieces(part, true), vec![(model, positive(axis), 1.0, 0, Dir::Up)]);
+                assert!(pieces(part, false).is_empty());
+                assert_eq!(part_of(id, |_| None), None);
+                for invalid in ["", "north", "Y"] {
+                    assert_eq!(part_of(id, |k| (k == "axis").then_some(invalid)), None);
+                }
+                assert_eq!(part_of(id, |k| (k == "facing").then_some("north")), None);
+            }
+        }
     }
 
     #[test]

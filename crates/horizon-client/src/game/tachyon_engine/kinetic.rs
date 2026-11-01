@@ -6,7 +6,8 @@
 //! one twice as fast); a gearbox turns it through a right angle. A clutch
 //! or a gearshift is two half shafts: powered by redstone, a clutch parts
 //! them and a gearshift turns one against the other. The rules follow
-//! Create's (MIT); the code is Tachyon's.
+//! Create's (MIT); the code is Tachyon's. Cogwheel links follow ICogWheel
+//! and RotationPropagator, including EncasedCogwheelBlock's closed shafts.
 //!
 //! [`solve`] gives every half of every part its speed from the sources it
 //! is joined to. A network whose parts disagree (two motors at odds, a loop
@@ -162,6 +163,12 @@ pub enum Part {
     Cog(Axis),
     /// A large cogwheel on a shaft along its axis.
     LargeCog(Axis),
+    /// Create's small encased cogwheel, as EncasedCogwheelBlock's default:
+    /// both shaft ends closed, its teeth still mesh.
+    EncasedCog(Axis),
+    /// Create's large encased cogwheel, as EncasedCogwheelBlock's default:
+    /// both shaft ends closed, its teeth still mesh.
+    EncasedLargeCog(Axis),
     /// A gearbox: shafts out of its four sides around its axis.
     Gearbox(Axis),
     /// A motor turning its shaft out of one side.
@@ -233,7 +240,12 @@ impl Part {
             Part::Mixer => d == Dir::Up,
             // Its pulleys' shafts, out of its sides.
             Part::Belt(a) => d.axis() != a && d.axis() != Axis::Y,
-            Part::Depot | Part::Basin | Part::Funnel(_) | Part::Chute(_, _) => false,
+            Part::EncasedCog(_)
+            | Part::EncasedLargeCog(_)
+            | Part::Depot
+            | Part::Basin
+            | Part::Funnel(_)
+            | Part::Chute(_, _) => false,
         }
     }
     /// The stress the part takes for each RPM it turns at (stress units):
@@ -260,8 +272,8 @@ impl Part {
     /// The part's cogwheel: its axis and whether it is large.
     fn cog(self) -> Option<(Axis, bool)> {
         match self {
-            Part::Cog(a) => Some((a, false)),
-            Part::LargeCog(a) => Some((a, true)),
+            Part::Cog(a) | Part::EncasedCog(a) => Some((a, false)),
+            Part::LargeCog(a) | Part::EncasedLargeCog(a) => Some((a, true)),
             // A mixer meshes as one too (Create's).
             Part::Millstone | Part::Mixer => Some((Axis::Y, false)),
             _ => None,
@@ -532,16 +544,20 @@ pub fn solve(
 /// A part's angle in degrees at `ticks` (game time with the partial tick),
 /// as Create turns them: 0.3 degrees a tick for each RPM, cogwheels offset
 /// by half a tooth on alternate positions so neighbours' teeth interleave.
+/// The tooth offsets follow Create's KineticBlockEntityVisual.rotationOffset.
 pub fn angle(part: Part, pos: [i32; 3], speed: f32, ticks: f64) -> f32 {
     let base = (ticks * f64::from(speed) * 0.3).rem_euclid(360.0) as f32;
     let offset = match part {
-        Part::Cog(axis) | Part::LargeCog(axis) => {
+        Part::Cog(axis)
+        | Part::LargeCog(axis)
+        | Part::EncasedCog(axis)
+        | Part::EncasedLargeCog(axis) => {
             let sum: i32 = [Axis::X, Axis::Y, Axis::Z]
                 .into_iter()
                 .filter(|a| *a != axis)
                 .map(|a| a.pick(pos))
                 .sum();
-            let large = matches!(part, Part::LargeCog(_));
+            let large = matches!(part, Part::LargeCog(_) | Part::EncasedLargeCog(_));
             match (sum.rem_euclid(2) == 0, large) {
                 (true, _) => 22.5,
                 (false, true) => 11.25,
@@ -648,6 +664,94 @@ mod tests {
         assert_eq!(s.speeds[&[0, 1, 0]][0], 32.0);
         assert_eq!(s.speeds[&[1, 1, 0]][0], -32.0);
         assert_eq!(s.speeds[&[2, 1, 1]][0], 16.0);
+    }
+
+    #[test]
+    fn encased_cogwheels_reverse_and_a_large_one_halves() {
+        let p = parts(&[
+            ([0, 0, 0], Part::Motor(Dir::Up)),
+            ([0, 1, 0], Part::Cog(Axis::Y)),
+            ([1, 1, 0], Part::EncasedCog(Axis::Y)),
+            // Diagonal to the encased small one, in the same plane.
+            ([2, 1, 1], Part::EncasedLargeCog(Axis::Y)),
+        ]);
+        let s = solve1(&p, &[([0, 0, 0], 32.0)]);
+        assert_eq!(s.speeds[&[0, 1, 0]], [32.0; 2]);
+        assert_eq!(s.speeds[&[1, 1, 0]], [-32.0; 2]);
+        assert_eq!(s.speeds[&[2, 1, 1]], [16.0; 2]);
+        assert!(s.jammed.is_empty());
+    }
+
+    #[test]
+    fn encased_cogs_use_the_existing_mesh_ratios() {
+        for (axis, side, diagonal) in [
+            (Axis::X, [0, 1, 0], [0, 1, 1]),
+            (Axis::Y, [1, 0, 0], [1, 0, 1]),
+            (Axis::Z, [1, 0, 0], [1, 1, 0]),
+        ] {
+            for (from, to) in [
+                (Part::EncasedCog(axis), Part::EncasedCog(axis)),
+                (Part::EncasedCog(axis), Part::Cog(axis)),
+                (Part::Cog(axis), Part::EncasedCog(axis)),
+            ] {
+                assert_eq!(link(from, to, side), Some((0, 0, -1.0)));
+                assert_eq!(link(from, to, diagonal), None);
+                assert_eq!(link(from, to, side.map(|v| v * 2)), None);
+                assert_eq!(link(from, to, axis.dirs()[1].offset()), None);
+            }
+            for (large, small) in [
+                (Part::EncasedLargeCog(axis), Part::EncasedCog(axis)),
+                (Part::EncasedLargeCog(axis), Part::Cog(axis)),
+                (Part::LargeCog(axis), Part::EncasedCog(axis)),
+            ] {
+                assert_eq!(link(large, small, diagonal), Some((0, 0, -2.0)));
+                assert_eq!(link(small, large, diagonal.map(|v| -v)), Some((0, 0, -0.5)));
+                assert_eq!(link(large, small, side), None);
+                assert_eq!(link(large, small, diagonal.map(|v| v * 2)), None);
+                assert_eq!(link(large, small, axis.dirs()[1].offset()), None);
+            }
+        }
+        assert_eq!(link(Part::EncasedCog(Axis::Y), Part::Cog(Axis::Z), [1, 0, 0]), None);
+        assert_eq!(
+            link(Part::EncasedLargeCog(Axis::Y), Part::LargeCog(Axis::Y), [1, 0, 1]),
+            None
+        );
+    }
+
+    #[test]
+    fn encased_large_cogs_mesh_at_right_angles() {
+        for (from, to) in [
+            (Part::EncasedLargeCog(Axis::X), Part::EncasedLargeCog(Axis::Z)),
+            (Part::EncasedLargeCog(Axis::X), Part::LargeCog(Axis::Z)),
+            (Part::LargeCog(Axis::X), Part::EncasedLargeCog(Axis::Z)),
+        ] {
+            for (offset, factor) in [([1, 0, 1], 1.0), ([1, 0, -1], -1.0)] {
+                assert_eq!(link(from, to, offset), Some((0, 0, factor)));
+                assert_eq!(link(to, from, offset.map(|v| -v)), Some((0, 0, factor)));
+            }
+            assert_eq!(link(from, to, [1, 1, 0]), None);
+            assert_eq!(link(from, to, [1, 1, 1]), None);
+            assert_eq!(link(from, to, [0, 0, 0]), None);
+        }
+    }
+
+    #[test]
+    fn encased_cogwheels_have_closed_shafts_and_no_stress() {
+        for axis in [Axis::X, Axis::Y, Axis::Z] {
+            for part in [Part::EncasedCog(axis), Part::EncasedLargeCog(axis)] {
+                for d in Dir::ALL {
+                    assert!(!part.shaft_toward(d));
+                    let shaft = Part::Shaft(d.axis());
+                    assert_eq!(link(part, shaft, d.offset()), None);
+                    assert_eq!(link(shaft, part, d.opposite().offset()), None);
+                }
+                assert_eq!(part.impact(), 0.0);
+                for speed in [-32.0, 0.0, 32.0] {
+                    assert_eq!(capacity(part, speed), 0.0);
+                }
+                assert!(!part.split());
+            }
+        }
     }
 
     #[test]
@@ -819,5 +923,31 @@ mod tests {
         let a = angle(Part::Cog(Axis::Y), [0, 0, 0], 0.0, 0.0);
         let b = angle(Part::Cog(Axis::Y), [1, 0, 0], 0.0, 0.0);
         assert_eq!((a - b).abs(), 22.5);
+    }
+
+    #[test]
+    fn encased_cogs_keep_the_uncased_tooth_offsets() {
+        for axis in [Axis::X, Axis::Y, Axis::Z] {
+            for (encased, uncased) in [
+                (Part::EncasedCog(axis), Part::Cog(axis)),
+                (Part::EncasedLargeCog(axis), Part::LargeCog(axis)),
+            ] {
+                for pos in [
+                    [0, 0, 0],
+                    [1, 0, 0],
+                    [0, 1, 0],
+                    [0, 0, 1],
+                    [-1, -2, -3],
+                    [-2, -1, -3],
+                ] {
+                    for (speed, ticks) in [(0.0, 0.0), (32.0, 17.5), (-32.0, 123.25)] {
+                        assert_eq!(
+                            angle(encased, pos, speed, ticks),
+                            angle(uncased, pos, speed, ticks)
+                        );
+                    }
+                }
+            }
+        }
     }
 }
