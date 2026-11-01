@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn opposing_flows_cancel_whatever_their_strength() {
-        let flow = |p| match p {
+        let flow = |p: [i32; 3]| match p {
             [2, 0, 0] => Vec3::NEG_Y * 0.001,
             [-2, 0, 0] => Vec3::NEG_Y * 100.0,
             _ => Vec3::ZERO,
