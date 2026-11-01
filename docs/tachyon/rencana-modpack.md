@@ -271,6 +271,57 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
    dibuat, jadi tidak ada yang hilang. Eureka tidak dipakai, karena butuh Valkyrien Skies (mesin
    fisika lain), resminya hanya sampai Minecraft 1.20.1, dan fiturnya sudah ada di Aeronautics.
 
+### Keputusan 1 November 2026
+
+1. **Kontrol sentuh Android ala Bedrock dari horizon-android** (Tahap A di bawah). Kontrol
+   gaya Zalith Launcher yang sekarang membingungkan. Kontrol horizon-android jauh lebih mirip
+   Minecraft Bedrock, dan ini penting untuk bermain di HP. Tahap A dikerjakan begitu Create 2b
+   selesai, sebelum fluida (3b):
+
+   ```
+   Create 2b → kontrol Android ala Bedrock (A) → fluida (3b) → contraption (4) → ...
+   ```
+
+2. **GPT 6.1 Sol ikut bekerja** lewat opencode. Ia mengerjakan tugas yang sudah dipisah
+   dari antrean sendiri, di cabang sendiri, dan dicek CI. Ia tetap jalan saat batas pemakaian
+   Claude habis. Claude meninjau lalu menggabungkan hasilnya.
+
+### Tahap A: kontrol sentuh ala Bedrock di Android (M–L)
+
+**Sumber:**
+- Repo [Vasysik/horizon-android](https://github.com/Vasysik/horizon-android), cabang `android`.
+- Ini fork Horizon berlisensi MIT. Pemberitahuannya masuk `THIRD_PARTY_NOTICES.md`.
+- Fork itu 178 commit di depan Horizon tetapi 1630 commit di belakang. Karena itu kodenya
+  **diporting**, bukan di-merge.
+
+**Yang diambil:**
+- `crates/horizon-client-render/src/touch.rs` dan `touch/{layout,custom,editor}.rs`;
+- `crates/horizon-client/src/touch_ui.rs`;
+- tata letak `packaging/android/bedrock-controls.json`.
+
+**Isinya:**
+- empat skema: joystick atau D-pad, masing-masing dengan bidik ketuk atau crosshair;
+- aturan sentuh Bedrock:
+  - ketuk untuk menaruh atau memakai;
+  - tahan untuk menghancurkan;
+  - barang seperti perahu, telur spawn, dan ember langsung dipakai dengan ketukan;
+  - crosshair untuk busur dan barang lempar;
+- editor tata letak dan tombol buatan sendiri.
+
+**Tekstur tombol:**
+- horizon-android mengunduhnya dari repo contoh resmi Mojang saat pertama dijalankan.
+- Tachyon memakai cara yang sama: tekstur itu tidak masuk repo atau rilis, sama seperti aset
+  Create.
+
+**Langkah:**
+1. Bandingkan kode sentuh horizon-android dengan `crates/horizon-client/src/controls*`
+   (gaya Zalith) dan jalur input Tachyon sekarang.
+2. Porting modul sentuhnya ke API Horizon terbaru.
+3. Jadikan skema Bedrock bawaan. Tata letak Zalith tetap bisa dipilih di pengaturan bagi
+   yang sudah terbiasa.
+4. Uji di emulator CI (`tachyon-smoke`): joystick menggerakkan pemain, ketuk menaruh
+   blok, dan tahan menghancurkan blok. Setelah itu dicoba di HP.
+
 ## 10. Kemajuan
 
 - **29 Oktober 2026, Tahap 0 selesai.**
