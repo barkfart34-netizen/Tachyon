@@ -34,7 +34,8 @@ pub(super) struct Held {
 }
 
 /// What a millstone holds: the items to grind, how far the one at hand is
-/// (work: 1/16 for each RPM a tick), and what came out.
+/// (work: a tick's is its RPM / 16 rounded down, at least 1, as Create's),
+/// and what came out.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct Mill {
     #[serde(default)]
@@ -219,7 +220,8 @@ impl Mill {
             return false;
         }
         if self.progress < recipe.time {
-            self.progress = (self.progress + speed.abs() / 16.0).min(recipe.time);
+            let work = ((speed.abs() / 16.0) as u32).clamp(1, 512) as f32;
+            self.progress = (self.progress + work).min(recipe.time);
             if self.progress < recipe.time {
                 return true;
             }

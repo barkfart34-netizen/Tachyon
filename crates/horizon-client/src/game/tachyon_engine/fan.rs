@@ -60,9 +60,10 @@ pub(super) fn washing() -> &'static [Milling] {
     RECIPES.get_or_init(|| millstone::read("washing.json"))
 }
 
-/// How far a fan at `speed` (RPM) blows: 3 blocks, 20 at 256 RPM.
+/// How far a fan at `speed` (RPM) blows, as Create's: from 3 blocks still
+/// to 20 at 256 RPM, in proportion between (whole blocks).
 pub(super) fn range(speed: f32) -> i32 {
-    ((speed.abs() * 20.0 / 256.0) as i32).clamp(3, 20)
+    (3.0 + 17.0 * (speed.abs() / 256.0).min(1.0)) as i32
 }
 
 /// Where the fan at `pos` blows out of, and whether it pushes (else pulls):
@@ -440,7 +441,7 @@ mod tests {
     #[test]
     fn the_air_reaches_further_the_faster_the_fan() {
         assert_eq!(range(8.0), 3);
-        assert_eq!(range(128.0), 10);
+        assert_eq!(range(128.0), 11);
         assert_eq!(range(-256.0), 20);
     }
 }

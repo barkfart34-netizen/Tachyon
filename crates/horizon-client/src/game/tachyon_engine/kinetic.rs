@@ -21,7 +21,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 /// The fastest a part may turn.
 pub const MAX_SPEED: f32 = 256.0;
-/// A creative motor's capacity, whatever its speed (stress units).
+/// A creative motor's capacity for each RPM it turns at (stress units), as
+/// Create's.
 pub const CREATIVE_CAPACITY: f32 = 16384.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -336,9 +337,9 @@ pub type Speeds = HashMap<[i32; 3], [f32; 2]>;
 /// units: a creative motor any load; the others more the faster they turn.
 pub fn capacity(part: Part, speed: f32) -> f32 {
     match part {
-        Part::Motor(_) => CREATIVE_CAPACITY,
+        Part::Motor(_) => CREATIVE_CAPACITY * speed.abs(),
         Part::Crank(_) => 8.0 * speed.abs(),
-        Part::WaterWheel(_) => 16.0 * speed.abs(),
+        Part::WaterWheel(_) => 32.0 * speed.abs(),
         Part::Windmill(_) => 32.0 * speed.abs(),
         _ => 0.0,
     }
@@ -671,7 +672,7 @@ mod tests {
         p2.insert([0, 0, 0], Part::Motor(Dir::Up));
         let s = solve1(&p2, &[([0, 0, 0], 32.0)]);
         assert_eq!(s.speeds[&[2, 1, 0]][0], 32.0);
-        assert_eq!(s.stress[&[0, 0, 0]].capacity, CREATIVE_CAPACITY);
+        assert_eq!(s.stress[&[0, 0, 0]].capacity, CREATIVE_CAPACITY * 32.0);
     }
 
     #[test]

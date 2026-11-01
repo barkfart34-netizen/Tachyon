@@ -1106,17 +1106,26 @@ impl Game<'_> {
         for &(p, part) in parts {
             let speed = match part {
                 Part::WaterWheel(axis) => {
+                    // As Create's: each side whose water runs round the
+                    // wheel (in its plane, more along its rim than across)
+                    // votes for that way; it turns at 8 RPM the way most
+                    // vote.
                     let along = Vec3::from(positive(axis).offset().map(|c| c as f32));
-                    let turn: f32 = Dir::ALL
+                    let score: i32 = Dir::ALL
                         .into_iter()
                         .filter(|d| d.axis() != axis)
                         .map(|d| {
                             let r = Vec3::from(d.offset().map(|c| c as f32));
-                            let w = add(p, d.offset());
-                            r.cross(self.tachyon_water_flow(w)).dot(along)
+                            let mut flow = self.tachyon_water_flow(add(p, d.offset()));
+                            flow -= along * flow.dot(along);
+                            if flow.length_squared() == 0.0 {
+                                return 0;
+                            }
+                            let round = r.cross(flow.normalize()).dot(along);
+                            if round.abs() > 0.5 { round.signum() as i32 } else { 0 }
                         })
                         .sum();
-                    (turn * WATER_SPEED).clamp(-32.0, 32.0)
+                    score.clamp(-1, 1) as f32 * WATER_SPEED
                 }
                 Part::Windmill(_) => {
                     let above = self.world.light(p[0], p[1] + 1, p[2]) >> 4;

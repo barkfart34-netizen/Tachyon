@@ -7,8 +7,8 @@
 //! A funnel sits on a container's face (a chest, a furnace, a depot, a
 //! basin...), facing out of it. It puts the dropped items that come into it
 //! into the container, through that face; used, it turns to taking out
-//! instead: a stack of up to 16 every few ticks while nothing lies at its
-//! mouth, dropped out of it (onto a belt, say).
+//! instead: up to a stack every 8 ticks (as Create's andesite funnel)
+//! while nothing lies at its mouth, dropped out of it (onto a belt, say).
 
 use super::super::Game;
 use super::super::machines::dir_from_name;
@@ -18,8 +18,8 @@ use std::collections::HashMap;
 
 /// Ticks between a funnel's takings out.
 const FUNNEL_TICKS: u64 = 8;
-/// The most a funnel takes out at once.
-const FUNNEL_STACK: u32 = 16;
+/// The most a funnel takes out at once: a stack, as Create's andesite one.
+const FUNNEL_STACK: u32 = 64;
 /// How far round its block a funnel reaches for the items to put in.
 const FUNNEL_REACH: f64 = 0.25;
 

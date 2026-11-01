@@ -21,7 +21,7 @@ use std::sync::OnceLock;
 const STACKS: usize = 9;
 
 /// What a basin holds: the items to mix, how far the mixing at hand is
-/// (work: 1/16 for each RPM a tick), and what was mixed.
+/// (ticks, [`mixing_ticks`]), and what was mixed.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct Basin {
     #[serde(default)]
@@ -160,9 +160,10 @@ impl Basin {
         }
         let recipe = self.ready(recipes)?;
         let into = recipe.outputs.first()?.item.clone();
-        if self.progress < recipe.time {
-            self.progress = (self.progress + speed.abs() / 16.0).min(recipe.time);
-            if self.progress < recipe.time {
+        let ticks = mixing_ticks(speed, recipe.time);
+        if self.progress < ticks {
+            self.progress = (self.progress + 1.0).min(ticks);
+            if self.progress < ticks {
                 return Some(into);
             }
         }
@@ -192,6 +193,17 @@ impl Basin {
         self.inputs.retain(|s| s.count > 0);
         Some(into)
     }
+}
+
+/// The ticks a mixer at `speed` (RPM) takes over a recipe of `time` work, as
+/// Create's: 20 for its head to come down, then
+/// `log2(512 / RPM) * ceil(15 * time / 100) + 1` (log2 rounded down), at
+/// least 1.
+pub(super) fn mixing_ticks(speed: f32, time: f32) -> f32 {
+    let quotient = ((512.0 / speed.abs().max(1.0)) as u32).max(1);
+    let log2 = quotient.ilog2();
+    let per = (15.0 * time / 100.0).ceil() as u32;
+    20.0 + (log2 * per + 1).max(1) as f32
 }
 
 impl Game<'_> {
@@ -248,8 +260,11 @@ mod tests {
         // No tin yet: nothing to mix.
         assert_eq!(b.mix(32.0, &bronze, &mut || 0.0), None);
         b.put("x:tin", 1);
-        // 2 work a tick at 32 RPM: 50 ticks.
-        for _ in 0..49 {
+        // At 32 RPM: 20 ticks down, then log2(16) * 15 + 1.
+        assert_eq!(mixing_ticks(32.0, 100.0), 81.0);
+        assert_eq!(mixing_ticks(-256.0, 100.0), 36.0);
+        assert_eq!(mixing_ticks(1.0, 100.0), 156.0);
+        for _ in 0..80 {
             assert_eq!(b.mix(32.0, &bronze, &mut || 0.0).as_deref(), Some("x:bronze"));
             assert!(b.outputs.is_empty());
         }

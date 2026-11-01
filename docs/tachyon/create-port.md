@@ -82,6 +82,22 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
 
 ## Urutan kerja 2b
 
+**Kemajuan (1 November 2026):**
+- **Langkah 1 selesai:** `tachyon_engine/create_recipes.rs` membaca milling, pressing, splashing, mixing, dan compacting.
+  - Mesin `create:*` mendahulukan resep Create, mesin Kinetica mendahulukan resep Kinetica.
+  - Press di atas baskom mengerjakan compacting.
+- **Langkah 2 sebagian:** angka yang sudah disamakan dengan Create:
+  - kapasitas motor kreatif (16384 per RPM);
+  - kincir air (pemungutan suara aliran, 8 RPM, 32 per RPM);
+  - kerja millstone (bilangan bulat, 1..512);
+  - jangkauan kipas;
+  - corong (satu tumpukan per 8 tick);
+  - waktu mixer.
+- **Belum:**
+  - waktu kipas menurut besar tumpukan;
+  - siklus press (240, satu barang per tekanan, barang yang tergeletak);
+  - compacting memakai waktu mixer, belum siklus press.
+
 1. **Pembaca resep Create.** Mesin `create:*` memakai:
    - milling di millstone;
    - pressing di press;
