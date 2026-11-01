@@ -1,61 +1,102 @@
 //! Create's crushing wheels, turned by Kinetica's engine, working as
-//! Create's (`CrushingWheelBlock`, `CrushingWheelControllerBlockEntity`):
-//! two wheels on parallel shafts with one block between them, turning
-//! against each other, crush the dropped items that come into that gap by
-//! Create's crushing recipes (else its milling ones), a whole stack at a
-//! time, and send what they made out of the gap the way their rims go there.
+//! Create's (`CrushingWheelBlock`, `CrushingWheelControllerBlock`,
+//! `CrushingWheelControllerBlockEntity`; Create's code is MIT-licensed,
+//! THIRD_PARTY_NOTICES.md): two wheels on parallel shafts with a block of
+//! room between them make a gap there. While they turn against each other
+//! the gap takes in a dropped item that comes into it, a whole stack, and
+//! crushes it by Create's crushing recipes (else its milling ones), slower
+//! the bigger the stack; what it made comes out of the gap the way their
+//! rims go there, and passes the gap. A stack no recipe crushes is lost, as
+//! in Create. Stopped, the gap keeps what it holds; with its wheels gone it
+//! drops it.
 //!
-//! An item with no recipe passes through. Unlike Create's, the item stays
-//! an entity held in the gap while it is crushed (the owner keeps its
-//! countdown by its id), and the wheels don't hurt mobs yet.
+//! Unlike Create's, no block fills the gap: the owner keeps the stack it
+//! took in (saved with the machines), the items waiting for it are held in
+//! the gap, a stack with components passes (the owner keeps items by name
+//! and count), and the wheels don't hurt mobs yet.
 use super::super::Game;
+use super::create_recipes::Recipes;
 use super::kinetic::{Axis, Dir, Part, Speeds};
-use super::{OWNERS, positive};
+use super::{OWNERS, Owner, add, positive};
+use horizon_client::entities::ItemEntity;
 use horizon_client::items::ItemStack;
 use horizon_core::random::RandomSource;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-/// Below this, what the gap holds is crushed (Create's).
+/// The countdown of a stack no recipe crushes (Create's).
+const NO_RECIPE: f32 = 100.0;
+/// Under this the stack is crushed and what it made comes out (Create's
+/// applies the recipe then, emptying its timer, and puts it out the next
+/// tick).
 const DONE: f32 = 20.0;
 
-/// A wheel pair's gap: the way it sends out what it crushed, and how fast
-/// it crushes (Create's: the wheel's RPM / 50, times 4).
+/// A turning gap: the way it sends out what it crushed, and how fast it
+/// crushes (Create's: its wheel's RPM / 50, times 4).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Gap {
     pub out: Dir,
     pub speed: f32,
 }
 
-/// The gaps of the wheel pairs turning against each other, by position.
-pub(super) fn gaps(parts: &HashMap<[i32; 3], Part>, speeds: &Speeds) -> HashMap<[i32; 3], Gap> {
+/// What a gap holds: the stack it took in, and what is left of its
+/// countdown.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(super) struct Inside {
+    pub item: String,
+    pub count: u32,
+    pub left: f32,
+}
+
+/// What came out of a gap: the gap, the stacks, where, and how fast.
+type Out = ([i32; 3], Vec<ItemStack>, [f64; 3], [f64; 3]);
+
+/// The wheels round a gap at `gap`: their axis, and the side of the gap the
+/// first of them is on in Create's order of directions (the other is
+/// across). None when no two wheels on one axis face each other over it.
+pub(super) fn pair_round(parts: &HashMap<[i32; 3], Part>, gap: [i32; 3]) -> Option<(Axis, Dir)> {
+    Dir::ALL.into_iter().find_map(|d| {
+        let Some(Part::CrushingWheel(axis)) = parts.get(&add(gap, d.offset())).copied() else {
+            return None;
+        };
+        let across = parts.get(&add(gap, d.opposite().offset()));
+        (d.axis() != axis && across == Some(&Part::CrushingWheel(axis))).then_some((axis, d))
+    })
+}
+
+/// The gaps between wheels, by position: each turning (Some) or not.
+pub(super) fn gaps(parts: &HashMap<[i32; 3], Part>, speeds: &Speeds) -> HashMap<[i32; 3], Option<Gap>> {
     let mut gaps = HashMap::new();
     for (p, part) in parts {
         let Part::CrushingWheel(axis) = *part else {
             continue;
         };
-        let Some(s1) = speeds.get(p).map(|s| s[0]).filter(|s| *s != 0.0) else {
-            continue;
-        };
         for d in Dir::ALL.into_iter().filter(|d| d.axis() != axis) {
-            let o = d.offset();
-            let other = [p[0] + 2 * o[0], p[1] + 2 * o[1], p[2] + 2 * o[2]];
-            if parts.get(&other) != Some(&Part::CrushingWheel(axis)) {
+            let gap = add(*p, d.offset());
+            if gaps.contains_key(&gap) {
                 continue;
             }
-            let Some(s2) = speeds.get(&other).map(|s| s[0]).filter(|s| *s != 0.0) else {
-                continue;
-            };
-            if (s1 > 0.0) == (s2 > 0.0) {
-                continue;
+            if let Some(pair) = pair_round(parts, gap) {
+                gaps.insert(gap, turning(gap, pair, speeds));
             }
-            let gap = [p[0] + o[0], p[1] + o[1], p[2] + o[2]];
-            gaps.entry(gap).or_insert(Gap {
-                out: rim(axis, d, s1),
-                speed: s1.abs() / 50.0 * 4.0,
-            });
         }
     }
     gaps
+}
+
+/// How a gap with wheels along `axis` on its side `d` and across works, as
+/// Create's controller: only while they turn against each other, at the
+/// speed of the wheel on side `d`, the way its rim goes in the gap.
+fn turning(gap: [i32; 3], (axis, d): (Axis, Dir), speeds: &Speeds) -> Option<Gap> {
+    let speed = |p: [i32; 3]| speeds.get(&p).map_or(0.0, |s| s[0]);
+    let (s1, s2) = (speed(add(gap, d.offset())), speed(add(gap, d.opposite().offset())));
+    if s1 == 0.0 || s2 == 0.0 || (s1 > 0.0) == (s2 > 0.0) {
+        return None;
+    }
+    Some(Gap {
+        out: rim(axis, d.opposite(), s1),
+        speed: s1.abs() / 50.0 * 4.0,
+    })
 }
 
 /// The way the rim of a wheel along `axis` turning at `speed` goes on its
@@ -113,115 +154,149 @@ fn stacks(item: &str, mut count: u32) -> Vec<ItemStack> {
     out
 }
 
+/// A tick of the turning gaps: the stacks in them crushed (what they made
+/// into `out`), the dropped items in them taken in by an empty one, else
+/// held there till it is. Whether a stack went in or out.
+fn crush(
+    owner: &mut Owner,
+    create: &Recipes,
+    turning: &HashMap<[i32; 3], Gap>,
+    dropped: &mut [ItemEntity],
+    random: &mut impl RandomSource,
+    out: &mut Vec<Out>,
+) -> bool {
+    let mut moved = false;
+    for (p, gap) in turning {
+        let Some(inside) = owner.crushers.get_mut(p) else {
+            continue;
+        };
+        inside.left = step(inside.left, gap.speed, inside.count);
+        owner.mills_changed = true;
+        if inside.left >= DONE {
+            continue;
+        }
+        let Some(inside) = owner.crushers.remove(p) else {
+            continue;
+        };
+        moved = true;
+        // Each item of the stack by the recipe's chances; nothing of a
+        // stack no recipe crushes.
+        let recipe = create.crushing(&inside.item).or_else(|| create.milling(&inside.item));
+        let mut made: Vec<ItemStack> = Vec::new();
+        for o in recipe.map_or(&[][..], |r| r.outputs.as_slice()) {
+            let times = if o.chance >= 1.0 {
+                inside.count
+            } else {
+                (0..inside.count).filter(|_| random.next_float() <= o.chance).count() as u32
+            };
+            made.extend(stacks(&o.item, o.count * times));
+        }
+        let (at, velocity) = exit(*p, gap.out);
+        out.push((*p, made, at, velocity));
+    }
+    for item in dropped.iter_mut() {
+        let at = item.position;
+        let cell = [at.x.floor() as i32, at.y.floor() as i32, at.z.floor() as i32];
+        if !turning.contains_key(&cell) || owner.passed.get(&item.id) == Some(&cell) {
+            continue;
+        }
+        if item.stack.extra.is_some() {
+            owner.passed.insert(item.id, cell);
+            continue;
+        }
+        if owner.crushers.contains_key(&cell) {
+            item.position.x = f64::from(cell[0]) + 0.5;
+            item.position.z = f64::from(cell[2]) + 0.5;
+            item.position.y = item.position.y.max(f64::from(cell[1]) + 0.25);
+            item.previous = item.position;
+            item.velocity.x = 0.0;
+            item.velocity.y = 0.0;
+            item.velocity.z = 0.0;
+            continue;
+        }
+        let name = item.stack.item.to_string();
+        let recipe = create.crushing(&name).or_else(|| create.milling(&name));
+        owner.crushers.insert(cell, Inside {
+            item: name,
+            count: item.stack.count,
+            left: recipe.map_or(NO_RECIPE, |r| r.time),
+        });
+        moved = true;
+        // Gone into the gap.
+        item.stack.count = 0;
+    }
+    moved
+}
+
 impl Game<'_> {
-    /// The owner's crushing wheels: the dropped items in their gaps held
-    /// and crushed, one stack a gap at a time.
+    /// The owner's crushing wheels: each turning gap takes in a dropped item
+    /// and crushes it, the others coming into it wait there. What a gap
+    /// held whose wheels are gone (their chunks loaded) drops there.
     pub(super) fn tachyon_crushers(&mut self) {
         let dimension = self.dim.id();
-        let gaps = OWNERS.with_borrow(|owners| {
+        let root = self.save.root.clone();
+        let found = OWNERS.with_borrow(|owners| {
             (owners.get(dimension))
                 .map(|o| gaps(&o.index.parts, &o.shown.speeds))
                 .unwrap_or_default()
         });
+        let pairs: HashSet<[i32; 3]> = found.keys().copied().collect();
+        // A gap with a block in it is none (Create's controller takes the
+        // place of what was there).
+        let facts = self.res.facts();
+        let turning: HashMap<[i32; 3], Gap> = (found.into_iter())
+            .filter_map(|(p, gap)| Some((p, gap?)))
+            .filter(|(p, _)| facts.get(self.world.block(p[0], p[1], p[2])).replaceable)
+            .collect();
         let present: HashSet<u32> = self.dropped.iter().map(|d| d.id).collect();
-        if gaps.is_empty() {
-            OWNERS.with_borrow_mut(|owners| {
-                if let Some(owner) = owners.get_mut(dimension) {
-                    owner.crushing.clear();
-                    owner.passed.retain(|id, _| present.contains(id));
-                }
-            });
-            return;
-        }
-        let create = self.tachyon_create_recipes();
+        let create = (!turning.is_empty()).then(|| self.tachyon_create_recipes());
+        let chunks = &self.world.chunks;
+        let loaded = |p: [i32; 3]| {
+            [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]]
+                .iter()
+                .all(|[x, z]| chunks.contains_key(&((p[0] + x) >> 4, (p[2] + z) >> 4)))
+        };
         let dropped = &mut self.dropped;
         let random = &mut self.world.random;
-        // Each crushed item: its index, what it made, where it goes.
-        let mut done: Vec<(usize, Vec<ItemStack>, [f64; 3], [f64; 3])> = Vec::new();
+        let mut out: Vec<Out> = Vec::new();
+        // What the gaps whose wheels are gone held.
+        let mut lost: Vec<([i32; 3], ItemStack)> = Vec::new();
         OWNERS.with_borrow_mut(|owners| {
             let Some(owner) = owners.get_mut(dimension) else {
                 return;
             };
-            // An item that left its gap is no longer crushed there.
-            let cells: HashMap<u32, [i32; 3]> = (dropped.iter())
-                .map(|d| {
-                    let p = d.position;
-                    (d.id, [p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32])
-                })
-                .collect();
-            owner.crushing.retain(|id, c| cells.get(id) == Some(&c.0));
             owner.passed.retain(|id, _| present.contains(id));
-            let mut busy: HashSet<[i32; 3]> = owner.crushing.values().map(|c| c.0).collect();
-            for (i, item) in dropped.iter_mut().enumerate() {
-                let p = item.position;
-                let cell = [p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32];
-                let Some(gap) = gaps.get(&cell) else {
-                    continue;
-                };
-                if owner.passed.get(&item.id) == Some(&cell) {
-                    continue;
+            owner.gaps = turning.keys().copied().collect();
+            let gone: Vec<[i32; 3]> = (owner.crushers.keys())
+                .filter(|p| !pairs.contains(*p) && loaded(**p))
+                .copied()
+                .collect();
+            for p in &gone {
+                if let Some(inside) = owner.crushers.remove(p) {
+                    lost.extend(stacks(&inside.item, inside.count).into_iter().map(|s| (*p, s)));
                 }
-                let name = item.stack.item.to_string();
-                let recipe = create.crushing(&name).or_else(|| create.milling(&name));
-                let Some(recipe) = recipe.filter(|_| item.stack.extra.is_none()) else {
-                    owner.passed.insert(item.id, cell);
-                    continue;
-                };
-                // Held in the middle of the gap while it waits or is crushed.
-                item.position.x = f64::from(cell[0]) + 0.5;
-                item.position.z = f64::from(cell[2]) + 0.5;
-                item.position.y = item.position.y.max(f64::from(cell[1]) + 0.25);
-                item.previous = item.position;
-                item.velocity.x = 0.0;
-                item.velocity.y = 0.0;
-                item.velocity.z = 0.0;
-                let left = match owner.crushing.get(&item.id) {
-                    Some(&(_, left)) => step(left, gap.speed, item.stack.count),
-                    None if busy.contains(&cell) => continue,
-                    None => {
-                        busy.insert(cell);
-                        recipe.time
-                    }
-                };
-                if left >= DONE {
-                    owner.crushing.insert(item.id, (cell, left));
-                    continue;
-                }
-                // Crushed: each item of the stack by the recipe's chances.
-                owner.crushing.remove(&item.id);
-                let n = item.stack.count;
-                let mut made: Vec<ItemStack> = Vec::new();
-                for o in &recipe.outputs {
-                    let times = if o.chance >= 1.0 {
-                        n
-                    } else {
-                        (0..n).filter(|_| random.next_float() <= o.chance).count() as u32
-                    };
-                    made.extend(stacks(&o.item, o.count * times));
-                }
-                let (at, velocity) = exit(cell, gap.out);
-                done.push((i, made, at, velocity));
-                owner.passed.insert(item.id, cell);
+            }
+            let moved = create.is_some_and(|create| crush(owner, &create, &turning, dropped, random, &mut out));
+            // Saved at once when items left the world or came back to it.
+            if moved || !gone.is_empty() {
+                owner.save(&root, dimension);
             }
         });
-        // Last first, so the others keep their places.
-        for (i, mut made, at, velocity) in done.into_iter().rev() {
-            if made.is_empty() {
-                self.dropped.remove(i);
-                continue;
-            }
-            let item = &mut self.dropped[i];
-            item.stack = made.remove(0);
-            item.position.x = at[0];
-            item.position.y = at[1];
-            item.position.z = at[2];
-            item.previous = item.position;
-            item.velocity.x = velocity[0];
-            item.velocity.y = velocity[1];
-            item.velocity.z = velocity[2];
-            item.pickup_delay = 20;
+        for (p, stack) in lost {
+            self.pop_resource(p, stack);
+        }
+        self.dropped.retain(|d| d.stack.count > 0);
+        // What came out passes the gap it came from.
+        for (gap, made, at, velocity) in out {
             for stack in made {
-                self.spawn_item(stack, at, velocity, 20);
+                self.spawn_item(stack, at, velocity, 0);
+                if let Some(id) = self.dropped.last().map(|d| d.id) {
+                    OWNERS.with_borrow_mut(|owners| {
+                        if let Some(owner) = owners.get_mut(dimension) {
+                            owner.passed.insert(id, gap);
+                        }
+                    });
+                }
             }
         }
     }
@@ -240,16 +315,26 @@ mod tests {
         let speeds = HashMap::from([([0, 0, 0], [-32.0; 2]), ([2, 0, 0], [32.0; 2])]);
         let found = gaps(&parts, &speeds);
         assert_eq!(found.len(), 1);
-        let gap = found[&[1, 0, 0]];
+        let gap = found[&[1, 0, 0]].unwrap();
         // Their rims go down in the gap: what they crush drops.
         assert_eq!(gap.out, Dir::Down);
         assert!((gap.speed - 2.56).abs() < 1e-4);
-        // Both turning the same way: no gap.
+        // Both turning the same way: a gap that doesn't work.
         let same = HashMap::from([([0, 0, 0], [32.0; 2]), ([2, 0, 0], [32.0; 2])]);
-        assert!(gaps(&parts, &same).is_empty());
+        assert_eq!(gaps(&parts, &same)[&[1, 0, 0]], None);
         // The other way round, up.
         let up = HashMap::from([([0, 0, 0], [32.0; 2]), ([2, 0, 0], [-32.0; 2])]);
-        assert_eq!(gaps(&parts, &up)[&[1, 0, 0]].out, Dir::Up);
+        assert_eq!(gaps(&parts, &up)[&[1, 0, 0]].unwrap().out, Dir::Up);
+        // At two speeds, the west wheel's (Create's order: down, up, north,
+        // south, west, east).
+        let two = HashMap::from([([0, 0, 0], [-8.0; 2]), ([2, 0, 0], [256.0; 2])]);
+        assert!((gaps(&parts, &two)[&[1, 0, 0]].unwrap().speed - 0.64).abs() < 1e-4);
+        // Wheels on different axes make none.
+        let crossed = HashMap::from([
+            ([0, 0, 0], Part::CrushingWheel(Axis::Z)),
+            ([2, 0, 0], Part::CrushingWheel(Axis::Y)),
+        ]);
+        assert!(gaps(&crossed, &speeds).is_empty());
     }
 
     #[test]
@@ -265,5 +350,45 @@ mod tests {
         assert_eq!(velocity, [0.0; 3]);
         assert_eq!(exit([0, 0, 0], Dir::East).1, [0.25, 0.0, 0.0]);
         assert_eq!(stacks("x:a", 130).len(), 3);
+    }
+
+    #[test]
+    fn a_gap_takes_in_a_stack_crushes_it_and_lets_out_what_it_made() {
+        let mut owner = Owner::default();
+        let create = Recipes::default();
+        let turning = HashMap::from([([1, 0, 0], Gap { out: Dir::Down, speed: 2.56 })]);
+        let mut random = horizon_core::random::LegacyRandom::new(1);
+        let mut out = Vec::new();
+        let at = horizon_core::geometry::Vec3::new(1.5, 0.3, 0.5);
+        let mut dropped = vec![ItemEntity {
+            health: 5,
+            fire_ticks: 0,
+            id: 7,
+            stack: ItemStack::new("x:stone", 2),
+            thrower: None,
+            target: None,
+            position: at,
+            previous: at,
+            velocity: horizon_core::geometry::Vec3::ZERO,
+            on_ground: true,
+            age: 0,
+            pickup_delay: 0,
+            bob_offset: 0.0,
+            ticks: 0,
+        }];
+        // Taken in: gone from the world, kept by the gap.
+        assert!(crush(&mut owner, &create, &turning, &mut dropped, &mut random, &mut out));
+        assert_eq!(dropped[0].stack.count, 0);
+        assert_eq!(owner.crushers[&[1, 0, 0]].left, NO_RECIPE);
+        // No recipe crushes it: lost when its countdown runs out (100 - 20
+        // at 2.56 a tick).
+        let mut ticks = 0;
+        while owner.crushers.contains_key(&[1, 0, 0]) {
+            crush(&mut owner, &create, &turning, &mut [], &mut random, &mut out);
+            ticks += 1;
+        }
+        assert_eq!(ticks, 32);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].1.is_empty());
     }
 }

@@ -438,6 +438,32 @@ def create(control, out):
         print(item, ":", lines)
         return int(found.group(1)) if found else 0
 
+    def until(made, least, seconds=30):
+        """What `made` counts, asked again until it is `least` or `seconds`
+        pass."""
+        deadline = time.time() + seconds
+        n = made()
+        while n < least and time.time() < deadline:
+            time.sleep(3)
+            n = made()
+        return n
+
+    def taken(hopper, item):
+        """A count of `item` in the first five slots of the hopper at
+        `hopper`, copied into the hotbar."""
+        def made():
+            for slot in range(5):
+                control.send(f"chat /item replace entity @s hotbar.{slot} from block {at(hopper)} container.{slot}")
+            time.sleep(1)
+            return count(item)
+        return made
+
+    def ground():
+        """The flour the millstone ground so far, taken with an empty hand."""
+        control.send("mouse right click")
+        time.sleep(1)
+        return count("create:wheat_flour")
+
     # The work: wheat in the millstone's hopper, iron in the depot's, and
     # andesite with iron nuggets put in the basin with uses.
     control.send(f"chat /item replace block {at((2, 1, 7))} container.0 with minecraft:wheat 4")
@@ -472,19 +498,11 @@ def create(control, out):
     # What they made, by now: the millstone's taken with an empty hand, the
     # depot's and the basin's out of the hoppers under them.
     control.send("chat /item replace entity @s weapon.mainhand with minecraft:air")
-    visit((2, 0, 9), (2, 0.5, 7))
-    control.send("mouse right click")
-    time.sleep(1)
-    flour = count("create:wheat_flour")
-    control.send(f"chat /item replace entity @s weapon.mainhand from block {at((5, -1, 7))} container.0")
-    time.sleep(1)
-    sheets = count("create:iron_sheet")
-    control.send(f"chat /item replace entity @s weapon.mainhand from block {at((-4, -1, 8))} container.0")
-    time.sleep(1)
-    alloy = count("create:andesite_alloy")
-    control.send(f"chat /item replace entity @s weapon.mainhand from block {at((-1, 0, 11))} container.0")
-    time.sleep(1)
-    crushed = count("create:crushed_raw_iron")
+    visit((2, 0, 9), (2, 0, 7))
+    flour = until(ground, 4)
+    sheets = until(taken((5, -1, 7), "create:iron_sheet"), 3)
+    alloy = until(taken((-4, -1, 8), "create:andesite_alloy"), 1)
+    crushed = until(taken((-1, 0, 11), "create:crushed_raw_iron"), 4)
     print("create made: flour", flour, "sheets", sheets, "alloy", alloy, "crushed", crushed)
     return good and flour >= 4 and sheets >= 3 and alloy >= 1 and crushed >= 4
 

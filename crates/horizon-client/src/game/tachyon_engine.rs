@@ -322,12 +322,13 @@ struct Owner {
     funnels_out: HashSet<[i32; 3]>,
     /// What each funnel does, for the goggles ("inserting").
     funnel_work: HashMap<[i32; 3], String>,
-    /// The dropped items crushing wheels crush: in which gap, and what is
-    /// left of their countdown.
-    crushing: HashMap<u32, ([i32; 3], f32)>,
-    /// The dropped items a gap doesn't crush (none of its recipes, or what
-    /// it made), by the gap.
+    /// What the crushing wheels' gaps hold, by the gap.
+    crushers: HashMap<[i32; 3], crusher::Inside>,
+    /// The dropped items a gap doesn't take in (what it made, or a stack
+    /// with components), by the gap.
     passed: HashMap<u32, [i32; 3]>,
+    /// The crushing wheels' gaps, as of the last tick.
+    gaps: HashSet<[i32; 3]>,
 }
 
 impl Owner {
@@ -358,6 +359,9 @@ impl Owner {
         self.basins = basins.into_iter().collect();
         let funnels: Vec<[i32; 3]> = serde_json::from_value(value["funnels"].clone()).unwrap_or_default();
         self.funnels_out = funnels.into_iter().collect();
+        let crushers: Vec<([i32; 3], crusher::Inside)> =
+            serde_json::from_value(value["crushers"].clone()).unwrap_or_default();
+        self.crushers = crushers.into_iter().collect();
         self.dirty = true;
     }
     fn save(&self, root: &std::path::Path, dimension: &str) {
@@ -382,9 +386,17 @@ impl Owner {
         basins.sort_by_key(|(p, _)| **p);
         let mut funnels: Vec<&[i32; 3]> = self.funnels_out.iter().collect();
         funnels.sort();
+        let mut crushers: Vec<(&[i32; 3], &crusher::Inside)> = self.crushers.iter().collect();
+        crushers.sort_by_key(|(p, _)| **p);
         let file = Self::file(root, dimension);
-        let text = serde_json::json!({ "motors": rows, "mills": mills, "basins": basins, "funnels": funnels })
-            .to_string();
+        let text = serde_json::json!({
+            "motors": rows,
+            "mills": mills,
+            "basins": basins,
+            "funnels": funnels,
+            "crushers": crushers,
+        })
+        .to_string();
         let written = file
             .parent()
             .map_or(Ok(()), std::fs::create_dir_all)
@@ -1311,6 +1323,18 @@ impl Game<'_> {
             kinds.part(state),
             Some(Part::Millstone | Part::Depot | Part::Basin)
         )
+    }
+
+    /// Whether a hopper leaves the dropped `item` be: it lies in a crushing
+    /// wheels' gap, to be crushed there (not what the gap passed).
+    pub(super) fn tachyon_crushing(&self, item: &horizon_client::entities::ItemEntity) -> bool {
+        let p = item.position;
+        let cell = [p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32];
+        OWNERS.with_borrow(|owners| {
+            owners
+                .get(self.dim.id())
+                .is_some_and(|o| o.gaps.contains(&cell) && o.passed.get(&item.id) != Some(&cell))
+        })
     }
 
     /// A hopper's item into the machine at `pos`: a millstone takes what it

@@ -1083,7 +1083,8 @@ impl Game<'_> {
                 && hi.y > min[1]
                 && lo.z < max[2]
                 && hi.z > min[2];
-            if inside {
+            // Tachyon: not what crushing wheels hold in their gap.
+            if inside && !self.tachyon_crushing(&self.dropped[i]) {
                 let stack = self.dropped[i].stack.clone();
                 match self.add_item(None, hopper, stack, None) {
                     None => {

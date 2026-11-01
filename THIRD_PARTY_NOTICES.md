@@ -70,3 +70,38 @@ with Microsoft accounts
 The four-square Microsoft symbol in `launcher/src/microsoft.rs` reproduces the squares, positions and
 colours of Microsoft's official `ms-symbollockup_mssymbol_19.svg` from that page, unmodified. Microsoft
 and its logo are trademarks of the Microsoft group of companies; Horizon is not endorsed by Microsoft.
+
+## Create
+
+Tachyon's machines follow the code of [Create](https://github.com/Creators-of-Create/Create)
+(tag `mc1.21.1-6.0.10`): its crushing wheels (`crates/horizon-client/src/game/tachyon_engine/crusher.rs`,
+from `CrushingWheelBlock`, `CrushingWheelControllerBlock` and `CrushingWheelControllerBlockEntity`),
+its recipe format (`create_recipes.rs`), and its machines' numbers in `kinetic.rs`, `millstone.rs`,
+`basin.rs`, `fan.rs`, `belt.rs` and `tachyon_engine.rs` (capacities, the water wheel's flow, the
+millstone's work, the mixer's time, the fan's reach, the funnel's stack). Create's code is under the
+MIT license:
+
+```
+Copyright (c) The Create Team / The Creators of Create
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+Create's assets are not under that license (All Rights Reserved) and are not in this repository or
+its releases: the game fetches Create from Modrinth on the player's device and reads them there.

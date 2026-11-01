@@ -93,10 +93,25 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - jangkauan kipas;
   - corong (satu tumpukan per 8 tick);
   - waktu mixer.
+- **Langkah 3 dimulai:**
+  - **Crushing wheel** (`tachyon_engine/crusher.rs`) bekerja seperti controller Create:
+    - celah di antara dua roda yang berputar berlawanan menelan satu tumpukan barang;
+    - hitung mundur `speed / log2(jumlah)` per tick, selesai di bawah 20;
+    - barang tanpa resep hilang setelah 100, sama seperti Create;
+    - hasilnya keluar searah putaran pelek dan tidak ditelan lagi oleh celah yang sama;
+    - isi celah disimpan di file mesin begitu masuk atau keluar;
+    - roda yang berhenti menyimpan isinya, roda yang dihancurkan menjatuhkannya;
+    - hopper di bawah celah tidak menyedot barang yang sedang menunggu di celah.
+  - **Model OBJ Create** (`obj_model.rs`, loader `neoforge:obj`) dipakai untuk crushing wheel dan
+    kincir air.
+  - **Tag konvensi** `c:` yang tidak ada di game ditebak dari namanya (`c:ingots/iron` →
+    `minecraft:iron_ingot`), jadi resep press, mixer, dan crushing yang memakai tag ikut terbaca.
 - **Belum:**
   - waktu kipas menurut besar tumpukan;
   - siklus press (240, satu barang per tekanan, barang yang tergeletak);
-  - compacting memakai waktu mixer, belum siklus press.
+  - compacting memakai waktu mixer, belum siklus press;
+  - partikel barang di celah crushing wheel dan crushing wheel yang melukai mob.
+- Pemberitahuan MIT Create sudah ada di `THIRD_PARTY_NOTICES.md`.
 
 1. **Pembaca resep Create.** Mesin `create:*` memakai:
    - milling di millstone;
