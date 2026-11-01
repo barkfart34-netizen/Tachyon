@@ -841,11 +841,12 @@ impl Game<'_> {
             };
             let r = create_recipes::Recipes::read(&dir, &lookup);
             log::info!(
-                "Tachyon: Create's recipes: {} milling, {} crushing, {} pressing, {} splashing, {} mixing, {} compacting",
+                "Tachyon: Create's recipes: {} milling, {} crushing, {} pressing, {} splashing, {} haunting, {} mixing, {} compacting",
                 r.milling.len(),
                 r.crushing.len(),
                 r.pressing.len(),
                 r.splashing.len(),
+                r.haunting.len(),
                 r.mixing.len(),
                 r.compacting.len()
             );

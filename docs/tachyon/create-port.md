@@ -83,7 +83,8 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
 ## Urutan kerja 2b
 
 **Kemajuan (1 November 2026):**
-- **Langkah 1 selesai:** `tachyon_engine/create_recipes.rs` membaca milling, pressing, splashing, mixing, dan compacting.
+- **Langkah 1 selesai:** `tachyon_engine/create_recipes.rs` membaca milling, crushing, pressing, splashing,
+  haunting, mixing, dan compacting.
   - Mesin `create:*` mendahulukan resep Create, mesin Kinetica mendahulukan resep Kinetica.
   - Press di atas baskom mengerjakan compacting.
 - **Langkah 2 sebagian:** angka yang sudah disamakan dengan Create:
@@ -113,6 +114,12 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - compacting di baskom sekali per siklus;
   - press tanpa depot atau baskom menekan barang yang tergeletak di blok bawahnya;
   - peluang hasil dikocok per barang (`rollOutput`).
+- **Haunting kipas selesai:** soul fire dan soul campfire yang menyala mengolah tumpukan barang
+  tergeletak maupun di depot lewat resep `create:haunting`. Barang tanpa resep tetap utuh.
+  - Air atau blok waterlogged tetap menang atas haunting, lalu smoking dan blasting, sesuai prioritas Create.
+  - Partikelnya memakai soul fire flame dan sesekali asap; nama proses tampil di kacamata dalam bahasa
+    Inggris dan Indonesia.
+  - Hasil cuci dan haunting dikocok per barang, seperti `RecipeApplier` Create.
 - **Belum:**
   - partikel barang di celah crushing wheel dan crushing wheel yang melukai mob.
 - Pemberitahuan MIT Create sudah ada di `THIRD_PARTY_NOTICES.md`.

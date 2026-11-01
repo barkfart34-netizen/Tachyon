@@ -10,6 +10,8 @@
 //! items. Recipes with a fluid or a heat (a blaze burner's) wait for
 //! Tachyon's fluids; those for another mod, or for an item this game
 //! doesn't have, are left out.
+//! Haunting follows Create's `HauntingRecipe`, a single item ingredient
+//! and rollable results, as its `SplashingRecipe` does.
 use super::basin::{Ingredient, Mixing};
 use super::millstone::{Milling, Output};
 use serde_json::Value;
@@ -31,6 +33,7 @@ pub(super) struct Recipes {
     pub crushing: Vec<Milling>,
     pub pressing: Vec<Milling>,
     pub splashing: Vec<Milling>,
+    pub haunting: Vec<Milling>,
     /// A mixer's, over a basin.
     pub mixing: Vec<Mixing>,
     /// A press's over a basin.
@@ -50,7 +53,15 @@ impl Recipes {
     pub fn read(dir: &Path, game: &Lookup) -> Self {
         let mut recipes = Self::default();
         let mut files = Vec::new();
-        for kind in ["milling", "crushing", "pressing", "splashing", "mixing", "compacting"] {
+        for kind in [
+            "milling",
+            "crushing",
+            "pressing",
+            "splashing",
+            "haunting",
+            "mixing",
+            "compacting",
+        ] {
             walk(&dir.join(kind), &mut files);
         }
         files.sort();
@@ -104,6 +115,7 @@ impl Recipes {
             "create:crushing" => single(&mut self.crushing, 0.0),
             "create:pressing" => single(&mut self.pressing, super::millstone::TIME),
             "create:splashing" => single(&mut self.splashing, super::fan::TIME as f32),
+            "create:haunting" => single(&mut self.haunting, super::fan::TIME as f32),
             "create:mixing" | "create:compacting" => {
                 let list = if kind == "create:mixing" {
                     &mut self.mixing
@@ -133,6 +145,9 @@ impl Recipes {
     }
     pub fn splashing(&self, item: &str) -> Option<&Milling> {
         self.splashing.iter().find(|r| r.input == item)
+    }
+    pub fn haunting(&self, item: &str) -> Option<&Milling> {
+        self.haunting.iter().find(|r| r.input == item)
     }
 }
 
@@ -376,6 +391,17 @@ mod tests {
         let wheat = r.milling("minecraft:wheat").unwrap();
         assert_eq!(wheat.time, 150.0);
         assert_eq!((wheat.outputs[1].count, wheat.outputs[1].chance), (2, 0.25));
+        r.add(
+            &json!({"type": "create:haunting", "ingredients": [{"item": "minecraft:stone"}],
+                "results": [{"id": "minecraft:infested_stone"}]}),
+            &game,
+        );
+        let stone = r.haunting("minecraft:stone").unwrap();
+        assert_eq!(stone.time, super::super::fan::TIME as f32);
+        assert_eq!(stone.outputs[0].item, "minecraft:infested_stone");
+        assert_eq!((stone.outputs[0].count, stone.outputs[0].chance), (1, 1.0));
+        assert_eq!(r.haunting.len(), 1);
+        assert!(r.haunting("minecraft:wheat").is_none());
         // A tag stands for its items; a condition on an empty tag drops it.
         r.add(
             &json!({"neoforge:conditions": [{"type": "neoforge:not", "value":

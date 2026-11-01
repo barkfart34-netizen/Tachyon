@@ -1157,6 +1157,7 @@ HUD = {
     "kinetica.hud.air": ("air", "udara"),
     "kinetica.hud.pull": ("pulling", "menyedot"),
     "kinetica.hud.washing": ("washing", "mencuci"),
+    "kinetica.hud.haunting": ("haunting", "menghantui"),
     "kinetica.hud.smoking": ("smoking", "mengasapi"),
     "kinetica.hud.blasting": ("blasting", "melebur"),
     # What a funnel does.

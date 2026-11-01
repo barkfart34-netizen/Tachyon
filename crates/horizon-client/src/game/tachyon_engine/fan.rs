@@ -7,10 +7,14 @@
 //! What the air goes through works the items further on, dropped ones and
 //! those on a depot alike, after [`time`] ticks in it, longer for a bigger
 //! stack (as Create's bulk processing): water (or a waterlogged block) washes them by
-//! `kinetica/data/kinetica/tachyon/washing.json`, fire or a lit campfire
-//! smokes them and lava blasts them by the furnaces' recipes.
+//! `kinetica/data/kinetica/tachyon/washing.json` (else Create's splashing),
+//! soul fire or a lit soul campfire haunts them by Create's haunting,
+//! fire or a lit campfire smokes them and lava blasts them by the furnaces'
+//! recipes. Haunting follows Create's `AllFanProcessingTypes.HauntingType`
+//! and `HauntingRecipe` (MIT, THIRD_PARTY_NOTICES.md).
 
 use super::super::Game;
+use super::create_recipes::Recipes;
 use super::kinetic::{Axis, Dir, Part};
 use super::millstone::{self, Held, Milling};
 use super::{OWNERS, Owner};
@@ -36,6 +40,7 @@ pub(super) fn time(count: u32) -> u32 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Process {
     Washing,
+    Haunting,
     Smoking,
     Blasting,
 }
@@ -45,18 +50,28 @@ impl Process {
     pub fn name(self) -> &'static str {
         match self {
             Process::Washing => "washing",
+            Process::Haunting => "haunting",
             Process::Smoking => "smoking",
             Process::Blasting => "blasting",
         }
     }
-    /// The process a block the air goes through starts.
+    /// The process a block the air goes through starts, in Create's
+    /// `FanProcessingTypeRegistry` order: washing, haunting, smoking, blasting.
     fn of<'a>(name: &str, property: impl Fn(&str) -> Option<&'a str>) -> Option<Self> {
+        if matches!(name, "minecraft:water" | "minecraft:bubble_column")
+            || property("waterlogged") == Some("true")
+        {
+            return Some(Process::Washing);
+        }
         match name {
-            "minecraft:water" | "minecraft:bubble_column" => Some(Process::Washing),
-            "minecraft:lava" => Some(Process::Blasting),
+            "minecraft:soul_fire" => Some(Process::Haunting),
+            "minecraft:soul_campfire" => {
+                (property("lit") == Some("true")).then_some(Process::Haunting)
+            }
             "minecraft:fire" => Some(Process::Smoking),
             "minecraft:campfire" => (property("lit") == Some("true")).then_some(Process::Smoking),
-            _ => (property("waterlogged") == Some("true")).then_some(Process::Washing),
+            "minecraft:lava" => Some(Process::Blasting),
+            _ => None,
         }
     }
 }
@@ -65,6 +80,44 @@ impl Process {
 pub(super) fn washing() -> &'static [Milling] {
     static RECIPES: OnceLock<Vec<Milling>> = OnceLock::new();
     RECIPES.get_or_init(|| millstone::read("washing.json"))
+}
+
+/// What washing or haunting makes of a whole stack: each item's outputs
+/// rolled by their chances, in Create's `RecipeApplier` and
+/// `ProcessingOutput` order. None when no recipe works it; haunting has no
+/// washing fallback.
+fn work(
+    process: Process,
+    stack: &ItemStack,
+    create: &Recipes,
+    roll: &mut impl FnMut() -> f32,
+) -> Option<Vec<ItemStack>> {
+    let recipe = match process {
+        // Kinetica's washing, else Create's splashing.
+        Process::Washing => (washing().iter().find(|r| r.input == *stack.item))
+            .or_else(|| create.splashing(&stack.item)),
+        Process::Haunting => create.haunting(&stack.item),
+        _ => None,
+    }?;
+    let mut counts = vec![0; recipe.outputs.len()];
+    for _ in 0..stack.count {
+        for (o, count) in recipe.outputs.iter().zip(&mut counts) {
+            *count += if o.chance >= 1.0 {
+                o.count
+            } else {
+                (0..o.count).filter(|_| roll() <= o.chance).count() as u32
+            };
+        }
+    }
+    Some(
+        recipe
+            .outputs
+            .iter()
+            .zip(counts)
+            .filter(|(_, count)| *count > 0)
+            .map(|(o, count)| ItemStack::new(&o.item, count))
+            .collect(),
+    )
 }
 
 /// How far a fan at `speed` (RPM) blows, as Create's: from 3 blocks still
@@ -303,30 +356,15 @@ impl Game<'_> {
         }
     }
 
-    /// What `process` makes of a whole stack: each item washed (the outputs
-    /// by their chances), or cooked by a smoker's recipe (smoking) or a blast
-    /// furnace's, else a furnace's (blasting). None when nothing works it.
+    /// What `process` makes of a whole stack: each item washed or haunted
+    /// (the outputs by their chances), or cooked by a smoker's recipe
+    /// (smoking) or a blast furnace's, else a furnace's (blasting). None when
+    /// nothing works it.
     pub(super) fn tachyon_process(&mut self, process: Process, stack: &ItemStack) -> Option<Vec<ItemStack>> {
         let n = stack.count;
-        if process == Process::Washing {
-            // Kinetica's washing, else Create's splashing.
+        if matches!(process, Process::Washing | Process::Haunting) {
             let create = self.tachyon_create_recipes();
-            let recipe = (washing().iter().find(|r| r.input == *stack.item))
-                .or_else(|| create.splashing(&stack.item))?;
-            let mut made = Vec::new();
-            for o in &recipe.outputs {
-                let times = if o.chance >= 1.0 {
-                    n
-                } else {
-                    (0..n)
-                        .filter(|_| self.world.random.next_float() < o.chance)
-                        .count() as u32
-                };
-                if times > 0 {
-                    made.push(ItemStack::new(&o.item, o.count * times));
-                }
-            }
-            return Some(made);
+            return work(process, stack, &create, &mut || self.world.random.next_float());
         }
         let recipes = self.res.recipes();
         let cooked = if process == Process::Smoking {
@@ -360,6 +398,8 @@ impl Game<'_> {
 
     /// A window's fans blowing: now and then a puff along each one's air,
     /// and where it works, its process's own (splashes, smoke, flames).
+    /// Haunting's soul flames and smoke follow Create's
+    /// `AllFanProcessingTypes.HauntingType.spawnProcessingParticles`.
     pub(super) fn tachyon_fan_particles(&mut self) {
         if self.window.is_none() {
             return;
@@ -392,21 +432,44 @@ impl Game<'_> {
                     continue;
                 };
                 let random = self.particles.random();
-                if random.next_float() >= 0.12 {
+                let puff = if process == Process::Haunting {
+                    random.next_int_bound(8).unwrap_or(1) == 0
+                } else {
+                    random.next_float() < 0.12
+                };
+                if !puff {
                     continue;
                 }
                 let at = [
                     f64::from(cell[0]) + random.next_double(),
-                    f64::from(cell[1]) + random.next_double() * 0.6,
+                    f64::from(cell[1])
+                        + if process == Process::Haunting {
+                            0.45
+                        } else {
+                            random.next_double() * 0.6
+                        },
                     f64::from(cell[2]) + random.next_double(),
                 ];
                 let kind = match process {
                     Process::Washing => ParticleType::Splash,
+                    Process::Haunting => ParticleType::SoulFireFlame,
                     Process::Smoking => ParticleType::Smoke,
                     Process::Blasting => ParticleType::Flame,
                 };
-                let v = way.map(|w| w * 0.05);
+                let smoke = process == Process::Haunting && random.next_int_bound(2).unwrap_or(1) == 0;
+                let v = if process == Process::Haunting {
+                    [0.0; 3]
+                } else {
+                    way.map(|w| w * 0.05)
+                };
                 self.particles.add(&ParticleOptions::simple(kind), at, v);
+                if smoke {
+                    self.particles.add(
+                        &ParticleOptions::simple(ParticleType::Smoke),
+                        [at[0], at[1] - 0.2, at[2]],
+                        [0.0; 3],
+                    );
+                }
             }
         }
     }
@@ -415,6 +478,130 @@ impl Game<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn soul_fire_and_a_lit_soul_campfire_haunt_the_air() {
+        let lit = |k: &str| (k == "lit").then_some("true");
+        let unlit = |k: &str| (k == "lit").then_some("false");
+        assert_eq!(Process::of("minecraft:soul_fire", |_| None), Some(Process::Haunting));
+        assert_eq!(Process::of("minecraft:soul_campfire", lit), Some(Process::Haunting));
+        assert_eq!(Process::of("minecraft:soul_campfire", unlit), None);
+        assert_eq!(Process::of("minecraft:soul_campfire", |_| None), None);
+        assert_eq!(Process::Haunting.name(), "haunting");
+        // Ordinary fire still smokes; lava still blasts.
+        assert_eq!(Process::of("minecraft:fire", |_| None), Some(Process::Smoking));
+        assert_eq!(Process::of("minecraft:campfire", lit), Some(Process::Smoking));
+        assert_eq!(Process::of("minecraft:campfire", unlit), None);
+        assert_eq!(Process::of("minecraft:lava", |_| None), Some(Process::Blasting));
+        assert_eq!(Process::of("minecraft:stone", |_| None), None);
+    }
+
+    #[test]
+    fn water_wins_over_a_campfires_fire_in_creates_order() {
+        let wet = |k: &str| match k {
+            "waterlogged" | "lit" => Some("true"),
+            _ => None,
+        };
+        for name in [
+            "minecraft:campfire",
+            "minecraft:soul_campfire",
+            "minecraft:oak_slab",
+        ] {
+            assert_eq!(Process::of(name, wet), Some(Process::Washing));
+        }
+        for name in ["minecraft:water", "minecraft:bubble_column"] {
+            assert_eq!(Process::of(name, |_| None), Some(Process::Washing));
+        }
+    }
+
+    #[test]
+    fn haunting_works_a_whole_stack_and_leaves_items_without_its_recipe() {
+        let mut create = Recipes::default();
+        create.haunting.push(
+            serde_json::from_str(
+                r#"{"input": "minecraft:stone", "outputs": [{"item": "minecraft:infested_stone", "count": 2}]}"#,
+            )
+            .unwrap(),
+        );
+        let mut roll = || -> f32 { panic!("an output always made doesn't roll") };
+        let stone = ItemStack::new("minecraft:stone", 17);
+        assert_eq!(
+            work(Process::Haunting, &stone, &create, &mut roll).unwrap(),
+            [ItemStack::new("minecraft:infested_stone", 34)]
+        );
+        // Even an item that washing works has no haunting fallback.
+        create.splashing.push(
+            serde_json::from_str(
+                r#"{"input": "minecraft:gravel", "outputs": [{"item": "minecraft:flint"}]}"#,
+            )
+            .unwrap(),
+        );
+        let gravel = ItemStack::new("minecraft:gravel", 16);
+        assert!(work(Process::Haunting, &gravel, &create, &mut roll).is_none());
+        assert_eq!(gravel, ItemStack::new("minecraft:gravel", 16));
+    }
+
+    #[test]
+    fn haunting_rolls_each_items_outputs_by_their_chances() {
+        let create = Recipes {
+            haunting: vec![serde_json::from_str(
+                r#"{"input": "minecraft:lapis_lazuli", "outputs": [
+                    {"item": "minecraft:prismarine_shard", "chance": 0.75},
+                    {"item": "minecraft:prismarine_crystals", "chance": 0.125}]}"#,
+            )
+            .unwrap()],
+            ..Recipes::default()
+        };
+        let lapis = ItemStack::new("minecraft:lapis_lazuli", 4);
+        let mut roll = || 0.5;
+        assert_eq!(
+            work(Process::Haunting, &lapis, &create, &mut roll).unwrap(),
+            [ItemStack::new("minecraft:prismarine_shard", 4)]
+        );
+        let mut roll = || 0.9;
+        assert!(work(Process::Haunting, &lapis, &create, &mut roll).unwrap().is_empty());
+    }
+
+    #[test]
+    fn haunting_rolls_each_output_item_before_the_next_input_item() {
+        let create = Recipes {
+            haunting: vec![serde_json::from_str(
+                r#"{"input": "minecraft:lapis_lazuli", "outputs": [
+                    {"item": "minecraft:prismarine_shard", "count": 2, "chance": 0.75},
+                    {"item": "minecraft:prismarine_crystals", "chance": 0.125}]}"#,
+            )
+            .unwrap()],
+            ..Recipes::default()
+        };
+        let mut rolls = [0.75, 0.9, 0.125, 0.8, 0.2, 0.5].into_iter();
+        let mut roll = || rolls.next().unwrap();
+        assert_eq!(
+            work(
+                Process::Haunting,
+                &ItemStack::new("minecraft:lapis_lazuli", 2),
+                &create,
+                &mut roll,
+            )
+            .unwrap(),
+            [
+                ItemStack::new("minecraft:prismarine_shard", 2),
+                ItemStack::new("minecraft:prismarine_crystals", 1),
+            ]
+        );
+        assert!(rolls.next().is_none());
+    }
+
+    #[test]
+    fn changing_to_haunting_starts_a_new_time_for_the_stack() {
+        let mut timers = HashMap::new();
+        tick(&mut timers, vec![(7u32, Process::Washing, 1)]);
+        assert!(tick(&mut timers, vec![(7, Process::Haunting, 17)]).is_empty());
+        assert_eq!(timers[&7], (Process::Haunting, 1, time(17)));
+        for _ in 1..time(17) - 1 {
+            assert!(tick(&mut timers, vec![(7, Process::Haunting, 17)]).is_empty());
+        }
+        assert_eq!(tick(&mut timers, vec![(7, Process::Haunting, 17)]), [(7, Process::Haunting)]);
+    }
 
     #[test]
     fn a_fan_blows_out_of_the_side_it_is_not_driven_from() {
