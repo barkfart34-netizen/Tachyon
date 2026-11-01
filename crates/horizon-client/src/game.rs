@@ -5315,7 +5315,10 @@ impl Game<'_> {
             item: stack.item.to_string(),
             can_use_game_master_blocks: self.can_use_game_master_blocks(),
         };
-        let outcome = self.with_level(|b, level, ticks| b.place_block(level, ticks, &ctx));
+        let registry = self.pack.assets.registry;
+        let outcome = self.with_level(|b, level, ticks| {
+            tachyon_engine::chute::place(registry, b, level, ticks, &ctx)
+        });
         let PlaceOutcome::Placed { pos, state } = outcome else {
             self.process_level_events()?;
             // BlockItem.useOn: a consumable that could not be placed is used,

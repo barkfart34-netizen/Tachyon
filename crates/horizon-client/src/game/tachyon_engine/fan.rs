@@ -234,6 +234,9 @@ impl Game<'_> {
         let mut out = Vec::new();
         for i in 1..=range(speed) {
             let at = [pos[0] + o[0] * i, pos[1] + o[1] * i, pos[2] + o[2] * i];
+            if !self.world.chunks.contains_key(&(at[0] >> 4, at[2] >> 4)) {
+                break;
+            }
             let state = self.world.block(at[0], at[1], at[2]);
             if self.res.facts().get(state).full_collision {
                 break;
@@ -253,17 +256,29 @@ impl Game<'_> {
     /// each fan does shows in the goggles (`Owner::fan_work`).
     pub(super) fn tachyon_fans(&mut self) {
         let dimension = self.dim.id();
-        let fans = OWNERS.with_borrow(|owners| {
-            owners
-                .get(dimension)
-                .map(|o| turning(&o.index.parts, &o.shown.speeds))
-                .unwrap_or_default()
+        let (fans, chutes) = OWNERS.with_borrow(|owners| {
+            let Some(owner) = owners.get(dimension) else {
+                return (Vec::new(), HashMap::new());
+            };
+            let chutes: HashMap<[i32; 3], Part> = owner.index.parts.iter()
+                .filter(|(_, part)| matches!(part, Part::Chute(_, _)))
+                .map(|(p, part)| (*p, *part)).collect();
+            (turning(&owner.index.parts, &owner.shown.speeds), chutes)
         });
         // The cells blown through: the air's way and its process there.
         let mut cells: HashMap<[i32; 3], ([f64; 3], Option<Process>)> = HashMap::new();
         let mut work = HashMap::new();
+        let mut chute_feeds = Vec::new();
         for fan in &fans {
             let stream = self.tachyon_stream(fan.pos, fan.front, fan.speed);
+            // AirCurrent must reach the line first. ChuteBlockEntity then
+            // propagates its signed push or pull through the connections,
+            // rather than adding the same fan once per reached block.
+            if fan.front.axis() == Axis::Y
+                && let Some((at, _)) = stream.iter().find(|(at, _)| chutes.contains_key(at))
+            {
+                chute_feeds.push((*at, fan.front == Dir::Down, fan.speed.abs() * fan.way()[1] as f32));
+            }
             let process = stream.iter().rev().find_map(|c| c.1).map_or("air", Process::name);
             let shown = if fan.push {
                 process.to_owned()
@@ -295,6 +310,7 @@ impl Game<'_> {
         let (items, depots) = OWNERS.with_borrow_mut(|owners| {
             let owner: &mut Owner = owners.entry(dimension).or_default();
             owner.fan_work = work;
+            owner.chute_air = super::chute::airflow(&chutes, &chute_feeds);
             let items = tick(&mut owner.fan_items, items);
             // The depots where the air works, holding something to work.
             let depots: Vec<([i32; 3], Process, u32)> = (cells.iter())

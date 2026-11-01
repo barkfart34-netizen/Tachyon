@@ -6113,9 +6113,12 @@ impl Game<'_> {
             item: stack.item.to_string(),
             can_use_game_master_blocks: self.can_use_game_master_blocks(),
         };
+        let registry = self.pack.assets.registry;
         self.with_level(|b, level, _| {
             let mut level = DryLevel::new(level);
-            match b.place_block(
+            match super::tachyon_engine::chute::place(
+                registry,
+                b,
                 &mut level,
                 &mut horizon_world::level::Ticks::default(),
                 &ctx,

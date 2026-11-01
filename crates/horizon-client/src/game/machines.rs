@@ -712,7 +712,7 @@ impl Game<'_> {
         };
         let front = offset(pos, facing);
         let face = facing.opposite();
-        // Tachyon's machines (a millstone, a depot): one item in.
+        // Tachyon's machines and chutes: one item in.
         if let Some(moved) = self.tachyon_hopper_in(hopper, front) {
             return moved;
         }
@@ -731,27 +731,50 @@ impl Game<'_> {
             .unwrap_or(false)
     }
     /// Tachyon: a hopper's item into the content engine's machine at
-    /// `front` (a millstone, a depot); None when there is none.
+    /// `front` (a millstone, a depot, a chute); None when there is none.
     fn tachyon_hopper_in(&mut self, hopper: &View, front: Pos) -> Option<bool> {
         let at = [front.0, front.1, front.2];
-        if !self.tachyon_machine(at) {
+        let chute = self.tachyon_chute(at).is_some();
+        if !chute && !self.tachyon_machine(at) {
             return None;
         }
         for slot in 0..hopper.len() {
             let Some(one) = self.take_one(hopper, slot) else {
                 continue;
             };
-            if self.tachyon_machine_put(at, &one) {
+            if chute {
+                match self.tachyon_chute_put(at, one) {
+                    None => return Some(true),
+                    Some(rest) => self.put_back(hopper, slot, rest),
+                }
+            } else if self.tachyon_machine_put(at, &one) {
                 return Some(true);
+            } else {
+                self.put_back(hopper, slot, one);
             }
-            self.put_back(hopper, slot, one);
         }
         Some(false)
     }
     /// Tachyon: one item the machine at `above` made into the hopper under
-    /// it; None when there is no machine.
+    /// it (or what a chute holds); None when there is no machine.
     fn tachyon_hopper_out(&mut self, hopper: &View, above: Pos) -> Option<bool> {
         let at = [above.0, above.1, above.2];
+        if self.tachyon_chute(at).is_some() {
+            let Some(one) = self.tachyon_chute_peek(at, 1) else {
+                return Some(false);
+            };
+            if self.preview_item(hopper, one, Some(Direction::Down)).is_some() {
+                return Some(false);
+            }
+            let one = self.tachyon_chute_take(at, 1)?;
+            return Some(match self.add_item(None, hopper, one, Some(Direction::Down)) {
+                None => true,
+                Some(rest) => {
+                    self.tachyon_chute_return(at, rest);
+                    false
+                }
+            });
+        }
         if !self.tachyon_machine(at) {
             return None;
         }
@@ -766,9 +789,63 @@ impl Game<'_> {
             }
         }
     }
-    /// Tachyon: a funnel's `stack` into the container at `at` through its
-    /// `face`: a block's, or a machine's of the content engine's (one by
-    /// one, as a hopper's). What didn't go in.
+    /// Whether a chute's end has a container, even when it takes nothing:
+    /// a full inventory stops the stack, rather than dropping it through.
+    pub(super) fn tachyon_container_present(&self, at: Pos) -> bool {
+        let pos = [at.0, at.1, at.2];
+        self.tachyon_chute(pos).is_some()
+            || self.tachyon_machine(pos)
+            || self.containers().view(at, false).is_some()
+    }
+    /// The remainder of `add_item` without editing slots or cooldowns.
+    fn preview_item(&self, view: &View, mut stack: ItemStack, face: Option<Direction>) -> Option<ItemStack> {
+        if let Kind::Composter(level) = view.kind {
+            let (x, y, z) = view.parts[0].0;
+            if level < 7 && face == Some(Direction::Up)
+                && self.composter_takes([x, y, z], Some(&stack))
+            {
+                stack.count = stack.count.saturating_sub(1);
+            }
+            return (stack.count > 0).then_some(stack);
+        }
+        let c = self.containers();
+        for slot in view.slots_for_face(face) {
+            if !c.can_place(view, slot, &stack) {
+                continue;
+            }
+            match c.get(view, slot) {
+                // add_item places the whole remainder in an empty slot.
+                None => return None,
+                Some(current) if current.same_item_same_components(&stack) => {
+                    let count = stack.count.min(c.max_stack(&stack).saturating_sub(current.count));
+                    stack.count -= count;
+                    if stack.count == 0 {
+                        return None;
+                    }
+                }
+                Some(_) => {}
+            }
+        }
+        Some(stack)
+    }
+    /// A chute's midpoint check: the same sided insertion as its end,
+    /// on copies of machine state and without changing block containers.
+    pub(super) fn tachyon_container_preview(&self, at: Pos, stack: ItemStack, face: Direction) -> Option<ItemStack> {
+        let pos = [at.0, at.1, at.2];
+        if self.tachyon_chute(pos).is_some() {
+            return self.tachyon_chute_preview(pos, stack);
+        }
+        if self.tachyon_machine(pos) {
+            return self.tachyon_machine_preview(pos, stack);
+        }
+        let Some(view) = self.containers().view(at, false) else {
+            return Some(stack);
+        };
+        self.preview_item(&view, stack, Some(face))
+    }
+    /// Tachyon: a funnel's or chute's `stack` into the container at `at`
+    /// through its `face`: a block's, a chute's single stack, or a machine's
+    /// of the content engine's (one by one, as a hopper's). What didn't go in.
     pub(super) fn tachyon_container_put(
         &mut self,
         at: Pos,
@@ -776,6 +853,9 @@ impl Game<'_> {
         face: Direction,
     ) -> Option<ItemStack> {
         let machine = [at.0, at.1, at.2];
+        if self.tachyon_chute(machine).is_some() {
+            return self.tachyon_chute_put(machine, stack);
+        }
         if self.tachyon_machine(machine) {
             while stack.count > 0 {
                 let one = ItemStack {
@@ -800,10 +880,16 @@ impl Game<'_> {
         rest
     }
     /// Tachyon: up to `most` of one item out of the container at `at`
-    /// through its `face`, for a funnel: from the first slot that gives
+    /// through its `face`, for a funnel or chute: from the first slot that gives
     /// through it, or what a machine of the content engine's made.
     pub(super) fn tachyon_container_take(&mut self, at: Pos, face: Direction, most: u32) -> Option<ItemStack> {
+        if most == 0 {
+            return None;
+        }
         let machine = [at.0, at.1, at.2];
+        if self.tachyon_chute(machine).is_some() {
+            return self.tachyon_chute_take(machine, most);
+        }
         if self.tachyon_machine(machine) {
             let (mut got, _) = self.tachyon_machine_take(machine)?;
             while got.count < most {
@@ -819,8 +905,14 @@ impl Game<'_> {
             return Some(got);
         }
         let source = self.containers().view(at, false)?;
-        if let Kind::Composter(_) = source.kind {
-            return None;
+        if let Kind::Composter(level) = source.kind {
+            if level != 8 || face != Direction::Down {
+                return None;
+            }
+            let pos = BlockPos::new(at.0, at.1, at.2);
+            self.with_level(|b, level, ticks| b.composter_empty(level, ticks, pos));
+            self.world.modified.insert((at.0 >> 4, at.2 >> 4));
+            return Some(bone_meal());
         }
         for slot in source.slots_for_face(Some(face)) {
             let n = {

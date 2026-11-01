@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
 
-/// Each kinetic block's template and its properties.
+/// Each engine block's template and its properties.
 const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     // A thin rod along its axis, as Kinetica's.
     ("shaft", "minecraft:iron_chain", 1.5, "minecraft:iron_block"),
@@ -31,6 +31,8 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("brass_funnel", "minecraft:waxed_lightning_rod", 1.0, "minecraft:copper_block"),
     // A tray 13 high, as Create's depot.
     ("depot", "minecraft:end_portal_frame", 2.0, "minecraft:copper_block"),
+    // ChuteBlock's five facings and four shapes, stored in stair properties.
+    ("chute", "minecraft:polished_andesite_stairs", 3.0, "minecraft:netherite_block"),
     // Four ways, a whole block.
     ("mechanical_press", "minecraft:white_glazed_terracotta", 2.5, "minecraft:copper_block"),
     ("millstone", "minecraft:polished_andesite", 2.0, "minecraft:stone"),
@@ -77,6 +79,12 @@ pub fn fix(dir: &Path) -> Result<(), String> {
                 .collect();
             declaration["shapes"] = json!({"property": property, "values": values});
         }
+        if *block == "chute" {
+            declaration["default_state"] = json!({
+                "facing": "north", "half": "bottom", "shape": "straight", "waterlogged": "false",
+            });
+            declaration["shapes"] = chute_shape();
+        }
         write(&file, &declaration)?;
     }
     // A turning block's chunk model: its particle alone.
@@ -115,6 +123,61 @@ pub fn fix(dir: &Path) -> Result<(), String> {
                 && !k.contains("waterlogged=true");
             inserting.then(|| format!("facing={facing}"))
         })?;
+    }
+    chute_models(&blockstates.join("chute.json"))?;
+    Ok(())
+}
+
+/// `ChuteShapes`' vertical bounds, with an open centre instead of a solid
+/// body, so item entities can enter. One shape property cannot carry the
+/// diagonal facing too: all states use these hollow walls for now.
+fn chute_shape() -> Value {
+    let walls: [[f64; 6]; 8] = [
+        [0.0625, 0.5, 0.0625, 0.125, 1.0, 0.9375],
+        [0.875, 0.5, 0.0625, 0.9375, 1.0, 0.9375],
+        [0.125, 0.5, 0.0625, 0.875, 1.0, 0.125],
+        [0.125, 0.5, 0.875, 0.875, 1.0, 0.9375],
+        [0.125, 0.0, 0.125, 0.1875, 0.5, 0.875],
+        [0.8125, 0.0, 0.125, 0.875, 0.5, 0.875],
+        [0.1875, 0.0, 0.125, 0.8125, 0.5, 0.1875],
+        [0.1875, 0.0, 0.8125, 0.8125, 0.5, 0.875],
+    ];
+    json!({"property": "half", "values": {"bottom": walls, "top": walls}})
+}
+
+/// `ChuteGenerator`: keep Create's static models and their rotations.
+/// Bottom means down; top keeps the horizontal facing. Stair shape names
+/// alias normal, window, intersection and encased (both outer corners).
+fn chute_models(file: &Path) -> Result<(), String> {
+    let Some(state) = read(file) else { return Ok(()) };
+    let Some(variants) = state["variants"].as_object() else { return Ok(()) };
+    let mut kept = serde_json::Map::new();
+    for (k, v) in variants {
+        let property = |name: &str| {
+            k.split(',').find_map(|p| p.split_once('=').filter(|(key, _)| *key == name).map(|(_, value)| value))
+        };
+        if property("waterlogged") == Some("true") {
+            continue;
+        }
+        let Some(facing) = property("facing") else { continue };
+        let shapes: &[&str] = match property("shape") {
+            Some("normal") => &["straight"],
+            Some("window") => &["inner_left"],
+            Some("intersection") => &["inner_right"],
+            Some("encased") => &["outer_left", "outer_right"],
+            _ => continue,
+        };
+        let facing = match facing {
+            "down" => "half=bottom".to_owned(),
+            "north" | "south" | "west" | "east" => format!("facing={facing},half=top"),
+            _ => continue,
+        };
+        for shape in shapes {
+            kept.insert(format!("{facing},shape={shape}"), v.clone());
+        }
+    }
+    if !kept.is_empty() {
+        write(file, &json!({"variants": kept}))?;
     }
     Ok(())
 }
@@ -240,6 +303,44 @@ mod tests {
         let fan = read(&states.join("encased_fan.json")).unwrap();
         assert_eq!(fan["variants"]["axis=x"]["y"], 90);
         assert_eq!(fan["variants"].as_object().unwrap().len(), 2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn chutes_keep_static_models_for_every_stair_alias_and_a_hollow_template() {
+        let dir = scratch("chute");
+        let file = dir.join("assets/create/blockstates/chute.json");
+        let mut variants = serde_json::Map::new();
+        for facing in ["down", "north", "south", "west", "east"] {
+            for shape in ["normal", "window", "intersection", "encased"] {
+                variants.insert(
+                    format!("facing={facing},shape={shape}"),
+                    json!({"model": format!("create:block/chute/{facing}/{shape}"), "y": 90}),
+                );
+            }
+        }
+        write(&file, &json!({"variants": variants})).unwrap();
+        fix(&dir).unwrap();
+        let declaration = read(&dir.join("data/create/horizon/block/chute.json")).unwrap();
+        assert_eq!(declaration["template"], "minecraft:polished_andesite_stairs");
+        assert_eq!(declaration["default_state"]["half"], "bottom");
+        assert_eq!(declaration["default_state"]["shape"], "straight");
+        let walls: Vec<[f64; 6]> = serde_json::from_value(declaration["shapes"]["values"]["bottom"].clone()).unwrap();
+        assert_eq!(walls.len(), 8);
+        assert!(walls.iter().all(|b| b[3] <= 0.5 || b[0] >= 0.5 || b[5] <= 0.5 || b[2] >= 0.5));
+        let state = read(&file).unwrap();
+        assert_eq!(state["variants"].as_object().unwrap().len(), 25);
+        assert_eq!(state["variants"]["half=bottom,shape=inner_left"]["model"], "create:block/chute/down/window");
+        for facing in ["north", "south", "west", "east"] {
+            for (shape, alias) in [("normal", "straight"), ("window", "inner_left"), ("intersection", "inner_right"), ("encased", "outer_left"), ("encased", "outer_right")] {
+                let key = format!("facing={facing},half=top,shape={alias}");
+                assert_eq!(state["variants"][&key]["model"], format!("create:block/chute/{facing}/{shape}"));
+                assert_eq!(state["variants"][&key]["y"], 90);
+            }
+        }
+        assert!(!TURNING.contains(&"chute"));
+        fix(&dir).unwrap();
+        assert_eq!(read(&file).unwrap(), state);
         let _ = fs::remove_dir_all(&dir);
     }
 }

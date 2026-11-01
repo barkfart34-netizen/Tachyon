@@ -19,6 +19,7 @@ pub(super) mod chronicles;
 pub(crate) mod kinetic;
 mod basin;
 mod belt;
+pub(in crate::game) mod chute;
 mod create_recipes;
 mod crusher;
 mod fan;
@@ -40,7 +41,7 @@ use horizon_client::{
 use horizon_client::items::ItemStack;
 use horizon_core::random::RandomSource;
 use horizon_world::registry::{BlockRegistry, BlockStateId};
-use kinetic::{Axis, Dir, Part};
+use kinetic::{Axis, ChuteShape, Dir, Part};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -160,6 +161,15 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
         "hand_crank" => Part::Crank(facing()?.opposite()),
         "millstone" => Part::Millstone,
         "depot" => Part::Depot,
+        // The stair template keeps four horizontal facings. Its bottom
+        // half means down, its top half the diagonal chute's facing.
+        "chute" => {
+            let dir = if property("half") == Some("bottom") { Dir::Down } else { facing()? };
+            if dir == Dir::Up {
+                return None;
+            }
+            Part::Chute(dir, ChuteShape::parse(property("shape")?)?)
+        }
         // Its shaft goes through it the way it faces.
         "mechanical_press" => Part::Press(facing()?.axis()),
         "mechanical_mixer" => Part::Mixer,
@@ -313,7 +323,11 @@ struct Owner {
     mills: HashMap<[i32; 3], millstone::Mill>,
     /// What the basins hold.
     basins: HashMap<[i32; 3], basin::Basin>,
-    /// `mills` or `basins` changed since the file was written.
+    /// What each chute holds, with its item components and height.
+    chutes: HashMap<[i32; 3], chute::Chute>,
+    /// The fans' air through connected chutes, recomputed each tick.
+    chute_air: HashMap<[i32; 3], chute::Air>,
+    /// A machine's contents or motion changed since the file was written.
     mills_changed: bool,
     /// What each fan turning does, for the goggles ("washing", "pull:air").
     fan_work: HashMap<[i32; 3], String>,
@@ -371,6 +385,7 @@ impl Owner {
         let crushers: Vec<([i32; 3], crusher::Inside)> =
             serde_json::from_value(value["crushers"].clone()).unwrap_or_default();
         self.crushers = crushers.into_iter().collect();
+        self.chutes = chute::read(&value["chutes"]);
         self.dirty = true;
     }
     fn save(&self, root: &std::path::Path, dimension: &str) {
@@ -397,6 +412,9 @@ impl Owner {
         funnels.sort();
         let mut crushers: Vec<(&[i32; 3], &crusher::Inside)> = self.crushers.iter().collect();
         crushers.sort_by_key(|(p, _)| **p);
+        let mut chutes: Vec<(&[i32; 3], &chute::Chute)> =
+            self.chutes.iter().filter(|(_, c)| c.item.is_some()).collect();
+        chutes.sort_by_key(|(p, _)| **p);
         let file = Self::file(root, dimension);
         let text = serde_json::json!({
             "motors": rows,
@@ -404,6 +422,7 @@ impl Owner {
             "basins": basins,
             "funnels": funnels,
             "crushers": crushers,
+            "chutes": chutes,
         })
         .to_string();
         let written = file
@@ -513,8 +532,8 @@ pub(in crate::game) fn processing() -> [Vec<Processing>; 4] {
 
 /// What a game shows of the parts: their speeds, the jammed ones, their
 /// networks' stress, the machines at work (a millstone, a press, a mixer:
-/// on what), what each depot and basin holds (a few stacks), and the item
-/// in each crushing gap.
+/// on what), what each depot, basin and chute holds, and the item in each
+/// crushing gap.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Shown {
     speeds: kinetic::Speeds,
@@ -523,6 +542,8 @@ struct Shown {
     work: HashMap<[i32; 3], String>,
     held: HashMap<[i32; 3], Vec<(String, u32)>>,
     crushers: HashMap<[i32; 3], String>,
+    /// Chute items' previous and current heights, and the open pull below.
+    chutes: HashMap<[i32; 3], [f32; 3]>,
 }
 
 /// What the parts show as a payload: the turning parts (each half's
@@ -536,8 +557,9 @@ fn encode(shown: &Shown) -> Vec<u8> {
         work,
         held,
         crushers,
+        chutes,
     } = shown;
-    let mut out = Vec::with_capacity(25 + speeds.len() * 20 + jammed.len() * 12 + stress.len() * 20);
+    let mut out = Vec::with_capacity(29 + speeds.len() * 20 + jammed.len() * 12 + stress.len() * 20);
     let pos = |out: &mut Vec<u8>, p: &[i32; 3]| {
         for v in p {
             out.extend_from_slice(&v.to_le_bytes());
@@ -586,11 +608,18 @@ fn encode(shown: &Shown) -> Vec<u8> {
         pos(&mut out, p);
         name(&mut out, item);
     }
+    out.extend_from_slice(&(chutes.len() as u32).to_le_bytes());
+    for (p, offsets) in chutes {
+        pos(&mut out, p);
+        for v in offsets {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+    }
     out
 }
 
 /// The payload's form.
-const VERSION: u8 = 6;
+const VERSION: u8 = 7;
 
 fn decode(data: &[u8]) -> Option<Shown> {
     let mut at = 0usize;
@@ -670,6 +699,17 @@ fn decode(data: &[u8]) -> Option<Shown> {
         let item = std::str::from_utf8(next(len)?).ok()?;
         crushers.insert(p, item.to_owned());
     }
+    let count = u32::from_le_bytes(word(next(4)?)) as usize;
+    let mut chutes = HashMap::with_capacity(count.min(1 << 10));
+    for _ in 0..count {
+        let p = pos(next(12)?);
+        let b = next(12)?;
+        chutes.insert(p, [
+            f32::from_le_bytes(word(&b[0..4])),
+            f32::from_le_bytes(word(&b[4..8])),
+            f32::from_le_bytes(word(&b[8..12])),
+        ]);
+    }
     Some(Shown {
         speeds,
         jammed,
@@ -677,6 +717,7 @@ fn decode(data: &[u8]) -> Option<Shown> {
         work,
         held,
         crushers,
+        chutes,
     })
 }
 
@@ -725,6 +766,7 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         | Part::Belt(_)
         | Part::Depot
         | Part::Basin
+        | Part::Chute(_, _)
         | Part::Funnel(_) => Vec::new(),
     }
 }
@@ -776,7 +818,8 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::Basin
         | Part::Funnel(_)
         | Part::CrushingWheel(_)
-        | Part::LargeWaterWheel(_) => Vec::new(),
+        | Part::LargeWaterWheel(_)
+        | Part::Chute(_, _) => Vec::new(),
     }
 }
 
@@ -913,12 +956,24 @@ impl Game<'_> {
                 owner.save(&root, dimension);
             }
             // A millstone, a depot or a basin broken drops what it held.
-            let mut drops: Vec<([i32; 3], millstone::Held)> = Vec::new();
+            let mut drops: Vec<([i32; 3], ItemStack)> = Vec::new();
             for p in &removed {
                 let held = (owner.mills.remove(p).map(|mut m| m.take_all()))
                     .or_else(|| owner.basins.remove(p).map(|mut b| b.take_all()));
                 if let Some(held) = held {
-                    drops.extend(held.into_iter().map(|h| (*p, h)));
+                    drops.extend(held.into_iter().map(|h| (*p, ItemStack::new(&h.item, h.count))));
+                    owner.save(&root, dimension);
+                }
+            }
+            // A broken chute, or one replaced by another engine part,
+            // drops its full stack. Unloaded chunks keep their contents.
+            let gone: Vec<[i32; 3]> = owner.chutes.keys().copied().filter(|p| {
+                owner.index.known.contains(&(p[0] >> 4, p[2] >> 4))
+                    && !matches!(owner.index.parts.get(p), Some(Part::Chute(_, _)))
+            }).collect();
+            for p in gone {
+                if let Some(item) = owner.chutes.remove(&p).and_then(|c| c.item) {
+                    drops.push((p, item));
                     owner.save(&root, dimension);
                 }
             }
@@ -946,8 +1001,8 @@ impl Game<'_> {
                 });
             (split, nature, changed, drops)
         });
-        for (p, h) in drops {
-            self.pop_resource(p, ItemStack::new(&h.item, h.count));
+        for (p, stack) in drops {
+            self.pop_resource(p, stack);
         }
         let natural = nature.map(|parts| self.tachyon_natural(&parts));
         // Redstone at the clutches and gearshifts.
@@ -966,7 +1021,9 @@ impl Game<'_> {
         };
         // The fans' air on the items in it, the belts under them, the
         // funnels they come to.
+        self.tachyon_chute_shapes();
         self.tachyon_fans();
+        self.tachyon_chutes();
         self.tachyon_belts();
         self.tachyon_funnels();
         self.tachyon_crushers();
@@ -1032,6 +1089,7 @@ impl Game<'_> {
             // under it. What the depots hold shows on them.
             let mut work = HashMap::new();
             let mut held = HashMap::new();
+            let mut chutes = HashMap::new();
             for (p, mill) in &mut owner.mills {
                 let part = owner.index.parts.get(p).copied();
                 if part == Some(Part::Depot)
@@ -1126,6 +1184,15 @@ impl Game<'_> {
                     work.insert(at, into);
                 }
             }
+            for (p, chute) in &owner.chutes {
+                if !matches!(owner.index.parts.get(p), Some(Part::Chute(_, _))) {
+                    continue;
+                }
+                if let Some(item) = &chute.item {
+                    held.insert(*p, vec![(item.item.to_string(), item.count)]);
+                    chutes.insert(*p, [chute.previous, chute.position, chute.bottom_pull_distance]);
+                }
+            }
             work.extend(owner.fan_work.iter().map(|(p, w)| (*p, w.clone())));
             work.extend(owner.press_work.iter().map(|(p, w)| (*p, w.clone())));
             work.extend(owner.funnel_work.iter().map(|(p, w)| (*p, w.clone())));
@@ -1142,6 +1209,10 @@ impl Game<'_> {
                 .collect();
             if crushers != owner.shown.crushers {
                 owner.shown.crushers = crushers;
+                send = true;
+            }
+            if chutes != owner.shown.chutes {
+                owner.shown.chutes = chutes;
                 send = true;
             }
             if owner.mills_changed && owner.ticks % RESEND == 0 {
@@ -1393,7 +1464,7 @@ impl Game<'_> {
         let Some(kinds) = self.tachyon_kinds() else {
             return false;
         };
-        if one.extra.is_some() {
+        if one.damage != 0 || one.extra.is_some() {
             return false;
         }
         let part = kinds.part(self.world.block(pos[0], pos[1], pos[2]).0);
@@ -1427,6 +1498,37 @@ impl Game<'_> {
             owner.mills_changed |= took;
             took
         })
+    }
+
+    /// A chute checks the machine's room halfway through, without putting
+    /// anything in it. The same rules as `tachyon_machine_put`, on a copy.
+    pub(super) fn tachyon_machine_preview(&self, pos: [i32; 3], mut stack: ItemStack) -> Option<ItemStack> {
+        let Some(kinds) = self.tachyon_kinds() else {
+            return Some(stack);
+        };
+        if stack.damage != 0 || stack.extra.is_some() {
+            return Some(stack);
+        }
+        let part = kinds.part(self.world.block(pos[0], pos[1], pos[2]).0);
+        let create = self.tachyon_create_recipes();
+        let count = OWNERS.with_borrow(|owners| {
+            let owner = owners.get(self.dim.id());
+            if part == Some(Part::Basin) {
+                let mut basin = owner.and_then(|o| o.basins.get(&pos)).cloned().unwrap_or_default();
+                return basin.put(&stack.item, stack.count);
+            }
+            let mut mill = owner.and_then(|o| o.mills.get(&pos)).cloned().unwrap_or_default();
+            let fits = match part {
+                Some(Part::Millstone) => {
+                    millstone::recipe(&stack.item).is_some() || create.milling(&stack.item).is_some()
+                }
+                Some(Part::Depot) => mill.outputs.is_empty(),
+                _ => false,
+            };
+            if fits { mill.put(&stack.item, stack.count) } else { 0 }
+        });
+        stack.count -= count;
+        (stack.count > 0).then_some(stack)
     }
 
     /// One item out of the machine at `pos` for a hopper under it: what it
@@ -1604,7 +1706,9 @@ impl Game<'_> {
                         _ => {}
                     }
                 }
-                if let Some(stacks) = shown.held.get(pos) {
+                if matches!(part, Part::Depot | Part::Basin)
+                    && let Some(stacks) = shown.held.get(pos)
+                {
                     let stacks = stacks.iter().map(|(item, n)| ItemStack::new(item, *n));
                     trays.push((*pos, *part, stacks.collect(), create));
                 }
@@ -1721,6 +1825,7 @@ impl Game<'_> {
                 self.submit_item_world(&state, pose, light, out);
             }
         }
+        self.tachyon_chute_items(camera, alpha, out);
     }
 
     /// A Create press's head at work, down onto what lies on the depot
@@ -1854,6 +1959,7 @@ impl Game<'_> {
             Part::Belt(_) => ("belt", "Mechanical Belt"),
             Part::Funnel(_) => ("funnel", "Funnel"),
             Part::CrushingWheel(_) => ("crushing_wheel", "Crushing Wheel"),
+            Part::Chute(_, _) => ("chute", "Chute"),
         };
         // Create's blocks by Create's names.
         let state = self.world.block(hit.pos[0], hit.pos[1], hit.pos[2]);
@@ -1896,8 +2002,8 @@ impl Game<'_> {
             };
             state = format!("{state} | {what}");
         }
-        // A depot, a basin: what it holds.
-        if matches!(part, Part::Depot | Part::Basin) {
+        // A depot, a basin, a chute: what it holds.
+        if matches!(part, Part::Depot | Part::Basin | Part::Chute(_, _)) {
             let names: Vec<String> = (held.unwrap_or_default().iter())
                 .map(|(item, n)| format!("{} x{n}", self.tachyon_item_name(item)))
                 .collect();
@@ -1951,8 +2057,13 @@ mod tests {
                 ([1, -20, 3], "minecraft:cobblestone".to_owned()),
                 ([-5, 70, 9], "minecraft:raw_iron".to_owned()),
             ]),
+            chutes: HashMap::from([
+                ([3, 64, 2], [0.8, 0.6, 0.0]),
+                ([-3, 65, 2], [-0.5, -0.3, 3.0]),
+            ]),
         };
         let data = encode(&shown);
+        assert_eq!(data[0], 7);
         assert_eq!(decode(&data), Some(shown.clone()));
         assert_eq!(decode(&encode(&Shown::default())), Some(Shown::default()));
         assert!(decode(&[1]).is_none());
@@ -2016,6 +2127,16 @@ mod tests {
         assert_eq!(part_of("create:hand_crank", facing), Some(Part::Crank(Dir::South)));
         assert_eq!(part_of("create:mechanical_press", facing), Some(Part::Press(Axis::Z)));
         assert_eq!(part_of("create:andesite_casing", facing), None);
+        let chute = |k: &str| match k {
+            "facing" => Some("east"),
+            "half" => Some("bottom"),
+            "shape" => Some("inner_left"),
+            _ => None,
+        };
+        assert_eq!(part_of("create:chute", chute), Some(Part::Chute(Dir::Down, ChuteShape::Window)));
+        assert_eq!(part_of("create:smart_chute", chute), None);
+        assert!(pieces(Part::Chute(Dir::Down, ChuteShape::Normal), true).is_empty());
+        assert!(Dir::ALL.into_iter().all(|d| !Part::Chute(Dir::Down, ChuteShape::Normal).shaft_toward(d)));
         assert_eq!(
             part_of("kinetica:funnel", facing),
             Some(Part::Funnel(Dir::North))

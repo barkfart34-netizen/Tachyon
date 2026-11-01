@@ -46,6 +46,7 @@ diambil dari kode Create sendiri. Rencana besarnya ada di [rencana-modpack.md](r
 | Kipas | Jangkauan `lerp(min(abs(RPM)/256, 1), 3, 20)`. Waktu olah `150 * ((jumlah-1)/16 + 1) + 1`, jadi tumpukan besar lebih lama. RPM negatif menghisap. | Jangkauan `clamp(RPM*20/256, 3, 20)`; waktu tetap 150 |
 | Corong | Mengeluarkan tiap 8 tick. Andesite: sampai satu tumpukan (64). Brass: sejumlah filternya. | 16 barang tiap 8 tick |
 | Sabuk | Dipasang dengan item *belt connector* di antara dua poros, panjang maksimal 20 | Satu blok per segmen |
+| Chute biasa | Satu tumpukan; gravitasi -0,2 blok per tick tanpa kipas. Mengambil sampai 16 dari inventaris; keluaran buntu menahan barang di tengah. Bisa mengalir turun atau naik melalui cabang chute. | Gerak, transfer ujung, hopper/corong, ejeksi, penyimpanan, dan model statis sudah dipasang. Bentuk tabrakan dan beberapa aturan aliran serta interaksi masih berbeda; lihat catatan chute di bawah. |
 
 ## Resep Create
 
@@ -135,6 +136,30 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - memakai model `create:block/large_water_wheel/block`, atau `block_extension` bila ada kincir besar
     di sisi negatif poros, seperti `LargeWaterWheelBlock` dan `WaterWheelRenderer`;
   - belum memasang `water_wheel_structure` di bidang 3×3: tumbukan dan pemilihan masih hanya di blok tengah.
+- **Chute biasa ditambahkan** (`tachyon_engine/chute.rs`), mengikuti `ChuteBlock`, `AbstractChuteBlock`,
+  `ChuteBlockEntity`, dan `ChuteItemHandler`:
+  - `create:chute` tidak berputar dan hanya menampung satu tumpukan; tumpukan kedua tidak digabungkan.
+  - Gerak per tick = `(clamp((push + pull) / 64, -20, 20) + (push + pull <= 0 ? -4 : 0)) / 20`.
+    Tanpa kipas barang turun 0,2 blok per tick; aliran positif mengangkatnya.
+  - Mengambil sampai 16 barang dari inventaris atas, atau dari bawah saat aliran naik. Chute lain
+    mengirim melalui sambungannya; chute miring mengarah ke blok bawah yang berlawanan dengan facing-nya.
+  - Memeriksa ruang keluaran setelah melewati tengah, lalu memindahkan barang hanya setelah melewati
+    ujung. Inventaris penuh menahannya di tengah; sisa transfer sebagian tetap disimpan.
+  - Ujung bawah yang terbuka menjatuhkan tumpukan dengan kecepatan vertikal -0,25; ujung atas
+    mengeluarkannya dengan kecepatan dua kali gerak chute. Hopper dan corong dapat mengisi atau mengambil isinya.
+  - Kipas vertikal memberi aliran pada chute pertama yang dicapai jalur udaranya. Pull dijumlahkan
+    dari cabang atas; push dibagi ke cabang atas. Kipas horizontal tidak mengangkat isi chute.
+  - Isi, damage, komponen item, posisi, push/pull, dan jangkauan hisap disimpan dalam file mesin per
+    dimensi. Chute yang dihancurkan menjatuhkan isinya; chunk yang tidak dimuat tetap menyimpannya.
+    Entri simpanan dibaca satu per satu, sehingga satu entri rusak tidak menghapus isi chute lain.
+    Interpolasi dimulai dari tinggi yang disimpan, seperti `ChuteBlockEntity.read`.
+  - Template tangga menyimpan lima facing dan empat shape lewat alias `half` dan `shape`, tanpa
+    perilaku tangga vanilla. Model statis Create tetap di mesh chunk; asetnya hanya berasal dari impor di perangkat pemain.
+  - Renderer item depot dipakai kembali, berskala 0,5 dan berputar mengikuti tinggi yang diinterpolasi,
+    sesuai aturan visibilitas `ChuteRenderer`. Tinggi dikirim lewat payload kinetik versi 7, bersama barang di celah crushing wheel.
+  - Unit test ditulis untuk gerak, transfer, ejeksi, cabang udara, alias/model, penyimpanan komponen,
+    dan pemulihan tinggi serta isi chute lain ketika ada entri simpanan rusak.
+    Build, test, dan permainan tidak dijalankan pada pengerjaan ini; verifikasi diserahkan ke CI.
 - **Belum:**
   - tarikan mob dan pemain melalui celah crushing wheel, serta posisi keluarnya sebelum mati.
 - Pemberitahuan MIT Create sudah ada di `THIRD_PARTY_NOTICES.md`.
@@ -161,6 +186,28 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
    - deployer;
    - blaze burner (panas untuk mixing);
    - belt connector;
-   - chute;
+   - smart chute (chute biasa sudah ada; interaksinya masih perlu dilengkapi);
    - mechanical arm.
 4. **Kincir angin dan bearing** menunggu contraption (Tahap 4).
+
+## Chute: batas implementasi
+
+- Semua state memakai delapan kotak dinding berongga yang sama. Bentuk tabrakan dan seleksi belum
+  mengikuti geometri miring, intersection, dan casing `ChuteShapes`; format deklarasi shape hanya memilih satu properti.
+- Barang jatuh diterima lewat pemeriksaan bounding box dan tinggi tick sebelumnya, bukan callback
+  tabrakan `updateEntityAfterFallOn` yang persis sama dengan Create.
+- Jalur kipas dan jangkauan hisap bawah berhenti pada blok dengan tabrakan penuh. Pemeriksaan kedalaman
+  bentuk parsial `AirCurrent.getFlowLimit` belum ada. Create menempelkan kipas langsung ke chute;
+  Tachyon memakai chute pertama dalam jalur udara kipas. Aliran dihitung tiap tick dari kecepatan putaran
+  yang terakhir diselesaikan, sehingga perubahan kipas dapat terlambat satu tick.
+- Pengambilan inventaris memakai slot pertama yang bisa diambil; belum mengumpulkan barang yang cocok
+  dari beberapa slot seperti `ItemHelper.extract`. Chute ditick dari bawah ke atas, sehingga transfer
+  naik bisa bergerak lagi di chute penerima pada tick yang sama.
+- Penyimpanan mempertahankan komponen item, tetapi payload gambar masih hanya membawa nama dan jumlah.
+  Tampilan yang bergantung pada komponen belum tersinkron. Skala khusus package Create juga belum ada.
+- Impor Create lama perlu diulang agar mendapat template dan alias baru; tidak ada migrasi state lama.
+  Klien dan server harus sama-sama memakai payload versi 7. Model belum diperiksa dengan jar/aset Create nyata.
+- Smart chute, mengambil isi dengan tangan kosong, wrench/window/casing, partikel dan advancement,
+  serta penarikan barang sabuk/depot melalui `TransportedItemStackHandlerBehaviour` belum diporting.
+  Larangan menaruh chute tepat di bawah chute miring diperiksa saat pemasangan; penghapusan chute yang
+  menjadi tidak valid akibat perubahan tetangga belum diterapkan.

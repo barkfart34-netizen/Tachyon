@@ -124,7 +124,36 @@ impl Dir {
     }
 }
 
-/// A part that turns, as its block and state make it.
+/// Create's `ChuteBlock.Shape`, carried by the stair template's shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ChuteShape {
+    Normal,
+    Window,
+    Intersection,
+    Encased,
+}
+
+impl ChuteShape {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "normal" | "straight" => Some(Self::Normal),
+            "window" | "inner_left" => Some(Self::Window),
+            "intersection" | "inner_right" => Some(Self::Intersection),
+            "encased" | "outer_left" | "outer_right" => Some(Self::Encased),
+            _ => None,
+        }
+    }
+    pub fn property(self) -> &'static str {
+        match self {
+            Self::Normal => "straight",
+            Self::Window => "inner_left",
+            Self::Intersection => "inner_right",
+            Self::Encased => "outer_left",
+        }
+    }
+}
+
+/// A part, as its block and state make it; trays and chutes don't turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Part {
     /// A shaft along its axis.
@@ -178,6 +207,9 @@ pub enum Part {
     /// turning against each other crush what falls between them
     /// (tachyon_engine/crusher.rs).
     CrushingWheel(Axis),
+    /// Create's chute, facing down or toward its diagonal input, holding
+    /// one stack (tachyon_engine/chute.rs).
+    Chute(Dir, ChuteShape),
 }
 
 impl Part {
@@ -201,7 +233,7 @@ impl Part {
             Part::Mixer => d == Dir::Up,
             // Its pulleys' shafts, out of its sides.
             Part::Belt(a) => d.axis() != a && d.axis() != Axis::Y,
-            Part::Depot | Part::Basin | Part::Funnel(_) => false,
+            Part::Depot | Part::Basin | Part::Funnel(_) | Part::Chute(_, _) => false,
         }
     }
     /// The stress the part takes for each RPM it turns at (stress units):

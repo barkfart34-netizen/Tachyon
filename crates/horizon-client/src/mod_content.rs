@@ -786,6 +786,13 @@ impl<'a> Plan<'a> {
                         if !b.decl.item {
                             v.set("item", J::Str("minecraft:air".into()));
                         }
+                        // Create's ChuteBlock uses stair properties as state
+                        // storage, not StairBlock's placement or corners.
+                        if b.decl.id == "create:chute"
+                            && let Some(J::Arr(classes)) = v.get_mut("class")
+                        {
+                            classes.retain(|c| !matches!(c, J::Str(s) if s.ends_with("StairBlock")));
+                        }
                         blocks.push(v);
                     }
                 }
