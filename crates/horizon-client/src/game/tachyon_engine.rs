@@ -35,6 +35,8 @@ mod water_wheel;
 // The render crate's touch logic, tested by the desktop Tachyon target.
 #[cfg(test)]
 mod touch;
+#[cfg(test)]
+mod touch_hud;
 
 use super::Game;
 use glam::{DVec3, Mat4, Vec3};

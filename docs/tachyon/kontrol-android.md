@@ -1,9 +1,9 @@
 # Port kontrol sentuh Android bergaya Bedrock
 
 Dokumen ini menganalisis `Vasysik/horizon-android`, branch `android`, dan merencanakan port ke
-Tachyon. Tahap 1 dan 2 sudah diimplementasikan: format, kontrak nilai, serta engine gerak/tombol
-murni, belum dihubungkan ke event Android. Zalith tetap aktif dan default. Tidak ada unduhan
-tekstur, build, atau tes yang dijalankan di mesin kerja ini.
+Tachyon. Tahap 1 dan 2 serta bagian gambar HUD tahap 3 sudah diimplementasikan: format, kontrak
+nilai, engine gerak/tombol, dan gambar murni, belum dihubungkan ke event Android. Zalith tetap
+aktif dan default. Tidak ada unduhan tekstur, build, atau tes yang dijalankan di mesin kerja ini.
 Perilaku yang dijelaskan sebagai perilaku fork berasal dari pembacaan sumber, bukan pembandingan
 langsung dengan Bedrock.
 
@@ -233,9 +233,9 @@ Tidak perlu menyalin seluruh `gamepad.rs` atau membawa perbaikan 8BitDo untuk me
 
 ## Rancangan port ke API sekarang
 
-Format dan kontrak nilai tahap 1 serta engine gerak/tombol tahap 2 sudah tersedia; wiring dan
-bagian engine lainnya masih **usulan**. Engine Bedrock dan Zalith harus saling eksklusif untuk
-satu jari/gesture. Controller fisik tetap pada `Pads` sekarang.
+Format dan kontrak nilai tahap 1, engine gerak/tombol tahap 2, serta gambar HUD tahap 3 sudah
+tersedia; wiring dan bagian engine lainnya masih **usulan**. Engine Bedrock dan Zalith harus saling
+eksklusif untuk satu jari/gesture. Controller fisik tetap pada `Pads` sekarang.
 
 ### Berkas dan pemilik state
 
@@ -384,7 +384,7 @@ jangan meninggalkan referensi ke modul tahap berikutnya. Zalith tetap aktif samp
 | --- | --- | --- |
 | 1. Kontrak dan format — selesai | `Mode`/`Placement`/konfigurasi, tipe custom minimal, kontrak frame, sanitasi dan roundtrip; belum mengambil input. Notice MIT masuk bersama kode pertama. | 350–500 baris |
 | 2. Engine gerak/tombol — selesai | Kepemilikan jari, joystick/D-pad, edges dan helper gerak delapan arah; API murni dengan tes desktop, belum dipasang pada event Android atau diuji lokal. | 350–500 baris (perkiraan awal) |
-| 3. HUD | Port gambar/indikator dalam modul terpisah bila perlu, fallback prosedural, geometri gambar/hit-test sama. Preview opsional, tanpa unduhan. | 350–500 baris |
+| 3. HUD — gambar selesai | Gambar/indikator, fallback prosedural, dan snapshot dari geometri engine yang sama; belum dipasang di Android. Penataan factory portrait/Offhand masih tersisa, tanpa preview atau unduhan. | 350–500 baris (perkiraan awal) |
 | 4. Adapter Android | `Overlay` memilih engine secara opt-in, frame menuju `TouchInput`, fixed actions, ledger sumber dan cleanup suspend/screen/cancel. Semua initializer diperbarui. | 350–500 baris |
 | 5. Gesture | Tap/hold 350 ms, snapshot item, latch-use, classifier dan clock yang bisa diinjeksi tes; fitur gesture belum diaktifkan sampai ray tahap 6 siap. | 250–450 baris |
 | 6. Target dan gameplay | Ray `aim()`, wrapper remote sempit, tap entitas segera, konteks use, gerak remote/tutorial dan feedback HUD. Uji server-thread, bukan hanya in-frame. | 300–500 baris |
@@ -459,6 +459,45 @@ desktop, Android tanpa default features, dan server; kode UI/Android tidak boleh
 - Notice MIT yang sudah ada diperluas dengan helper `gamepad.rs`; tidak ada notice kedua, aset,
   dependency, perubahan Create, atau wiring Android. Engine tetap belum dipasang; pemilihan opt-in
   masuk tahap 4, dan default Zalith tidak berubah sampai tahap 11.
+
+### Hasil tahap 3
+
+- Gambar dan enam tes dari `gpt/16-touch-stage-3` dipasang kembali di atas tahap 1 dan 2.
+  `touch/hud.rs` tersedia sebagai `horizon_client::touch::hud` pada semua platform. Enum `Control`
+  memakai tipe layout yang sudah ada; `State` memakai `Mode`, `PadState`, dan `TouchContext`, bukan
+  tipe gerak atau konteks kedua. `Button` hanya snapshot bounds fisik, opacity, dan pressed.
+- `TouchControls::hud_buttons()` mengambil visibility dan `Placement::fitted()` yang sama dengan
+  `control_at()`, termasuk mirror, skala, swap Jump/Sneak, dan ketersediaan Shield. `viewport()`
+  menyimpan ukuran drawable fisik; gambar membagi bounds dengan `HudBatch::scale`, tidak menghitung
+  ulang dari ukuran GUI yang dibulatkan. Urutan hit-test terbalik dan batas inklusif memakai helper
+  layout tahap 1. Membaca snapshot atau menggambar tidak mengambil frame, edges, atau request.
+- Joystick tetap memakai knob 34% dengan perpindahan 25%. D-pad memakai empat panah dan dua
+  diagonal pada baris vertikal aktif, dengan ambang pressed `0.2`. Ikon Jump/Sneak mempertahankan
+  prioritas swim, fly, mount, lalu D-pad. Held tetap terlihat setelah jari keluar tombol; shortcut
+  memberi feedback selama jari berada di dalamnya.
+- Sprite opsional memakai `gui/bedrock/` dan tema utilitas `gui/horizon/touch/` seperti fork.
+  Glyph tetap proporsional dan UV berada di pusat texel. Jika sprite pressed hilang, sprite normal
+  diredupkan; jika semua sprite hilang, semua 14 kontrol tetap memakai lingkaran atau bingkai/label
+  prosedural. Opacity global mengalikan opacity individual, termasuk pada marker.
+- `hud_state(pointer, feedback)` menerima titik ternormalisasi opsional dan `TouchFeedback` dari
+  caller. Marker tidak diberikan pada skema crosshair atau `force_crosshair`. Diameter tetap
+  16–64 piksel GUI, rim 64 segmen dengan setengah ketebalan `0.7`, dan lingkaran dalam penuh dengan
+  radius `(radius_luar - 1.5) * progress`, bukan irisan pie. Clock dan masa hidup marker tetap milik
+  adapter/gesture tahap selanjutnya; HUD tidak membuat aksi dunia.
+- Perbedaan dari fork tetap seperti port sebelumnya: Pause/Settings/Swap/Shield tanpa tema memakai
+  bingkai prosedural, bukan nine-slice Chat; label fallback memakai ASCII. Penataan factory shortcut
+  portrait dan factory Offhand di samping Inventory yang dicatat pada tahap 2 belum dibawa. Bagian
+  ini selesai pada gambar/snapshot engine; posisi tetap hasil fitting tahap 2 tanpa menulis layout.
+  Tidak ada preview, editor, wiring `Overlay`, JNI, pilihan engine, atau perubahan default Zalith.
+- Enam tes HUD lama dipertahankan dengan fixture tipe tahap 1/2. Dua tes tambahan memeriksa snapshot
+  lintas skema, portrait/landscape, mirror/skala, visibility, ownership pressed, marker dari feedback,
+  dan input yang tidak dikonsumsi saat menggambar. Semuanya berada di
+  `game::tachyon_engine::touch_hud::tests`, dipilih filter desktop CI `tachyon desktop native_hooks`,
+  memakai `HudAtlas::loading()`/rect sintetis tanpa GPU atau aset game. Tes dan build tidak dijalankan
+  lokal; kompilasi desktop Linux, tes, dan check Android menunggu CI.
+- Notice MIT yang sudah ada diperluas untuk modul HUD dan helper asalnya, tanpa notice kedua.
+  Tidak ada aset, unduhan, dependency baru, atau perubahan Create. Port berhenti pada bagian lengkap
+  ini karena mempertahankan renderer dan seluruh tes lama sudah melebihi perkiraan sekitar 600 baris.
 
 ## Pengujian implementasi di emulator CI
 

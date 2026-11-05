@@ -1,4 +1,4 @@
-//! Bedrock-style touch formats and movement/button input, following horizon-android's
+//! Bedrock-style touch formats, movement/button input and HUD, following horizon-android's
 //! `TouchControls`, `touch/layout.rs` and `touch/custom.rs` (MIT, THIRD_PARTY_NOTICES.md).
 //! No game, platform or file I/O. World gestures belong to later stages.
 use crate::gamepad::{self, Button, Edges, PadState};
@@ -8,6 +8,7 @@ use std::{
 };
 
 mod custom;
+pub mod hud;
 pub mod layout;
 pub use custom::CustomButton;
 pub use layout::{Control, Mode, Placement, Settings};
@@ -104,12 +105,14 @@ pub struct TouchControls {
     edges: Edges,
     requests: Vec<TouchRequest>,
     aspect: f32,
+    surface: [u32; 2],
     last_sneak_tap: Option<Duration>,
     sprint_latched: bool,
 }
 
 impl TouchControls {
     pub fn viewport(&mut self, width: u32, height: u32) {
+        self.surface = [width.max(1), height.max(1)];
         self.aspect = (width.max(1) as f32 / height.max(1) as f32).max(0.1);
     }
 
@@ -126,7 +129,7 @@ impl TouchControls {
             && (control != Control::Shield || self.context.shield_available)
     }
 
-    /// Shared hit geometry for the later HUD, without changing the saved layout.
+    /// Shared hit and HUD geometry, without changing the saved layout.
     pub fn placement(&self, control: Control) -> Placement {
         self.settings
             .placement(control)
