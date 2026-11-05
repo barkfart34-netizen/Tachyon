@@ -51,6 +51,8 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("rotation_speed_controller", "minecraft:white_glazed_terracotta", 3.0, "minecraft:gold_block"),
     ("millstone", "minecraft:polished_andesite", 2.0, "minecraft:stone"),
     ("mechanical_mixer", "minecraft:polished_andesite", 2.5, "minecraft:copper_block"),
+    // ArmBlock's floor-mounted arm; the engine draws its moving bodies.
+    ("mechanical_arm", "minecraft:polished_andesite", 2.5, "minecraft:copper_block"),
     // A hollow block with a floor.
     ("basin", "minecraft:composter", 2.0, "minecraft:copper_block"),
     // Turning wheels, a whole block to stand on: a crushing wheel along its
@@ -140,6 +142,10 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         Some(format!("axis={axis}"))
     })?;
     controller_state(&blockstates.join("rotation_speed_controller.json"))?;
+    // ArmBlock on the floor only, for now.
+    rekey(&blockstates.join("mechanical_arm.json"), |k| {
+        (k == "ceiling=false" || k.is_empty()).then(String::new)
+    })?;
     // DirectionalAxisKineticBlock's shaft is perpendicular to its facing.
     for gauge in ["speedometer", "stressometer"] {
         rekey(&blockstates.join(format!("{gauge}.json")), |k| {
@@ -361,6 +367,13 @@ mod tests {
                 "facing=up": {"model": "create:block/encased_fan/block"}}}),
         )
         .unwrap();
+        write(
+            &states.join("mechanical_arm.json"),
+            &json!({"variants": {
+                "ceiling=false": {"model": "create:block/mechanical_arm/block"},
+                "ceiling=true": {"model": "create:block/mechanical_arm/block", "x": 180}}}),
+        )
+        .unwrap();
         fix(&dir).unwrap();
         let shaft = read(&dir.join("data/create/horizon/block/shaft.json")).unwrap();
         assert_eq!(shaft["template"], "minecraft:iron_chain");
@@ -395,6 +408,12 @@ mod tests {
         let fan = read(&states.join("encased_fan.json")).unwrap();
         assert_eq!(fan["variants"]["axis=x"]["y"], 90);
         assert_eq!(fan["variants"].as_object().unwrap().len(), 2);
+        let arm = read(&dir.join("data/create/horizon/block/mechanical_arm.json")).unwrap();
+        assert_eq!(arm["template"], "minecraft:polished_andesite");
+        let arm = read(&states.join("mechanical_arm.json")).unwrap();
+        assert_eq!(arm["variants"].as_object().unwrap().len(), 1);
+        assert_eq!(arm["variants"][""]["model"], "create:block/mechanical_arm/block");
+        assert!(arm["variants"][""]["x"].is_null());
         let _ = fs::remove_dir_all(&dir);
     }
 

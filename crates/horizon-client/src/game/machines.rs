@@ -412,6 +412,15 @@ fn bone_meal() -> ItemStack {
     }
 }
 
+/// The space for an arm's stack in one slot, bounded even when it is empty.
+fn arm_room(current: Option<&ItemStack>, stack: &ItemStack, limit: u32) -> u32 {
+    match current {
+        None => limit,
+        Some(s) if s.same_item_same_components(stack) => limit.saturating_sub(s.count),
+        Some(_) => 0,
+    }
+}
+
 /// Comparator input from a container block entity (0 when there is none).
 pub(super) fn container_signal(
     world: &World,
@@ -939,6 +948,103 @@ impl Game<'_> {
             return Some(out);
         }
         None
+    }
+    /// ArmInteractionPoint.getHandler uses the upper face. Its slot numbers
+    /// belong to that face's wrapper, not the whole container. Composters
+    /// need Create's separate ComposterPoint and are not arm containers here.
+    pub(super) fn tachyon_arm_container_slots(&self, at: Pos) -> Option<usize> {
+        let view = self.containers().view(at, false)?;
+        if matches!(view.kind, Kind::Composter(_)) || view.len() == 0 {
+            return None;
+        }
+        Some(view.slots_for_face(Some(Direction::Up)).len())
+    }
+    /// ArmInteractionPoint.extract: up to `most` from one upper-face slot,
+    /// without changing it when simulating. Components stay on the stack.
+    pub(super) fn tachyon_arm_container_take(
+        &mut self,
+        at: Pos,
+        index: usize,
+        most: u32,
+        simulate: bool,
+    ) -> Option<ItemStack> {
+        let c = self.containers();
+        let view = c.view(at, false)?;
+        if matches!(view.kind, Kind::Composter(_)) || most == 0 {
+            return None;
+        }
+        let slot = *view.slots_for_face(Some(Direction::Up)).get(index)?;
+        let stack = c.get(&view, slot)?;
+        if !c.can_take(&view, slot, stack, Direction::Up) || stack.count == 0 {
+            return None;
+        }
+        let got = ItemStack {
+            count: stack.count.min(most),
+            ..stack.clone()
+        };
+        if !simulate {
+            let cell = self.slot_mut_at(&view, slot)?;
+            let current = cell.as_mut()?;
+            current.count -= got.count;
+            if current.count == 0 {
+                *cell = None;
+            }
+            self.view_changed(&view);
+        }
+        Some(got)
+    }
+    /// ArmInteractionPoint.insert, also through a funnel's container face:
+    /// the same slots, item rules and limits for simulation and insertion.
+    pub(super) fn tachyon_arm_container_put(
+        &mut self,
+        at: Pos,
+        mut stack: ItemStack,
+        face: Direction,
+        simulate: bool,
+    ) -> Option<ItemStack> {
+        let c = self.containers();
+        let Some(view) = c.view(at, false) else {
+            return Some(stack);
+        };
+        if matches!(view.kind, Kind::Composter(_)) {
+            return Some(stack);
+        }
+        let count = stack.count;
+        let was_empty = c.is_empty(&view);
+        for slot in view.slots_for_face(Some(face)) {
+            let c = self.containers();
+            if !c.can_place(&view, slot, &stack) {
+                continue;
+            }
+            let limit = if view.kind == Kind::Bookshelf { 1 } else { c.max_stack(&stack).min(64) };
+            let n = stack.count.min(arm_room(c.get(&view, slot), &stack, limit));
+            if n == 0 {
+                continue;
+            }
+            if !simulate {
+                let Some(cell) = self.slot_mut_at(&view, slot) else {
+                    continue;
+                };
+                match cell {
+                    Some(current) => current.count += n,
+                    None => *cell = Some(ItemStack { count: n, ..stack.clone() }),
+                }
+            }
+            stack.count -= n;
+            if stack.count == 0 {
+                break;
+            }
+        }
+        if !simulate && stack.count < count {
+            if was_empty && view.kind == Kind::Hopper {
+                let hopper = self.hoppers.entry(view.parts[0].0).or_default();
+                if hopper.cooldown <= 8 {
+                    hopper.cooldown = 8;
+                }
+            }
+            self.view_changed(&view);
+        }
+        (stack.count > 0).then_some(stack)
     }
     /// The rest of `HopperBlockEntity.ejectItems`: one item into `target`.
     fn eject_into(&mut self, pos: Pos, hopper: &View, target: &View, face: Direction) -> bool {
@@ -1603,5 +1709,37 @@ mod mod_container_tests {
         assert_eq!(view.slots_for_face(Some(Direction::North)), [1]);
         assert!(view.slots_for_face(Some(Direction::East)).is_empty());
         assert_eq!(view.slots_for_face(None), [0, 1, 2]);
+    }
+}
+
+#[cfg(test)]
+mod tachyon_arm_tests {
+    use super::*;
+
+    #[test]
+    fn empty_and_occupied_slots_both_obey_the_arms_limit() {
+        let eggs = ItemStack::new("minecraft:egg", 40);
+        assert_eq!(arm_room(None, &eggs, 16), 16);
+        assert_eq!(arm_room(Some(&ItemStack::new("minecraft:egg", 15)), &eggs, 16), 1);
+        assert_eq!(arm_room(Some(&ItemStack::new("minecraft:egg", 17)), &eggs, 16), 0);
+        assert_eq!(arm_room(Some(&ItemStack::new("minecraft:stone", 1)), &eggs, 16), 0);
+        let book = ItemStack::new("minecraft:book", 64);
+        assert_eq!(arm_room(None, &book, 1), 1);
+        assert_eq!(arm_room(Some(&ItemStack::new("minecraft:book", 1)), &book, 1), 0);
+        let tool = ItemStack::new("minecraft:iron_pickaxe", 1);
+        let damaged = ItemStack { damage: 1, ..tool.clone() };
+        assert_eq!(arm_room(Some(&damaged), &tool, 1), 0);
+        let mut named = book.clone();
+        named.data_mut().custom_name = Some(horizon_world::nbt::Tag::String("Different book".into()));
+        assert_eq!(arm_room(Some(&named), &book, 64), 0);
+    }
+
+    #[test]
+    fn an_arms_slot_indices_belong_to_the_upper_face() {
+        for (kind, size, expected) in [(Kind::Furnace, 3, vec![0]), (Kind::Brewing, 5, vec![3]), (Kind::Generic, 3, vec![0, 1, 2])] {
+            let view = View { parts: vec![((0, 0, 0), size)], kind, container: None };
+            assert_eq!(view.slots_for_face(Some(Direction::Up)), expected);
+            for slot in expected { assert_eq!(view.locate(slot), Some(((0, 0, 0), slot))); }
+        }
     }
 }

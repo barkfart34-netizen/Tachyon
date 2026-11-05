@@ -211,6 +211,9 @@ pub enum Part {
     /// A mechanical mixer, turned by a shaft from above; its whisk mixes in
     /// the basin under it.
     Mixer,
+    /// Create's mechanical arm (ArmBlock): a small cogwheel about Y, turned
+    /// by a shaft from below.
+    Arm,
     /// A basin: the items to mix, which doesn't turn.
     Basin,
     /// An encased fan, on a shaft along its axis; it blows out of one end
@@ -249,7 +252,7 @@ impl Part {
             | Part::CrushingWheel(a) => d.axis() == a,
             Part::Gearbox(a) => d.axis() != a,
             Part::Motor(out) | Part::Crank(out) => d == out,
-            Part::Millstone => d == Dir::Down,
+            Part::Millstone | Part::Arm => d == Dir::Down,
             Part::Press(a) => d.axis() == a && d != Dir::Down,
             Part::Mixer => d == Dir::Up,
             Part::SpeedController(a) => a != Axis::Y && d.axis() == a,
@@ -270,6 +273,7 @@ impl Part {
             Part::Millstone => 4.0,
             Part::Press(_) => 8.0,
             Part::Mixer => 4.0,
+            Part::Arm => 2.0,
             Part::Fan(_) => 2.0,
             Part::CrushingWheel(_) => 8.0,
             // AllBlocks registers CStress.setNoImpact for the controller.
@@ -292,7 +296,7 @@ impl Part {
             Part::Cog(a) | Part::EncasedCog(a) => Some((a, false)),
             Part::LargeCog(a) | Part::EncasedLargeCog(a) => Some((a, true)),
             // A mixer meshes as one too (Create's).
-            Part::Millstone | Part::Mixer => Some((Axis::Y, false)),
+            Part::Millstone | Part::Mixer | Part::Arm => Some((Axis::Y, false)),
             _ => None,
         }
     }
@@ -593,6 +597,8 @@ pub fn solve(
 /// The tooth offsets follow Create's KineticBlockEntityVisual.rotationOffset.
 pub fn angle(part: Part, pos: [i32; 3], speed: f32, ticks: f64) -> f32 {
     let base = (ticks * f64::from(speed) * 0.3).rem_euclid(360.0) as f32;
+    // ArmRenderer's cog has the same tooth offset as a small cogwheel.
+    let part = if part == Part::Arm { Part::Cog(Axis::Y) } else { part };
     let offset = match part {
         Part::Cog(axis)
         | Part::LargeCog(axis)
@@ -1021,6 +1027,25 @@ mod tests {
         assert_eq!(s.speeds.get(&[0, 0, 0]), None);
         assert_eq!(s.speeds.get(&[1, 1, 0]), None);
         assert_eq!(s.stress[&[0, 1, 0]].load, 128.0);
+    }
+
+    #[test]
+    fn an_arm_turns_from_below_or_a_cog_beside_it() {
+        let p = parts(&[
+            ([0, 0, 0], Part::Motor(Dir::Up)),
+            ([0, 1, 0], Part::Arm),
+            ([1, 1, 0], Part::Cog(Axis::Y)),
+            ([0, 2, 0], Part::Shaft(Axis::Y)),
+        ]);
+        let s = solve1(&p, &[([0, 0, 0], 32.0)]);
+        assert_eq!(s.speeds[&[0, 1, 0]], [32.0; 2]);
+        assert_eq!(s.speeds[&[1, 1, 0]], [-32.0; 2]);
+        assert!(!s.speeds.contains_key(&[0, 2, 0]));
+        assert_eq!(s.stress[&[0, 1, 0]].load, 64.0);
+        assert_eq!(capacity(Part::Arm, 32.0), 0.0);
+        for pos in [[0, 1, 0], [1, 1, 0], [-2, 0, 3]] {
+            assert_eq!(angle(Part::Arm, pos, 32.0, 12.5), angle(Part::Cog(Axis::Y), pos, 32.0, 12.5));
+        }
     }
 
     #[test]

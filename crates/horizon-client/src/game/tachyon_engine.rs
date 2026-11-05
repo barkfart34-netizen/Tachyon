@@ -17,6 +17,7 @@
 //! block entities, [`Game::tachyon_engine_hud`] from the HUD hook.
 pub(super) mod chronicles;
 pub(crate) mod kinetic;
+mod arm;
 mod basin;
 mod belt;
 pub(in crate::game) mod chute;
@@ -182,6 +183,7 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
         // Its shaft goes through it the way it faces.
         "mechanical_press" => Part::Press(facing()?.axis()),
         "mechanical_mixer" => Part::Mixer,
+        "mechanical_arm" => Part::Arm,
         "basin" => Part::Basin,
         "encased_fan" => Part::Fan(axis()?),
         "andesite_funnel" | "brass_funnel" => Part::Funnel(facing()?),
@@ -346,6 +348,8 @@ struct Owner {
     chutes: HashMap<[i32; 3], chute::Chute>,
     /// The fans' air through connected chutes, recomputed each tick.
     chute_air: HashMap<[i32; 3], chute::Air>,
+    /// The arms' points, movement and held stacks.
+    arms: HashMap<[i32; 3], arm::Arm>,
     /// A machine's contents or motion changed since the file was written.
     mills_changed: bool,
     /// What each fan turning does, for the goggles ("washing", "pull:air").
@@ -431,6 +435,9 @@ impl Owner {
         let basins: Vec<([i32; 3], basin::Basin)> =
             serde_json::from_value(value["basins"].clone()).unwrap_or_default();
         self.basins = basins.into_iter().collect();
+        let arms: Vec<([i32; 3], arm::Arm)> =
+            serde_json::from_value(value["arms"].clone()).unwrap_or_default();
+        self.arms = arms.into_iter().collect();
         let funnels: Vec<[i32; 3]> = serde_json::from_value(value["funnels"].clone()).unwrap_or_default();
         self.funnels_out = funnels.into_iter().collect();
         let crushers: Vec<([i32; 3], crusher::Inside)> =
@@ -461,6 +468,8 @@ impl Owner {
         let mut basins: Vec<(&[i32; 3], &basin::Basin)> =
             self.basins.iter().filter(|(_, b)| !b.is_empty()).collect();
         basins.sort_by_key(|(p, _)| **p);
+        let mut arms: Vec<(&[i32; 3], &arm::Arm)> = self.arms.iter().collect();
+        arms.sort_by_key(|(p, _)| **p);
         let mut funnels: Vec<&[i32; 3]> = self.funnels_out.iter().collect();
         funnels.sort();
         let mut crushers: Vec<(&[i32; 3], &crusher::Inside)> = self.crushers.iter().collect();
@@ -474,6 +483,7 @@ impl Owner {
             "controllers": controllers,
             "mills": mills,
             "basins": basins,
+            "arms": arms,
             "funnels": funnels,
             "crushers": crushers,
             "chutes": chutes,
@@ -653,6 +663,8 @@ struct Shown {
     /// Chute items' previous and current heights, and the open pull below.
     chutes: HashMap<[i32; 3], [f32; 3]>,
     targets: HashMap<[i32; 3], i32>,
+    /// The mechanical arms' movement and held stacks.
+    arms: HashMap<[i32; 3], arm::Snapshot>,
 }
 
 /// What the parts show as a payload: the turning parts (each half's
@@ -668,9 +680,10 @@ fn encode(shown: &Shown) -> Vec<u8> {
         crushers,
         chutes,
         targets,
+        arms,
     } = shown;
     let mut out = Vec::with_capacity(
-        33 + speeds.len() * 20 + jammed.len() * 12 + stress.len() * 20 + targets.len() * 16,
+        37 + speeds.len() * 20 + jammed.len() * 12 + stress.len() * 20 + targets.len() * 16,
     );
     let pos = |out: &mut Vec<u8>, p: &[i32; 3]| {
         for v in p {
@@ -732,17 +745,26 @@ fn encode(shown: &Shown) -> Vec<u8> {
         pos(&mut out, p);
         out.extend_from_slice(&target.to_le_bytes());
     }
+    out.extend_from_slice(&(arms.len() as u32).to_le_bytes());
+    for (p, arm) in arms {
+        pos(&mut out, p);
+        // A length-delimited snapshot includes the held stack's components.
+        let data = serde_json::to_vec(arm).unwrap_or_default();
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(&data);
+    }
     out
 }
 
 /// The payload's form.
-const VERSION: u8 = 8;
+const VERSION: u8 = 9;
 
 fn decode(data: &[u8]) -> Option<Shown> {
     let mut at = 0usize;
     let mut next = |n: usize| {
-        let s = data.get(at..at + n)?;
-        at += n;
+        let end = at.checked_add(n)?;
+        let s = data.get(at..end)?;
+        at = end;
         Some(s)
     };
     let word = |b: &[u8]| -> [u8; 4] { [b[0], b[1], b[2], b[3]] };
@@ -833,6 +855,14 @@ fn decode(data: &[u8]) -> Option<Shown> {
         let b = next(16)?;
         targets.insert(pos(b), speed_controller::limit(i32::from_le_bytes(word(&b[12..16]))));
     }
+    let count = u32::from_le_bytes(word(next(4)?)) as usize;
+    let mut arms = HashMap::with_capacity(count.min(1 << 10));
+    for _ in 0..count {
+        let p = pos(next(12)?);
+        let len = u32::from_le_bytes(word(next(4)?)) as usize;
+        let arm = serde_json::from_slice(next(len)?).ok()?;
+        arms.insert(p, arm);
+    }
     Some(Shown {
         speeds,
         jammed,
@@ -842,6 +872,7 @@ fn decode(data: &[u8]) -> Option<Shown> {
         crushers,
         chutes,
         targets,
+        arms,
     })
 }
 
@@ -895,6 +926,8 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         Part::Millstone => vec![("create:block/millstone/inner", Dir::Up, 1.0, 0, Dir::Up)],
         // Its cogwheel; the head is drawn as it mixes.
         Part::Mixer => vec![("create:block/cogwheel_shaftless", Dir::Up, 1.0, 0, Dir::Up)],
+        // ArmRenderer's cog; the jointed bodies are drawn separately.
+        Part::Arm => vec![("create:block/mechanical_arm/cog", Dir::Up, 1.0, 0, Dir::Up)],
         Part::Fan(a) => vec![("create:block/encased_fan/propeller", positive(a), 1.0, 0, Dir::South)],
         // Their OBJ models (`obj_model.rs`), about Y.
         Part::CrushingWheel(a) => vec![("create:block/crushing_wheel/block", positive(a), 1.0, 0, Dir::Up)],
@@ -954,6 +987,7 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
             vec![(HUB, neg, 1.0, 0), (HUB, pos, 1.0, 0)]
         }
         Part::Depot
+        | Part::Arm
         | Part::Basin
         | Part::Funnel(_)
         | Part::CrushingWheel(_)
@@ -1128,7 +1162,7 @@ impl Game<'_> {
                 .index
                 .parts
                 .iter()
-                .filter(|(_, part)| part.split())
+                .filter(|(_, part)| part.split() || matches!(part, Part::Arm | Part::Funnel(_)))
                 .map(|(p, _)| *p)
                 .collect();
             let nature: Option<Vec<([i32; 3], Part)>> = (owner.ticks % NATURE_TICKS == 1)
@@ -1152,7 +1186,7 @@ impl Game<'_> {
             self.pop_resource(p, stack);
         }
         let natural = nature.map(|parts| self.tachyon_natural(&parts));
-        // Redstone at the clutches and gearshifts.
+        // Redstone at the clutches, gearshifts, arms and funnel points.
         let powered: HashSet<[i32; 3]> = if split.is_empty() {
             HashSet::new()
         } else {
@@ -1176,7 +1210,6 @@ impl Game<'_> {
         self.tachyon_crushers();
         self.tachyon_presses_on_ground();
         let create = self.tachyon_create_recipes();
-        let random = &mut self.world.random;
         let send = OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
             if powered != owner.powered {
@@ -1242,6 +1275,13 @@ impl Game<'_> {
                     send = true;
                 }
             }
+            send
+        });
+        self.tachyon_arms();
+        let send = OWNERS.with_borrow_mut(|owners| {
+            let owner = owners.entry(dimension).or_default();
+            let mut send = send;
+            let random = &mut self.world.random;
             // The millstones turning grind; a press turning works the depot
             // under it. What the depots hold shows on them.
             let mut work = HashMap::new();
@@ -1353,6 +1393,9 @@ impl Game<'_> {
             work.extend(owner.fan_work.iter().map(|(p, w)| (*p, w.clone())));
             work.extend(owner.press_work.iter().map(|(p, w)| (*p, w.clone())));
             work.extend(owner.funnel_work.iter().map(|(p, w)| (*p, w.clone())));
+            work.extend(owner.arms.iter().filter_map(|(p, a)| {
+                a.held.as_ref().map(|h| (*p, h.item.to_string()))
+            }));
             if work != owner.shown.work {
                 owner.shown.work = work;
                 send = true;
@@ -1370,6 +1413,14 @@ impl Game<'_> {
             }
             if chutes != owner.shown.chutes {
                 owner.shown.chutes = chutes;
+                send = true;
+            }
+            let arms: HashMap<[i32; 3], arm::Snapshot> = (owner.arms.iter())
+                .filter(|(p, _)| owner.index.parts.get(*p) == Some(&Part::Arm))
+                .map(|(p, a)| (*p, a.snapshot(*p)))
+                .collect();
+            if arms != owner.shown.arms {
+                owner.shown.arms = arms;
                 send = true;
             }
             if owner.mills_changed && owner.ticks % RESEND == 0 {
@@ -1824,6 +1875,7 @@ impl Game<'_> {
         let mut draws: Vec<([i32; 3], Part, [f32; 2], bool)> = Vec::new();
         let mut heads: Vec<([i32; 3], Part, f32, f32, bool)> = Vec::new();
         let mut trays: Vec<([i32; 3], Part, Vec<ItemStack>, bool)> = Vec::new();
+        let mut arms: Vec<([i32; 3], f32, arm::Snapshot)> = Vec::new();
         self.tachyon_view(|index, shown| {
             for (pos, part) in &index.parts {
                 let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
@@ -1834,12 +1886,16 @@ impl Game<'_> {
                 // Large cogwheels reach a block past their own. A large
                 // water wheel uses WaterWheelBlockEntity's bounds inflated
                 // by its size.
-                let radius = if matches!(part, Part::LargeWaterWheel(_)) { 2.0 } else { 1.5 };
+                let radius = if *part == Part::Arm { 3.0 } else if matches!(part, Part::LargeWaterWheel(_)) { 2.0 } else { 1.5 };
                 if view.is_some_and(|v| !v.intersects(o - Vec3::splat(radius), o + Vec3::splat(radius + 1.0))) {
                     continue;
                 }
                 let speed = shown.speeds.get(pos).copied().unwrap_or([0.0; 2]);
                 let create = kinds.create(self.world.block(pos[0], pos[1], pos[2]).0);
+                if *part == Part::Arm {
+                    let arm = shown.arms.get(pos).cloned().unwrap_or_else(|| arm::Arm::default().snapshot(*pos));
+                    arms.push((*pos, speed[0], arm));
+                }
                 if shown.work.contains_key(pos) {
                     match part {
                         Part::Press(_) => {
@@ -1925,6 +1981,11 @@ impl Game<'_> {
                 let state = self.tachyon_model(speed_controller::BRACKET_MODEL);
                 self.submit_item_world(&state, pose, light, out);
             }
+        }
+        for (pos, speed, arm) in arms {
+            let at = DVec3::from_array(pos.map(f64::from));
+            let light = horizon_client::block_entity_render::vertex_light(self.world.light(pos[0], pos[1], pos[2]));
+            self.tachyon_render_arm((at - camera).as_vec3(), &arm, speed, alpha as f32, light, out);
         }
         // A press at work: its head down onto what lies on the depot under
         // it (`drop` blocks down) and up, by its cycle (`press.rs`). A mixer
@@ -2137,6 +2198,7 @@ impl Game<'_> {
             Part::Press(_) => ("mechanical_press", "Mechanical Press"),
             Part::Depot => ("depot", "Depot"),
             Part::Mixer => ("mechanical_mixer", "Mechanical Mixer"),
+            Part::Arm => ("mechanical_arm", "Mechanical Arm"),
             Part::Basin => ("basin", "Basin"),
             Part::Fan(_) => ("encased_fan", "Encased Fan"),
             Part::Belt(_) => ("belt", "Mechanical Belt"),
@@ -2238,6 +2300,11 @@ mod tests {
 
     #[test]
     fn speeds_go_and_come_back() {
+        let mut arm = arm::Arm::default();
+        let mut stack = ItemStack { damage: 7, ..ItemStack::new("minecraft:iron_pickaxe", 1) };
+        stack.enchant("minecraft:unbreaking", 2);
+        stack.data_mut().custom_name = Some(horizon_world::nbt::Tag::String("Held pickaxe".into()));
+        arm.held = Some(stack);
         let shown = Shown {
             speeds: HashMap::from([([1, -64, 3], [32.0; 2]), ([-5, 70, 9], [-16.0, 16.0])]),
             jammed: HashSet::from([[0, 0, 0]]),
@@ -2257,6 +2324,7 @@ mod tests {
                 ([1, -20, 3], "minecraft:cobblestone".to_owned()),
                 ([-5, 70, 9], "minecraft:raw_iron".to_owned()),
             ]),
+            arms: HashMap::from([([8, 64, 2], arm.snapshot([8, 64, 2]))]),
             chutes: HashMap::from([
                 ([3, 64, 2], [0.8, 0.6, 0.0]),
                 ([-3, 65, 2], [-0.5, -0.3, 3.0]),
@@ -2264,7 +2332,7 @@ mod tests {
             targets: HashMap::from([([4, 64, 2], -64), ([5, 64, 2], 0), ([6, 64, 2], 256)]),
         };
         let data = encode(&shown);
-        assert_eq!(data[0], 8);
+        assert_eq!(data[0], 9);
         assert_eq!(decode(&data), Some(shown.clone()));
         assert_eq!(decode(&encode(&Shown::default())), Some(Shown::default()));
         assert!(decode(&[1]).is_none());
@@ -2299,6 +2367,23 @@ mod tests {
             .as_deref(),
             Some("150% | Remaining Capacity: -128 / 256 SU | overstressed")
         );
+    }
+
+    #[test]
+    fn malformed_arm_snapshots_and_lengths_do_not_read() {
+        let shown = Shown {
+            arms: HashMap::from([([0; 3], arm::Arm::default().snapshot([0; 3]))]),
+            ..Shown::default()
+        };
+        let mut data = encode(&shown);
+        *data.last_mut().unwrap() = b'!';
+        assert!(decode(&data).is_none());
+        let mut data = encode(&Shown::default());
+        let count = data.len() - 4;
+        data[count..].copy_from_slice(&1u32.to_le_bytes());
+        data.extend_from_slice(&[0; 12]);
+        data.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(decode(&data).is_none());
     }
 
     #[test]
@@ -2352,6 +2437,7 @@ mod tests {
         assert_eq!(part_of("create:creative_motor", facing), Some(Part::Motor(Dir::North)));
         assert_eq!(part_of("create:hand_crank", facing), Some(Part::Crank(Dir::South)));
         assert_eq!(part_of("create:mechanical_press", facing), Some(Part::Press(Axis::Z)));
+        assert_eq!(part_of("create:mechanical_arm", |_| None), Some(Part::Arm));
         assert_eq!(part_of("create:andesite_casing", facing), None);
         let chute = |k: &str| match k {
             "facing" => Some("east"),
@@ -2382,6 +2468,7 @@ mod tests {
         let create = pieces(Part::Gearbox(Axis::Y), true);
         assert_eq!(create.len(), 4);
         assert!(create.iter().all(|p| p.0 == "create:block/shaft_half" && p.4 == Dir::South));
+        assert_eq!(pieces(Part::Arm, true), vec![("create:block/mechanical_arm/cog", Dir::Up, 1.0, 0, Dir::Up)]);
         let halves: Vec<usize> = pieces(Part::Clutch(Axis::X), false).iter().map(|p| p.3).collect();
         assert_eq!(halves, [0, 1]);
     }

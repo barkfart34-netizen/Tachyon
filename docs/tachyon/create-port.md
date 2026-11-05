@@ -86,7 +86,7 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
 
 ## Urutan kerja 2b
 
-**Kemajuan (1 November 2026):**
+**Kemajuan (2 November 2026):**
 - **Langkah 1 selesai:** `tachyon_engine/create_recipes.rs` membaca milling, crushing, pressing, splashing,
   haunting, mixing, dan compacting.
   - Mesin `create:*` mendahulukan resep Create, mesin Kinetica mendahulukan resep Kinetica.
@@ -196,6 +196,16 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
     controller sendiri tidak memakai beban, seperti `CStress.setNoImpact()`;
   - casing, poros dan bracket memakai model Create dari perangkat pemain; belum ada antarmuka
     untuk mengubah target atau pembantu pemasangan yang menyelaraskan poros otomatis.
+- **Mechanical arm** (`tachyon_engine/arm.rs`) memakai fase, round robin, dan model parsial Create:
+  - diputar poros dari bawah atau roda gigi kecil di samping, beban 2 SU per RPM;
+  - kemajuan gerak `min(|RPM|, 256) / 1024` per tick; satu tumpukan dibawa, dengan pemeriksaan ruang hasil
+    sebelum memilih input dan saat mengambilnya;
+  - tanpa alat pemilih titik: dalam jarak kurang dari 5 blok, kontainer, depot, dan sabuk di barat menjadi
+    input, juga yang di utara bila X-nya sama; yang lain menjadi output;
+    baskom dan corong pemasukan selalu output, corong pengeluaran tidak dipakai;
+  - titik, fase, posisi round robin, dan tumpukan lengkap beserta komponennya disimpan;
+  - baru pemasangan di lantai; depot dan baskom belum menerima barang berkomponen karena penyimpanannya
+    masih berupa nama dan jumlah.
 - **Belum:**
   - tarikan mob dan pemain melalui celah crushing wheel, serta posisi keluarnya sebelum mati.
 - Pemberitahuan MIT Create sudah ada di `THIRD_PARTY_NOTICES.md`.
@@ -223,7 +233,7 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
    - blaze burner (panas untuk mixing);
    - belt connector;
    - smart chute (chute biasa sudah ada; interaksinya masih perlu dilengkapi);
-   - mechanical arm.
+   - mechanical arm (pemasangan di lantai dan titik otomatis sudah ada).
 4. **Kincir angin dan bearing** menunggu contraption (Tahap 4).
 
 ## Chute: batas implementasi
