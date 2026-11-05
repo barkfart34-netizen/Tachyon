@@ -34,13 +34,15 @@ with the Classpath Exception. It runs only the preparation's exporters, as a sep
 
 ## horizon-android touch controls
 
-Tachyon's Bedrock-style touch formats and value contracts in
+Tachyon's Bedrock-style touch formats, value contracts and movement/button engine in
 `crates/horizon-client-render/src/touch.rs` and `touch/{layout,custom}.rs` follow
 [Vasysik/horizon-android](https://github.com/Vasysik/horizon-android), branch `android`, commit
 `7301f6fdd7f470b11317276e7a11b4dc615c137a`. The source files followed are
 `crates/horizon-client-render/src/touch.rs`,
-`crates/horizon-client-render/src/touch/layout.rs` and
-`crates/horizon-client-render/src/touch/custom.rs`. The fork's code is licensed under MIT:
+`crates/horizon-client-render/src/touch/layout.rs`,
+`crates/horizon-client-render/src/touch/custom.rs` (stored buttons and `fit_placement`), and
+`crates/horizon-client-input/src/gamepad.rs` (only `java_move_vector`, ported to the same path).
+The fork's code is licensed under MIT:
 
 ```
 MIT License

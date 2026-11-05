@@ -586,6 +586,20 @@ pub fn move_vector(stick: [f32; 2], deadzone: f32) -> Option<[f32; 2]> {
     (v != [0.0, 0.0]).then_some([-v[0], v[1]])
 }
 
+/// Eight keyboard directions, following horizon-android's java_move_vector
+/// (MIT, THIRD_PARTY_NOTICES.md). The deadzone is applied before quantizing.
+pub fn java_move_vector(stick: [f32; 2], deadzone: f32) -> Option<[f32; 2]> {
+    move_vector(stick, deadzone).map(|[left, forward]| {
+        let threshold = left.abs().max(forward.abs()) * (std::f32::consts::SQRT_2 - 1.0);
+        crate::input::keyboard_direction(
+            forward > threshold,
+            forward < -threshold,
+            left > threshold,
+            left < -threshold,
+        )
+    })
+}
+
 /// Degrees per second at full tilt and the default sensitivity.
 pub const YAW_SPEED: f32 = 200.0;
 pub const PITCH_SPEED: f32 = 140.0;

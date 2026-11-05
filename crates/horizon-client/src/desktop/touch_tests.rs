@@ -204,6 +204,7 @@ fn touch_default_contracts_are_inactive_and_neutral() {
     assert_eq!(TouchContext::default().screen, TouchScreen::Inactive);
     let frame = TouchFrame::default();
     assert_eq!(frame.pad, PadState::default());
+    assert!(frame.movement.is_none() && frame.edges.is_empty());
     assert_eq!(frame.look_degrees, [0.0; 2]);
     assert!(frame.aim.is_none() && frame.taps.is_empty());
     assert!(frame.key_events.is_empty() && frame.requests.is_empty());

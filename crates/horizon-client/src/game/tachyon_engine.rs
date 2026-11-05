@@ -32,6 +32,10 @@ mod press;
 mod speed_controller;
 mod water_wheel;
 
+// The render crate's touch logic, tested by the desktop Tachyon target.
+#[cfg(test)]
+mod touch;
+
 use super::Game;
 use glam::{DVec3, Mat4, Vec3};
 use horizon_client::{

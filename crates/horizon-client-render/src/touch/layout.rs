@@ -95,6 +95,19 @@ impl Placement {
             *c = bounded(*c, 0.025, 0.975, 0.5);
         }
     }
+    /// Fit a sanitized copy to the viewport, following touch/custom.rs's fit_placement.
+    pub fn fitted(mut self, aspect: f32, scale: f32) -> Self {
+        self.sanitize();
+        let aspect = aspect.max(0.1);
+        self.size = (self.size * bounded(scale, 0.5, 2.0, 1.0))
+            .min(aspect)
+            .min(1.0);
+        let half = [self.size / aspect / 2.0, self.size / 2.0];
+        for (i, half) in half.into_iter().enumerate() {
+            self.center[i] = self.center[i].clamp(half, 1.0 - half);
+        }
+        self
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

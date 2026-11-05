@@ -1,8 +1,9 @@
 # Port kontrol sentuh Android bergaya Bedrock
 
 Dokumen ini menganalisis `Vasysik/horizon-android`, branch `android`, dan merencanakan port ke
-Tachyon. Tahap 1 sudah diimplementasikan: format dan kontrak nilai murni, belum menerima sentuhan.
-Zalith tetap aktif. Tidak ada unduhan tekstur, build, atau tes yang dijalankan di mesin kerja ini.
+Tachyon. Tahap 1 dan 2 sudah diimplementasikan: format, kontrak nilai, serta engine gerak/tombol
+murni, belum dihubungkan ke event Android. Zalith tetap aktif dan default. Tidak ada unduhan
+tekstur, build, atau tes yang dijalankan di mesin kerja ini.
 Perilaku yang dijelaskan sebagai perilaku fork berasal dari pembacaan sumber, bukan pembandingan
 langsung dengan Bedrock.
 
@@ -232,9 +233,9 @@ Tidak perlu menyalin seluruh `gamepad.rs` atau membawa perbaikan 8BitDo untuk me
 
 ## Rancangan port ke API sekarang
 
-Format dan kontrak nilai tahap 1 sudah tersedia; wiring dan engine dalam bagian selanjutnya masih
-**usulan**. Engine Bedrock dan Zalith harus saling eksklusif untuk satu jari/gesture. Controller
-fisik tetap pada `Pads` sekarang.
+Format dan kontrak nilai tahap 1 serta engine gerak/tombol tahap 2 sudah tersedia; wiring dan
+bagian engine lainnya masih **usulan**. Engine Bedrock dan Zalith harus saling eksklusif untuk
+satu jari/gesture. Controller fisik tetap pada `Pads` sekarang.
 
 ### Berkas dan pemilik state
 
@@ -253,7 +254,8 @@ fisik tetap pada `Pads` sekarang.
 `Game` hanya memiliki `TouchInput` gameplay. Jangan menaruh seluruh `TouchControls` di `Pads`
 seperti fork: Tachyon sudah mempunyai pembungkus Android dan ownership berbeda.
 
-Buat kontrak nilai baru, misalnya `TouchContext`, `TouchFrame`, dan `TouchFeedback`:
+Gunakan kontrak nilai `TouchContext`, `TouchFrame`, dan `TouchFeedback` tahap 1, dengan tambahan
+gerak dan edges tahap 2:
 
 1. Ambil snapshot item, projectile, shield, fly/swim/mount, sneak, dan status layar dari `Game`;
    niat item harus disnapshot juga sebelum `update()` menerima down, bukan setelah item berubah.
@@ -381,7 +383,7 @@ jangan meninggalkan referensi ke modul tahap berikutnya. Zalith tetap aktif samp
 | Tahap | Hasil mandiri | Perkiraan |
 | --- | --- | --- |
 | 1. Kontrak dan format — selesai | `Mode`/`Placement`/konfigurasi, tipe custom minimal, kontrak frame, sanitasi dan roundtrip; belum mengambil input. Notice MIT masuk bersama kode pertama. | 350–500 baris |
-| 2. Engine gerak/tombol | Kepemilikan jari, joystick/D-pad, edges dan helper gerak delapan arah; API murni dengan tes, belum dipasang pada event Android. | 350–500 baris |
+| 2. Engine gerak/tombol — selesai | Kepemilikan jari, joystick/D-pad, edges dan helper gerak delapan arah; API murni dengan tes desktop, belum dipasang pada event Android atau diuji lokal. | 350–500 baris (perkiraan awal) |
 | 3. HUD | Port gambar/indikator dalam modul terpisah bila perlu, fallback prosedural, geometri gambar/hit-test sama. Preview opsional, tanpa unduhan. | 350–500 baris |
 | 4. Adapter Android | `Overlay` memilih engine secara opt-in, frame menuju `TouchInput`, fixed actions, ledger sumber dan cleanup suspend/screen/cancel. Semua initializer diperbarui. | 350–500 baris |
 | 5. Gesture | Tap/hold 350 ms, snapshot item, latch-use, classifier dan clock yang bisa diinjeksi tes; fitur gesture belum diaktifkan sampai ray tahap 6 siap. | 250–450 baris |
@@ -424,6 +426,39 @@ desktop, Android tanpa default features, dan server; kode UI/Android tidak boleh
   Tes ditulis tetapi tidak dijalankan; hasil kompilasi dan pengujian menunggu CI Linux.
 - `THIRD_PARTY_NOTICES.md` memuat commit, berkas asal, copyright, dan seluruh notice MIT fork.
   Tidak ada tekstur, manifest unduhan, maupun aset lain yang dibawa.
+
+### Hasil tahap 2
+
+- Engine dan sembilan tes dari `gpt/15-touch-stage-2` dipasang di atas tahap 1, tanpa mengganti
+  `Mode`, `Placement`, `Control`, `Settings`, format JSON, atau tipe custom. `TouchControls` memakai
+  `TouchContext` dan `TouchFrame` yang sama; seluruh opsi/default dan tes format tahap 1 tetap ada.
+- API `down`/`moved`/`up`, `state`, `poll_frame`, dan `clear` murni, tanpa `Game`, JNI, file atau
+  jaringan. Satu jari memegang gerak; jari kedua di area gerak diabaikan sampai lepas. Peran tombol
+  tidak berubah saat drag keluar; release menunggu pemilik terakhir. Press singkat sebelum poll
+  bertahan satu poll. Jari di luar kontrol belum diklaim.
+- Angka fork dipertahankan: joystick dibatasi panjang 1; D-pad memakai daerah tengah `1/3` radius
+  dan diagonal ternormalisasi; auto-sprint joystick hanya untuk axis depan mentah `> 1`. Sneak
+  D-pad darat membutuhkan dua down dengan selisih `< 300 ms`; fly/swim/dismount memakai hold biasa.
+  Waktu sneak berupa `Duration` milik caller, aman saat waktu mundur. Sprint toggle menyimpan latch
+  sampai toggle berikutnya atau clear; sneak masih berupa edges `RightStick`, belum toggle gameplay.
+- `TouchFrame` ditambah `movement` dan edges touch tersendiri, tanpa preferensi controller.
+  Request memakai enum tahap 1 `TouchRequest`, ditambah `Offhand` agar aksi sekali per down dari
+  port sebelumnya tetap tersedia; bukan key custom held. `shield_held` diisi dari pemilik Shield.
+  Look, aim, antrian tap, key custom dan hold dunia tetap netral. `clear()` membuang pekerjaan yang
+  belum dipoll dan mengembalikan release untuk hold yang sudah keluar; caller wajib menerapkannya.
+- `Placement::fitted()` ditambahkan pada `touch/layout.rs` tahap 1 untuk geometri hit-test/HUD
+  yang sama: sanitasi, skala, dan clamp viewport hanya pada salinan. Penataan khusus shortcut
+  portrait dan factory Offhand di samping Inventory menunggu tahap HUD, seperti port sebelumnya.
+- `gamepad::java_move_vector()` mengikuti delapan sektor fork dengan ambang
+  `max(abs(axis)) * (SQRT_2 - 1)` dan `input::keyboard_direction()`. Frame memakai deadzone touch
+  `0`; analog 360 derajat tetap opt-in. Tidak ada perubahan input controller fisik atau `Pads`.
+- Sembilan tes engine tetap di `game/tachyon_engine/touch.rs`, dalam `#[cfg(test)] mod tests`,
+  dipilih oleh filter CI `tachyon desktop native_hooks`. Fixture memakai roundtrip `Settings`
+  tahap 1; tes juga memeriksa output gesture netral dan `shield_held` pada frame. Tes tidak dijalankan
+  lokal; kompilasi desktop Linux, pengujian, dan check Android menunggu CI.
+- Notice MIT yang sudah ada diperluas dengan helper `gamepad.rs`; tidak ada notice kedua, aset,
+  dependency, perubahan Create, atau wiring Android. Engine tetap belum dipasang; pemilihan opt-in
+  masuk tahap 4, dan default Zalith tidak berubah sampai tahap 11.
 
 ## Pengujian implementasi di emulator CI
 
