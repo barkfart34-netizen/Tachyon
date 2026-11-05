@@ -46,3 +46,15 @@ jobs:
 
       - name: Content mods in the resource root (features beside vanilla's)
         run: cargo test -p horizon-client --lib -- mod_content
+
+      # The touch controls' Android side compiles only for Android: checked
+      # (not linked) with the NDK's compilers for the C parts, as the APK builds.
+      - name: The Android build compiles
+        run: |
+          rustup target add aarch64-linux-android
+          llvm="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CC_aarch64_linux_android="$llvm/aarch64-linux-android29-clang"
+          export CXX_aarch64_linux_android="$llvm/aarch64-linux-android29-clang++"
+          export AR_aarch64_linux_android="$llvm/llvm-ar"
+          cargo check -p horizon-client --example tachyon --target aarch64-linux-android \
+              --no-default-features --features audio,android
