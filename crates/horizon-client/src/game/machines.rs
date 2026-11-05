@@ -483,6 +483,48 @@ pub(super) fn shelf_signal(
     )
 }
 
+/// A Tachyon funnel's stack into a content machine, one by one as a
+/// hopper's. The remainder, as `FunnelBlockEntity`'s insertion reports.
+pub(super) fn tachyon_funnel_put(
+    mut stack: ItemStack,
+    mut put: impl FnMut(&ItemStack) -> bool,
+) -> Option<ItemStack> {
+    while stack.count > 0 {
+        let one = ItemStack {
+            count: 1,
+            ..stack.clone()
+        };
+        if !put(&one) {
+            break;
+        }
+        stack.count -= 1;
+    }
+    (stack.count > 0).then_some(stack)
+}
+
+/// A Tachyon funnel's take from a content machine: up to `most` of one
+/// item, combining its hopper-sized takes. A different item goes back to
+/// where it came from (`FunnelBlockEntity` extracts one kind at a time).
+pub(super) fn tachyon_funnel_take<T>(
+    machine: &mut T,
+    most: u32,
+    mut take: impl FnMut(&mut T) -> Option<(ItemStack, bool)>,
+    mut give_back: impl FnMut(&mut T, ItemStack, bool),
+) -> Option<ItemStack> {
+    let (mut got, _) = take(machine)?;
+    while got.count < most {
+        let Some((more, input)) = take(machine) else {
+            break;
+        };
+        if more.item != got.item {
+            give_back(machine, more, input);
+            break;
+        }
+        got.count += more.count;
+    }
+    Some(got)
+}
+
 impl Game<'_> {
     fn containers(&self) -> Containers<'_> {
         Containers {
@@ -858,7 +900,7 @@ impl Game<'_> {
     pub(super) fn tachyon_container_put(
         &mut self,
         at: Pos,
-        mut stack: ItemStack,
+        stack: ItemStack,
         face: Direction,
     ) -> Option<ItemStack> {
         let machine = [at.0, at.1, at.2];
@@ -866,17 +908,7 @@ impl Game<'_> {
             return self.tachyon_chute_put(machine, stack);
         }
         if self.tachyon_machine(machine) {
-            while stack.count > 0 {
-                let one = ItemStack {
-                    count: 1,
-                    ..stack.clone()
-                };
-                if !self.tachyon_machine_put(machine, &one) {
-                    break;
-                }
-                stack.count -= 1;
-            }
-            return (stack.count > 0).then_some(stack);
+            return tachyon_funnel_put(stack, |one| self.tachyon_machine_put(machine, one));
         }
         let Some(target) = self.containers().view(at, false) else {
             return Some(stack);
@@ -900,18 +932,12 @@ impl Game<'_> {
             return self.tachyon_chute_take(machine, most);
         }
         if self.tachyon_machine(machine) {
-            let (mut got, _) = self.tachyon_machine_take(machine)?;
-            while got.count < most {
-                let Some((more, input)) = self.tachyon_machine_take(machine) else {
-                    break;
-                };
-                if more.item != got.item {
-                    self.tachyon_machine_return(machine, more, input);
-                    break;
-                }
-                got.count += more.count;
-            }
-            return Some(got);
+            return tachyon_funnel_take(
+                self,
+                most,
+                |g| g.tachyon_machine_take(machine),
+                |g, rest, input| g.tachyon_machine_return(machine, rest, input),
+            );
         }
         let source = self.containers().view(at, false)?;
         if let Kind::Composter(level) = source.kind {

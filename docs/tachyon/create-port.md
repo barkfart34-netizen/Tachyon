@@ -50,6 +50,8 @@ diambil dari kode Create sendiri. Rencana besarnya ada di [rencana-modpack.md](r
 | Corong | Mengeluarkan tiap 8 tick. Andesite: sampai satu tumpukan (64). Brass: sejumlah filternya. | 16 barang tiap 8 tick |
 | Sabuk | Dipasang dengan item *belt connector* di antara dua poros, panjang maksimal 20 | Satu blok per segmen |
 | Chute biasa | Satu tumpukan; gravitasi -0,2 blok per tick tanpa kipas. Mengambil sampai 16 dari inventaris; keluaran buntu menahan barang di tengah. Bisa mengalir turun atau naik melalui cabang chute. | Gerak, transfer ujung, hopper/corong, ejeksi, penyimpanan, dan model statis sudah dipasang. Bentuk tabrakan dan beberapa aturan aliran serta interaksi masih berbeda; lihat catatan chute di bawah. |
+| Corong | Cooldown bawaan 8 tick per corong. Ekstraktor andesite: satu barang; brass: jumlah filter (bawaan 64). | Sampai 64 barang pada tick dunia kelipatan 8, hanya bila mulut kosong; belum ada filter brass. |
+| Sabuk | Dipasang dengan item *belt connector* di antara dua poros, panjang maksimal 20; menahan barang di ujung tersumbat atau saat pemasukan ditolak. | Satu blok per segmen, membawa barang tergeletak biasa. Tumbukan blok bisa menahan barang; penolakan corong tidak menahan barang. |
 
 ## Resep Create
 
@@ -97,7 +99,7 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - kincir air besar (12 titik tepi, 4 RPM, 128 per RPM);
   - kerja millstone (bilangan bulat, 1..512);
   - jangkauan kipas;
-  - corong (satu tumpukan per 8 tick);
+  - corong (angka timer bawaan 8 tick; jumlah dan cara menunggu belum sama, lihat catatan uji di bawah);
   - waktu mixer.
 - **Langkah 3 dimulai:**
   - **Crushing wheel** (`tachyon_engine/crusher.rs`) bekerja seperti controller Create:
@@ -206,8 +208,20 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - titik, fase, posisi round robin, dan tumpukan lengkap beserta komponennya disimpan;
   - baru pemasangan di lantai; depot dan baskom belum menerima barang berkomponen karena penyimpanannya
     masih berupa nama dan jumlah.
+- **Uji unit sabuk dan corong ditambahkan** (`tachyon_engine/belt.rs`), tanpa mengubah perilaku:
+  - sabuk sepanjang 1, 3, dan 20 segmen, sumbu X dan Z, pada ±16, ±48, dan ±256 RPM;
+  - kecepatan hasil solver, pemilihan segmen di tengah lalu tepi, pemusatan barang, dan sabuk tanpa tenaga;
+  - ujung padat menghentikan barang lewat tumbukan `ItemEntity::tick`; ujung terbuka membiarkannya jatuh;
+  - corong mengeluarkan ke sabuk dan mengambil dari sabuk lewat adapter mesin di `machines.rs`, termasuk
+    sisa pemasukan, penolakan saat penuh, urutan pengambilan tumpukan, dan pengembalian barang berbeda;
+  - ekstraksi menunggu tick kelipatan 8 dan mulut kosong, mengambil paling banyak 64, dengan delay pickup 10;
+    posisi keluaran dan sisi kontainer diperiksa untuk keenam arah;
+  - referensi `BeltBlockEntity`, `BeltInventory`, dan `FunnelBlockEntity` tetap dicatat. Penolakan corong
+    belum menahan barang di ujung sabuk; batas 64 dan jam global Tachyon juga belum sama dengan ekstraktor
+    andesite Create yang mengambil satu barang dan memakai cooldown per corong;
 - **Belum:**
   - tarikan mob dan pemain melalui celah crushing wheel, serta posisi keluarnya sebelum mati.
+  - sabuk menahan barang saat corong penuh, cooldown per corong, dan jumlah ekstraksi/filter sesuai jenis corong.
 - Pemberitahuan MIT Create sudah ada di `THIRD_PARTY_NOTICES.md`.
 
 1. **Pembaca resep Create.** Mesin `create:*` memakai:
