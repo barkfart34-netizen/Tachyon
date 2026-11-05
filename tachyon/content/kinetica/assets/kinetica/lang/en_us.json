@@ -53,5 +53,10 @@
   "kinetica.hud.smoking": "smoking",
   "kinetica.hud.blasting": "blasting",
   "kinetica.hud.inserting": "inserting",
-  "kinetica.hud.extracting": "extracting"
+  "kinetica.hud.extracting": "extracting",
+  "kinetica.hud.heat.none": "no heat",
+  "kinetica.hud.heat.smouldering": "smouldering",
+  "kinetica.hud.heat.fading": "fading",
+  "kinetica.hud.heat.kindled": "kindled",
+  "kinetica.hud.heat.seething": "seething"
 }

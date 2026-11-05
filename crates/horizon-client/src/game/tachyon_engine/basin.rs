@@ -9,8 +9,11 @@
 //!
 //! The world's owner keeps what each basin holds with the millstones'
 //! (`basins` in the dimension's `kinetica-*.json`).
+//! Create's item-only basin recipes also test the blaze burner's heat
+//! directly below them (`BasinBlockEntity`, `BasinRecipe.match`).
 
 use super::super::Game;
+use super::burner::Heat;
 use super::millstone::{Held, Output, add_all, roll_outputs};
 use super::press::{self, Beat};
 use horizon_client::items::ItemStack;
@@ -37,9 +40,31 @@ pub(super) struct Basin {
 #[derive(Deserialize)]
 pub(super) struct Mixing {
     pub inputs: Vec<Ingredient>,
+    #[serde(default)]
+    pub heat_requirement: HeatRequirement,
     #[serde(default = "time")]
     pub time: f32,
     pub outputs: Vec<Output>,
+}
+/// Create's `HeatCondition`: no heat, heated, or superheated. Tachyon asks
+/// for kindled or better for heated; Create also accepts fading there.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum HeatRequirement {
+    #[default]
+    None,
+    Heated,
+    Superheated,
+}
+
+impl HeatRequirement {
+    pub fn test(self, heat: Heat) -> bool {
+        match self {
+            HeatRequirement::None => true,
+            HeatRequirement::Heated => matches!(heat, Heat::Kindled | Heat::Seething),
+            HeatRequirement::Superheated => heat == Heat::Seething,
+        }
+    }
 }
 /// An item a mixing asks for, and how many.
 #[derive(Deserialize)]
@@ -90,11 +115,12 @@ impl Basin {
             .map(|h| h.count)
             .sum()
     }
-    /// The first of `recipes` it holds all the items for.
-    pub fn ready<'a>(&self, recipes: &'a [Mixing]) -> Option<&'a Mixing> {
-        recipes
-            .iter()
-            .find(|r| r.inputs.iter().all(|i| self.has(&i.item) >= i.count))
+    /// The first of `recipes` it holds all the items and has the heat for.
+    pub fn ready<'a>(&self, recipes: &'a [Mixing], heat: Heat) -> Option<&'a Mixing> {
+        recipes.iter().find(|r| {
+            r.heat_requirement.test(heat)
+                && r.inputs.iter().all(|i| self.has(&i.item) >= i.count)
+        })
     }
     /// Puts in up to `count` of `item`: onto its stacks up to 64, the rest
     /// as new stacks while there is room. How many it took.
@@ -148,18 +174,20 @@ impl Basin {
         add_all(&mut self.outputs, &[h]);
     }
     /// A tick of mixing at `speed` (RPM) by the first of `recipes` it holds
-    /// all the items for, the outputs each by its chance (`roll` gives 0 to
-    /// 1). What it mixes into (the first output), while it does.
+    /// all the items and has the heat for, the outputs each by its chance
+    /// (`roll` gives 0 to 1). What it mixes into (the first output), while
+    /// it does.
     pub fn mix(
         &mut self,
         speed: f32,
         recipes: &[Mixing],
+        heat: Heat,
         roll: &mut impl FnMut() -> f32,
     ) -> Option<String> {
         if speed == 0.0 {
             return None;
         }
-        let recipe = self.ready(recipes)?;
+        let recipe = self.ready(recipes, heat)?;
         let into = recipe.outputs.first()?.item.clone();
         let ticks = mixing_ticks(speed, recipe.time);
         if self.progress < ticks {
@@ -177,7 +205,7 @@ impl Basin {
     }
 
     /// A tick of a press at `speed` (RPM) over the basin compacting by the
-    /// first of `recipes` it holds all the items for (Create's
+    /// first of `recipes` it holds all the items and has the heat for (Create's
     /// `PressingBehaviour` in basin mode): its cycle runs, and its head
     /// coming down in the middle compacts them once, if what it makes fits.
     /// What it compacts into, while it does.
@@ -185,10 +213,11 @@ impl Basin {
         &mut self,
         speed: f32,
         recipes: &[Mixing],
+        heat: Heat,
         roll: &mut impl FnMut() -> f32,
     ) -> Option<String> {
         // Nothing to compact: the next begins a cycle of its own.
-        let Some(recipe) = self.ready(recipes) else {
+        let Some(recipe) = self.ready(recipes, heat) else {
             self.progress = 0.0;
             return None;
         };
@@ -279,6 +308,7 @@ mod tests {
                     count: *count,
                 })
                 .collect(),
+            heat_requirement: HeatRequirement::None,
             time,
             outputs: vec![Output {
                 item: output.0.into(),
@@ -295,17 +325,20 @@ mod tests {
         b.put("x:nugget", 18);
         // At 32 RPM the head comes down on the 31st tick of each 62.
         for _ in 0..30 {
-            assert_eq!(b.compact(32.0, &block, &mut || 0.0), Some("x:ingot".into()));
+            assert_eq!(
+                b.compact(32.0, &block, Heat::None, &mut || 0.0),
+                Some("x:ingot".into())
+            );
         }
         assert!(b.outputs.is_empty());
-        b.compact(32.0, &block, &mut || 0.0);
+        b.compact(32.0, &block, Heat::None, &mut || 0.0);
         assert_eq!(b.outputs[0].count, 1);
         for _ in 31..62 * 2 {
-            b.compact(32.0, &block, &mut || 0.0);
+            b.compact(32.0, &block, Heat::None, &mut || 0.0);
         }
         assert_eq!(b.outputs[0].count, 2);
         assert!(b.inputs.is_empty());
-        assert_eq!(b.compact(32.0, &block, &mut || 0.0), None);
+        assert_eq!(b.compact(32.0, &block, Heat::None, &mut || 0.0), None);
     }
 
     #[test]
@@ -314,17 +347,20 @@ mod tests {
         let mut b = Basin::default();
         assert_eq!(b.put("x:copper", 5), 5);
         // No tin yet: nothing to mix.
-        assert_eq!(b.mix(32.0, &bronze, &mut || 0.0), None);
+        assert_eq!(b.mix(32.0, &bronze, Heat::None, &mut || 0.0), None);
         b.put("x:tin", 1);
         // At 32 RPM: 20 ticks down, then log2(16) * 15 + 1.
         assert_eq!(mixing_ticks(32.0, 100.0), 81.0);
         assert_eq!(mixing_ticks(-256.0, 100.0), 36.0);
         assert_eq!(mixing_ticks(1.0, 100.0), 156.0);
         for _ in 0..80 {
-            assert_eq!(b.mix(32.0, &bronze, &mut || 0.0).as_deref(), Some("x:bronze"));
+            assert_eq!(
+                b.mix(32.0, &bronze, Heat::None, &mut || 0.0).as_deref(),
+                Some("x:bronze")
+            );
             assert!(b.outputs.is_empty());
         }
-        b.mix(32.0, &bronze, &mut || 0.0);
+        b.mix(32.0, &bronze, Heat::None, &mut || 0.0);
         assert_eq!(b.outputs, [Held { item: "x:bronze".into(), count: 4 }]);
         assert_eq!(b.inputs, [Held { item: "x:copper".into(), count: 2 }]);
         // What was mixed comes out first, then the rest.
@@ -341,5 +377,100 @@ mod tests {
         assert_eq!(b.put("x:b", 100), 64);
         assert_eq!(b.put("x:c", 1), 0);
         assert_eq!(b.inputs.len(), 9);
+    }
+
+    #[test]
+    fn heat_requirements_test_each_burner_level() {
+        for heat in [
+            Heat::None,
+            Heat::Smouldering,
+            Heat::Fading,
+            Heat::Kindled,
+            Heat::Seething,
+        ] {
+            assert!(HeatRequirement::None.test(heat));
+            assert_eq!(
+                HeatRequirement::Heated.test(heat),
+                matches!(heat, Heat::Kindled | Heat::Seething)
+            );
+            assert_eq!(HeatRequirement::Superheated.test(heat), heat == Heat::Seething);
+        }
+        let r: Mixing = serde_json::from_str(
+            r#"{"inputs": [{"item": "x:copper"}], "outputs": [{"item": "x:alloy"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(r.heat_requirement, HeatRequirement::None);
+    }
+
+    #[test]
+    fn a_heated_mixing_waits_for_kindled_heat_and_rechecks_before_finishing() {
+        let mut brass = [recipe(&[("x:copper", 1), ("x:zinc", 1)], ("x:brass", 2), 100.0)];
+        brass[0].heat_requirement = HeatRequirement::Heated;
+        let mut b = Basin::default();
+        b.put("x:copper", 1);
+        b.put("x:zinc", 1);
+        let inputs = b.inputs.clone();
+        let mut no_roll = || -> f32 { panic!("a basin without heat must not roll outputs") };
+        for heat in [Heat::None, Heat::Smouldering, Heat::Fading] {
+            assert!(b.ready(&brass, heat).is_none());
+            for _ in 0..81 {
+                assert_eq!(b.mix(32.0, &brass, heat, &mut no_roll), None);
+            }
+            assert_eq!(b.progress, 0.0);
+            assert_eq!(b.inputs, inputs);
+            assert!(b.outputs.is_empty());
+        }
+        for _ in 0..80 {
+            assert_eq!(
+                b.mix(32.0, &brass, Heat::Kindled, &mut || 0.0).as_deref(),
+                Some("x:brass")
+            );
+        }
+        assert_eq!(b.mix(32.0, &brass, Heat::Fading, &mut no_roll), None);
+        assert_eq!(b.inputs, inputs);
+        assert!(b.outputs.is_empty());
+        b.mix(32.0, &brass, Heat::Kindled, &mut || 0.0);
+        assert!(b.inputs.is_empty());
+        assert_eq!(b.outputs, [Held { item: "x:brass".into(), count: 2 }]);
+    }
+
+    #[test]
+    fn superheated_compacting_waits_for_seething_heat() {
+        let mut hot = [recipe(&[("x:ore", 1)], ("x:ingot", 1), 100.0)];
+        hot[0].heat_requirement = HeatRequirement::Superheated;
+        let mut b = Basin::default();
+        b.put("x:ore", 1);
+        for heat in [Heat::None, Heat::Smouldering, Heat::Fading, Heat::Kindled] {
+            for _ in 0..62 {
+                assert_eq!(b.compact(32.0, &hot, heat, &mut || 0.0), None);
+            }
+            assert_eq!(b.progress, 0.0);
+            assert!(b.outputs.is_empty());
+        }
+        for _ in 0..30 {
+            b.compact(32.0, &hot, Heat::Seething, &mut || 0.0);
+        }
+        assert!(b.outputs.is_empty());
+        // Losing heat on the press tick consumes nothing and resets its cycle.
+        assert_eq!(b.compact(32.0, &hot, Heat::Kindled, &mut || 0.0), None);
+        assert_eq!(b.inputs[0].count, 1);
+        assert_eq!(b.progress, 0.0);
+        for _ in 0..31 {
+            b.compact(32.0, &hot, Heat::Seething, &mut || 0.0);
+        }
+        assert!(b.inputs.is_empty());
+        assert_eq!(b.outputs, [Held { item: "x:ingot".into(), count: 1 }]);
+    }
+
+    #[test]
+    fn a_recipe_without_enough_heat_does_not_hide_the_next_one() {
+        let mut first = recipe(&[("x:ore", 1)], ("x:hot", 1), 100.0);
+        first.heat_requirement = HeatRequirement::Heated;
+        let recipes = [first, recipe(&[("x:ore", 1)], ("x:cold", 1), 100.0)];
+        let mut b = Basin::default();
+        b.put("x:ore", 1);
+        assert_eq!(b.ready(&recipes, Heat::None).unwrap().outputs[0].item, "x:cold");
+        assert_eq!(b.ready(&recipes, Heat::Kindled).unwrap().outputs[0].item, "x:hot");
+        assert_eq!(b.ready(&recipes, Heat::Seething).unwrap().outputs[0].item, "x:hot");
     }
 }

@@ -53,5 +53,10 @@
   "kinetica.hud.smoking": "mengasapi",
   "kinetica.hud.blasting": "melebur",
   "kinetica.hud.inserting": "memasukkan",
-  "kinetica.hud.extracting": "mengeluarkan"
+  "kinetica.hud.extracting": "mengeluarkan",
+  "kinetica.hud.heat.none": "tanpa panas",
+  "kinetica.hud.heat.smouldering": "membara",
+  "kinetica.hud.heat.fading": "meredup",
+  "kinetica.hud.heat.kindled": "menyala",
+  "kinetica.hud.heat.seething": "superpanas"
 }

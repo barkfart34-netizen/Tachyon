@@ -6,13 +6,14 @@
 //!
 //! Read as Create 6.0.10 writes them: `ingredients` (an item, a tag, or a
 //! list of either), `results` (`id`, `count`, `chance`), `processing_time`,
-//! and NeoForge's `neoforge:conditions`. A tag stands for each of its
-//! items. Recipes with a fluid or a heat (a blaze burner's) wait for
-//! Tachyon's fluids; those for another mod, or for an item this game
-//! doesn't have, are left out.
+//! `heat_requirement` (`ProcessingRecipe`, `HeatCondition`), and NeoForge's
+//! `neoforge:conditions`. A tag stands for each of its items. Item-only
+//! mixing and compacting keep their required heat; recipes with a fluid
+//! wait for Tachyon's fluids. Those for another mod, or for an item this
+//! game doesn't have, are left out.
 //! Haunting follows Create's `HauntingRecipe`, a single item ingredient
 //! and rollable results, as its `SplashingRecipe` does.
-use super::basin::{Ingredient, Mixing};
+use super::basin::{HeatRequirement, Ingredient, Mixing};
 use super::millstone::{Milling, Output};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -82,10 +83,17 @@ impl Recipes {
         if !conditions_hold(recipe, game) {
             return;
         }
-        // A blaze burner's heat: not yet.
-        if recipe["heat_requirement"]
-            .as_str()
-            .is_some_and(|h| h != "none")
+        let kind = recipe["type"].as_str().unwrap_or("");
+        let heat_requirement = match recipe.get("heat_requirement") {
+            None => HeatRequirement::None,
+            Some(heat) => match serde_json::from_value::<HeatRequirement>(heat.clone()) {
+                Ok(heat) => heat,
+                Err(_) => return,
+            },
+        };
+        // Only basin recipes can require heat (BasinRecipe.canRequireHeat).
+        if heat_requirement != HeatRequirement::None
+            && !matches!(kind, "create:mixing" | "create:compacting")
         {
             return;
         }
@@ -96,7 +104,6 @@ impl Recipes {
             return;
         };
         let time = recipe["processing_time"].as_f64().map(|t| t as f32);
-        let kind = recipe["type"].as_str().unwrap_or("");
         let single = |list: &mut Vec<Milling>, default: f32| {
             let [items] = ingredients.as_slice() else {
                 return;
@@ -125,6 +132,7 @@ impl Recipes {
                 for set in sets(&ingredients) {
                     list.push(Mixing {
                         inputs: set,
+                        heat_requirement,
                         time: time.unwrap_or(MIXING_TIME).max(1.0),
                         outputs: copy(&outputs),
                     });
@@ -419,7 +427,7 @@ mod tests {
             &game,
         );
         assert_eq!(r.milling.len(), 2);
-        // Another mod's, a fluid, a heat: left out.
+        // Another mod's, a fluid, an unknown heat requirement: left out.
         r.add(
             &json!({"neoforge:conditions": [{"type": "neoforge:mod_loaded", "modid": "ae2"}],
                 "type": "create:milling", "ingredients": [{"item": "minecraft:stone"}],
@@ -433,7 +441,7 @@ mod tests {
             &game,
         );
         r.add(
-            &json!({"type": "create:mixing", "heat_requirement": "heated",
+            &json!({"type": "create:mixing", "heat_requirement": "unknown",
                 "ingredients": [{"item": "minecraft:copper_ingot"}],
                 "results": [{"id": "create:brass_ingot"}]}),
             &game,
@@ -454,6 +462,103 @@ mod tests {
         assert_eq!(alloy.inputs[1].item, "minecraft:iron_nugget");
         let ice = &r.compacting[0];
         assert_eq!((r.mixing.len(), ice.inputs.len(), ice.inputs[0].count), (1, 1, 2));
+        assert_eq!(alloy.heat_requirement, HeatRequirement::None);
+        assert_eq!(ice.heat_requirement, HeatRequirement::None);
+    }
+
+    #[test]
+    fn item_only_heated_recipes_are_read_and_work_only_with_their_heat() {
+        use super::super::basin::Basin;
+        use super::super::burner::Heat;
+
+        let (tagged, known) = game();
+        let game = Lookup {
+            tagged: &tagged,
+            known: &known,
+        };
+        let mut r = Recipes::default();
+        r.add(
+            &json!({"type": "create:mixing", "heat_requirement": "heated",
+                "ingredients": [{"item": "minecraft:copper_ingot"}, {"item": "create:zinc_ingot"}],
+                "results": [{"id": "create:brass_ingot", "count": 2}]}),
+            &game,
+        );
+        r.add(
+            &json!({"type": "create:compacting", "heat_requirement": "superheated",
+                "ingredients": [{"item": "x:ore"}], "results": [{"id": "x:ingot"}]}),
+            &game,
+        );
+        assert_eq!((r.mixing.len(), r.compacting.len()), (1, 1));
+        assert_eq!(r.mixing[0].heat_requirement, HeatRequirement::Heated);
+        assert_eq!(r.compacting[0].heat_requirement, HeatRequirement::Superheated);
+        let mut basin = Basin::default();
+        basin.put("minecraft:copper_ingot", 1);
+        basin.put("create:zinc_ingot", 1);
+        for heat in [Heat::None, Heat::Smouldering, Heat::Fading] {
+            for _ in 0..81 {
+                assert_eq!(basin.mix(32.0, &r.mixing, heat, &mut || 0.0), None);
+            }
+        }
+        assert_eq!(basin.inputs.len(), 2);
+        assert!(basin.outputs.is_empty());
+        for _ in 0..81 {
+            basin.mix(32.0, &r.mixing, Heat::Kindled, &mut || 0.0);
+        }
+        assert!(basin.inputs.is_empty());
+        assert_eq!(
+            (basin.outputs[0].item.as_str(), basin.outputs[0].count),
+            ("create:brass_ingot", 2)
+        );
+        let mut basin = Basin::default();
+        basin.put("x:ore", 1);
+        for _ in 0..62 {
+            assert_eq!(basin.compact(32.0, &r.compacting, Heat::Kindled, &mut || 0.0), None);
+        }
+        assert_eq!(basin.inputs[0].count, 1);
+        for _ in 0..31 {
+            basin.compact(32.0, &r.compacting, Heat::Seething, &mut || 0.0);
+        }
+        assert!(basin.inputs.is_empty());
+        assert_eq!(basin.outputs[0].item, "x:ingot");
+    }
+
+    #[test]
+    fn heat_does_not_admit_fluid_recipes_or_invalid_requirements() {
+        let (tagged, known) = game();
+        let game = Lookup {
+            tagged: &tagged,
+            known: &known,
+        };
+        let mut r = Recipes::default();
+        for heat in ["none", "heated", "superheated"] {
+            r.add(
+                &json!({"type": "create:mixing", "heat_requirement": heat,
+                    "ingredients": [{"item": "minecraft:dirt"}, {"fluid": "minecraft:water", "amount": 250}],
+                    "results": [{"id": "minecraft:mud"}]}),
+                &game,
+            );
+            r.add(
+                &json!({"type": "create:compacting", "heat_requirement": heat,
+                    "ingredients": [{"item": "minecraft:snow_block"}],
+                    "results": [{"id": "minecraft:water", "amount": 250}]}),
+                &game,
+            );
+        }
+        for heat in [json!("unknown"), json!(1), Value::Null] {
+            r.add(
+                &json!({"type": "create:mixing", "heat_requirement": heat,
+                    "ingredients": [{"item": "x:ore"}], "results": [{"id": "x:ingot"}]}),
+                &game,
+            );
+        }
+        r.add(
+            &json!({"type": "create:milling", "heat_requirement": "heated",
+                "ingredients": [{"item": "x:ore"}], "results": [{"id": "x:ingot"}]}),
+            &game,
+        );
+        assert!(r.mixing.is_empty());
+        assert!(r.compacting.is_empty());
+        assert!(r.milling.is_empty());
     }
 
     #[test]

@@ -5,8 +5,11 @@
 //! chunk's mesh, for the engine draws them turning. The engine knows
 //! Create's blocks by name (`game/tachyon_engine.rs`, `create_part`).
 //!
-//! Only files Tachyon writes change here: the porter's declarations, and
-//! blockstates pointing at Create's own models in other ways.
+//! The porter's declarations, blockstates pointing at Create's own models
+//! in other ways, and loot predicates using the templates' properties
+//! change here, all in the player's fetched port.
+//! BlazeBurnerBlock's heat uses an anchor's five `charges`; its cage model
+//! stays in the chunk, without BlazeBurnerRenderer's head and rods.
 //!
 //! GaugeBlock's facing and axis_along_first become one orientation per
 //! shaft axis, keeping GaugeGenerator and DirectionalAxisBlockStateGen's
@@ -55,6 +58,9 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("mechanical_arm", "minecraft:polished_andesite", 2.5, "minecraft:copper_block"),
     // A hollow block with a floor.
     ("basin", "minecraft:composter", 2.0, "minecraft:copper_block"),
+    // Five heat levels, not an anchor's charging or respawn use.
+    ("blaze_burner", "minecraft:respawn_anchor", 3.0, "minecraft:gold_block"),
+    ("lit_blaze_burner", "minecraft:respawn_anchor", 3.0, "minecraft:gold_block"),
     // Turning wheels, a whole block to stand on: a crushing wheel along its
     // axis, a small water wheel the way it faces (its shaft's).
     ("crushing_wheel", "minecraft:iron_chain", 2.0, "minecraft:stone"),
@@ -113,6 +119,25 @@ pub fn fix(dir: &Path) -> Result<(), String> {
                 .map(|f| (f.to_owned(), json!(body)))
                 .collect();
             declaration["shapes"] = json!({"property": "facing", "values": values});
+        }
+        if matches!(*block, "blaze_burner" | "lit_blaze_burner") {
+            // AllShapes.HEATER_BLOCK_SHAPE: 1,0,1 to 15,14,15. A filled
+            // BlazeBurnerBlockItem starts smouldering, an empty lit cage
+            // with regular fire. The lit block has no item of its own.
+            let lit = *block == "lit_blaze_burner";
+            let initial = if lit { "0" } else { "1" };
+            let values: serde_json::Map<String, Value> = ["0", "1", "2", "3", "4"]
+                .into_iter()
+                .map(|v| (v.to_owned(), json!([[0.0625, 0.0, 0.0625, 0.9375, 0.875, 0.9375]])))
+                .collect();
+            declaration["shapes"] = json!({"property": "charges", "values": values});
+            declaration["default_state"] = json!({"charges": initial});
+            declaration["item"] = json!(!lit);
+            declaration["properties"]["explosion_resistance"] = json!(6.0);
+            declaration["properties"]["requires_tool"] = json!(true);
+            // Per-state light isn't declared yet: the filled cage keeps
+            // the anchor's emission; both lit flames emit regular fire's 12.
+            declaration["properties"]["light"] = if lit { json!(12) } else { Value::Null };
         }
         write(&file, &declaration)?;
     }
@@ -199,7 +224,74 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         write(&file, &goggles)?;
     }
     chute_models(&blockstates.join("chute.json"))?;
+    burner_flames(&blockstates.join("lit_blaze_burner.json"))?;
+    burner_loot(&dir.join("data/create/loot_table/blocks/blaze_burner.json"))?;
     Ok(())
+}
+
+/// LitBlazeBurnerBlock's regular/soul model variants by the template's
+/// charges: 1 for soul, the other states regular. The models are the
+/// player's fetched ones; a second fix keeps the remapping.
+fn burner_flames(file: &Path) -> Result<(), String> {
+    let Some(state) = read(file) else {
+        return Ok(());
+    };
+    let Some(variants) = state["variants"].as_object() else {
+        return Ok(());
+    };
+    let regular = variants
+        .get("flame_type=regular")
+        .or_else(|| variants.get("charges=0"));
+    let soul = variants
+        .get("flame_type=soul")
+        .or_else(|| variants.get("charges=1"));
+    let (Some(regular), Some(soul)) = (regular, soul) else {
+        return Ok(());
+    };
+    let variants: serde_json::Map<String, Value> = ["0", "1", "2", "3", "4"]
+        .into_iter()
+        .map(|c| {
+            (
+                format!("charges={c}"),
+                if c == "1" { soul.clone() } else { regular.clone() },
+            )
+        })
+        .collect();
+    write(file, &json!({"variants": variants}))
+}
+
+/// BlazeBurnerBlock.buildLootTable tests `blaze`. Remap its fetched
+/// predicates to `charges` so breaking a filled burner still drops it.
+fn burner_loot(file: &Path) -> Result<(), String> {
+    fn remap(value: &mut Value) {
+        if value["condition"] == "minecraft:block_state_property"
+            && value["block"] == "create:blaze_burner"
+            && let Some(properties) = value.get_mut("properties").and_then(Value::as_object_mut)
+        {
+            let charges = match properties.get("blaze").and_then(Value::as_str) {
+                Some("none") => Some("0"),
+                Some("smouldering") => Some("1"),
+                Some("fading") => Some("2"),
+                Some("kindled") => Some("3"),
+                Some("seething") => Some("4"),
+                _ => None,
+            };
+            if let Some(charges) = charges {
+                properties.remove("blaze");
+                properties.insert("charges".into(), json!(charges));
+            }
+        }
+        match value {
+            Value::Array(list) => list.iter_mut().for_each(remap),
+            Value::Object(map) => map.values_mut().for_each(remap),
+            _ => {}
+        }
+    }
+    let Some(mut loot) = read(file) else {
+        return Ok(());
+    };
+    remap(&mut loot);
+    write(file, &loot)
 }
 
 /// `ChuteShapes`' vertical bounds, with an open centre instead of a solid
@@ -642,6 +734,68 @@ mod tests {
         assert!(!TURNING.contains(&"rotation_speed_controller"));
         fix(&dir).unwrap();
         assert_eq!(read(&state_file), Some(state));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn blaze_burners_keep_the_fetched_models_with_heat_states_and_cage_shapes() {
+        let dir = scratch("burner");
+        let states = dir.join("assets/create/blockstates");
+        let cage = json!({"variants": {"": {"model": "create:block/blaze_burner/block"}}});
+        write(&states.join("blaze_burner.json"), &cage).unwrap();
+        write(
+            &states.join("lit_blaze_burner.json"),
+            &json!({"variants": {
+                "flame_type=regular": {"model": "create:block/blaze_burner/block_with_fire"},
+                "flame_type=soul": {"model": "create:block/blaze_burner/block_with_soul_fire"}}}),
+        )
+        .unwrap();
+        let loot = dir.join("data/create/loot_table/blocks/blaze_burner.json");
+        let conditions: Vec<Value> = ["none", "smouldering", "fading", "kindled", "seething"]
+            .into_iter()
+            .map(|heat| {
+                json!({"condition": "minecraft:block_state_property", "block": "create:blaze_burner",
+                    "properties": {"blaze": heat}})
+            })
+            .collect();
+        write(&loot, &json!({"pools": [{"entries": [{"conditions": conditions}]}]})).unwrap();
+        fix(&dir).unwrap();
+        let declarations = dir.join("data/create/horizon/block");
+        for (block, initial) in [("blaze_burner", "1"), ("lit_blaze_burner", "0")] {
+            let d = read(&declarations.join(format!("{block}.json"))).unwrap();
+            assert_eq!(d["template"], "minecraft:respawn_anchor");
+            assert_eq!(d["default_state"]["charges"], initial);
+            assert_eq!(d["item"], block == "blaze_burner");
+            assert_eq!(d["properties"]["hardness"], 3.0);
+            assert_eq!(d["properties"]["explosion_resistance"], 6.0);
+            assert_eq!(d["shapes"]["property"], "charges");
+            for charge in ["0", "1", "2", "3", "4"] {
+                assert_eq!(
+                    d["shapes"]["values"][charge],
+                    json!([[0.0625, 0.0, 0.0625, 0.9375, 0.875, 0.9375]])
+                );
+            }
+        }
+        assert_eq!(read(&states.join("blaze_burner.json")), Some(cage));
+        let lit = read(&states.join("lit_blaze_burner.json")).unwrap();
+        assert_eq!(
+            lit["variants"]["charges=0"]["model"],
+            "create:block/blaze_burner/block_with_fire"
+        );
+        assert_eq!(
+            lit["variants"]["charges=1"]["model"],
+            "create:block/blaze_burner/block_with_soul_fire"
+        );
+        assert_eq!(lit["variants"].as_object().unwrap().len(), 5);
+        let remapped = read(&loot).unwrap();
+        let conditions = remapped["pools"][0]["entries"][0]["conditions"].as_array().unwrap();
+        for (condition, charge) in conditions.iter().zip(["0", "1", "2", "3", "4"]) {
+            assert_eq!(condition["properties"]["charges"], charge);
+            assert!(condition["properties"].get("blaze").is_none());
+        }
+        fix(&dir).unwrap();
+        assert_eq!(read(&states.join("lit_blaze_burner.json")), Some(lit));
+        assert_eq!(read(&loot), Some(remapped));
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -45,7 +45,8 @@ diambil dari kode Create sendiri. Rencana besarnya ada di [rencana-modpack.md](r
 | Speedometer dan stressometer | Meneruskan putaran lewat kedua ujung poros, tanpa beban. Kacamata membaca RPM mutlak atau persentase beban dan sisa kapasitas. Orientasi memakai `facing` dan `axis_along_first`, dengan bentuk `GaugeShaper`. | Putaran dan pembacaan memakai jaringan yang sama, tanpa beban atau kapasitas sumber. Satu orientasi bawaan per sumbu X/Y/Z, casing Create tetap, tumbukan blok penuh; kepala dan jarum belum digambar. |
 | Millstone | Kerja per tick = `clamp(int(abs(RPM)/16), 1, 512)`, bilangan bulat dan minimal 1. Lama per resep (`processing_time`). Berhenti bila satu dari 9 slot hasil penuh. | `RPM/16` pecahan; berhenti bila hasil lebih dari 9 tumpukan |
 | Press | Satu siklus 240; tiap tick maju `lerp(clamp(abs(RPM)/512, 0, 1), 1, 60)`; menekan di tengah siklus. Satu barang per tekanan (`bulkPressing` mati). Mengerjakan barang yang tergeletak di blok tepat di bawahnya, sabuk/depot dua blok di bawah, dan baskom dua blok di bawah (*compacting*). | Depot satu atau dua blok di bawah; belum ada barang tergeletak dan compacting |
-| Mixer | Kepala turun 20 tick (kurva kosinus). Mengaduk `max(log2(int(512/abs(RPM))) * ceil(t/100*15) + 1, 1)` tick, dengan `t` = `processing_time` resep. Naik 20 tick. Juga mengerjakan resep crafting shapeless vanilla. Ada syarat panas (blaze burner) dan fluida. | Waktu sendiri, tanpa panas dan fluida |
+| Mixer | Kepala turun 20 tick (kurva kosinus). Mengaduk `max(log2(int(512/abs(RPM))) * ceil(t/100*15) + 1, 1)` tick, dengan `t` = `processing_time` resep. Naik 20 tick. Juga mengerjakan resep crafting shapeless vanilla. Ada syarat panas (blaze burner) dan fluida. | Waktu seperti Create; mixing dan compacting item-only menguji panas di bawah baskom. Fluida dan crafting shapeless belum. |
+| Blaze burner | Fuel tungku menyalakan blaze; di bawah 125 tick meredup. Blaze cake memberi 3200 tick seething, lalu 5000 tick fuel normal. `heated` juga menerima fading. | Fuel tungku/tag dan hitung mundur seperti Create; `heated` sengaja membutuhkan kindled atau seething. Model sangkar saja; cahaya masih mengikuti template anchor. |
 | Kipas | Jangkauan `lerp(min(abs(RPM)/256, 1), 3, 20)`. Waktu olah `150 * ((jumlah-1)/16 + 1) + 1`, jadi tumpukan besar lebih lama. RPM negatif menghisap. | Jangkauan `clamp(RPM*20/256, 3, 20)`; waktu tetap 150 |
 | Corong | Mengeluarkan tiap 8 tick. Andesite: sampai satu tumpukan (64). Brass: sejumlah filternya. | 16 barang tiap 8 tick |
 | Sabuk | Dipasang dengan item *belt connector* di antara dua poros, panjang maksimal 20 | Satu blok per segmen |
@@ -219,15 +220,45 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - referensi `BeltBlockEntity`, `BeltInventory`, dan `FunnelBlockEntity` tetap dicatat. Penolakan corong
     belum menahan barang di ujung sabuk; batas 64 dan jam global Tachyon juga belum sama dengan ekstraktor
     andesite Create yang mengambil satu barang dan memakai cooldown per corong;
+- **Blaze burner menjadi sumber panas baskom** (`tachyon_engine/burner.rs`), mengikuti
+  `BlazeBurnerBlock`, `BlazeBurnerBlockEntity`, `BlazeBurnerBlockItem`, `LitBlazeBurnerBlock`,
+  `BasinBlockEntity`, dan `BasinRecipe`:
+  - lima tingkat panas disimpan lewat `charges=0..4` pada template respawn anchor: none, smouldering,
+    fading, kindled, seething; item burner berisi blaze dipasang dalam keadaan smouldering;
+  - klik kanan dengan fuel tungku menyalakannya, fading mulai ketika sisa waktu kurang dari 125 tick;
+    blaze cake memberi 3200 tick seething lalu 5000 tick fuel normal;
+  - penambahan fuel sejenis mengikuti ambang 500 tick; pemain boleh menambah fuel normal sampai
+    kapasitas 10000 di atas ambang itu, tetapi tidak menurunkan fuel special menjadi normal.
+    Fuel baru dan tambahan pada sisa waktu sampai 500 tick tidak dibatasi kapasitas;
+  - creative blaze cake mengubah panas tanpa hitung mundur dan tidak habis dipakai;
+  - fuel dan sisa waktunya disimpan bersama mesin lain per dimensi; hanya burner di chunk termuat
+    yang menghitung mundur;
+  - mixing dan compacting tanpa fluida membaca `heat_requirement` serta menguji blok tepat di bawah
+    baskom, termasuk saat memilih resep prioritas: `heated` membutuhkan kindled atau seething,
+    `superheated` hanya seething. Ini lebih ketat dari `HeatCondition` Create yang juga menerima fading;
+  - sangkar kosong dapat dinyalakan dengan flint and steel menjadi `lit_blaze_burner`, dipadamkan
+    dengan sekop, atau dijadikan api soul dengan blok dasar soul fire. Panasnya hanya smouldering,
+    tidak cukup untuk resep heated; hopper dan corong tidak memberi fuel karena Create tidak
+    menyediakan item handler untuk burner;
+  - kacamata menampilkan tingkat panas burner serta panas di bawah baskom dalam bahasa Inggris dan
+    Indonesia; jendela host dan tamu memakai asap, api biasa, atau api soul menurut tingkat panas;
+  - porter mempertahankan model sangkar dari file Create milik pemain, memetakan model api regular/soul
+    ke `charges`, dan mengubah predikat loot `blaze` menjadi `charges`. Kepala blaze dan batang
+    berputarnya belum digambar; tidak ada aset Create yang ditambahkan ke repo;
+  - tes unit mencakup hitung mundur, pengisian ulang, penyimpanan per dimensi, syarat panas resep,
+    penolakan fluida, serta template/model/loot porter.
 - **Belum:**
   - tarikan mob dan pemain melalui celah crushing wheel, serta posisi keluarnya sebelum mati.
+  - penempatan item `empty_blaze_burner`, menangkap blaze, pengisian dengan mechanical arm, data map
+    fuel tambahan, suara dan animasi burner yang tepat. Cahaya per tingkat dan bentuk tumbukan khusus
+    Create belum dipetakan; api soul pada sangkar kosong masih memakai cahaya 12 seperti api regular.
   - sabuk menahan barang saat corong penuh, cooldown per corong, dan jumlah ekstraksi/filter sesuai jenis corong.
 - Pemberitahuan MIT Create sudah ada di `THIRD_PARTY_NOTICES.md`.
 
 1. **Pembaca resep Create.** Mesin `create:*` memakai:
    - milling di millstone;
    - pressing di press;
-   - mixing dan compacting di mixer dan press (tanpa fluida dan panas dulu);
+   - mixing dan compacting di mixer dan press (dengan syarat panas, belum dengan fluida);
    - splashing dan haunting di kipas.
 2. **Angka disamakan** dengan tabel di atas:
    - kerja millstone;
@@ -244,7 +275,7 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
    - crushing wheel (211 resep crushing);
    - mechanical saw (cutting);
    - deployer;
-   - blaze burner (panas untuk mixing);
+   - blaze burner (panas mixing/compacting sudah ada; tangkap blaze dan animasinya belum);
    - belt connector;
    - smart chute (chute biasa sudah ada; interaksinya masih perlu dilengkapi);
    - mechanical arm (pemasangan di lantai dan titik otomatis sudah ada).

@@ -19,6 +19,7 @@ pub(super) mod chronicles;
 pub(crate) mod kinetic;
 mod arm;
 mod basin;
+mod burner;
 mod belt;
 pub(in crate::game) mod chute;
 mod create_recipes;
@@ -185,6 +186,8 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
         "mechanical_mixer" => Part::Mixer,
         "mechanical_arm" => Part::Arm,
         "basin" => Part::Basin,
+        "blaze_burner" => Part::Burner,
+        "lit_blaze_burner" => Part::LitBurner,
         "encased_fan" => Part::Fan(axis()?),
         "andesite_funnel" | "brass_funnel" => Part::Funnel(facing()?),
         "crushing_wheel" => Part::CrushingWheel(axis()?),
@@ -350,6 +353,8 @@ struct Owner {
     chute_air: HashMap<[i32; 3], chute::Air>,
     /// The arms' points, movement and held stacks.
     arms: HashMap<[i32; 3], arm::Arm>,
+    /// The filled blaze burners' fuel and remaining burn time.
+    burners: HashMap<[i32; 3], burner::Burner>,
     /// A machine's contents or motion changed since the file was written.
     mills_changed: bool,
     /// What each fan turning does, for the goggles ("washing", "pull:air").
@@ -438,6 +443,9 @@ impl Owner {
         let arms: Vec<([i32; 3], arm::Arm)> =
             serde_json::from_value(value["arms"].clone()).unwrap_or_default();
         self.arms = arms.into_iter().collect();
+        let burners: Vec<([i32; 3], burner::Burner)> =
+            serde_json::from_value(value["burners"].clone()).unwrap_or_default();
+        self.burners = burners.into_iter().collect();
         let funnels: Vec<[i32; 3]> = serde_json::from_value(value["funnels"].clone()).unwrap_or_default();
         self.funnels_out = funnels.into_iter().collect();
         let crushers: Vec<([i32; 3], crusher::Inside)> =
@@ -470,6 +478,8 @@ impl Owner {
         basins.sort_by_key(|(p, _)| **p);
         let mut arms: Vec<(&[i32; 3], &arm::Arm)> = self.arms.iter().collect();
         arms.sort_by_key(|(p, _)| **p);
+        let mut burners: Vec<(&[i32; 3], &burner::Burner)> = self.burners.iter().collect();
+        burners.sort_by_key(|(p, _)| **p);
         let mut funnels: Vec<&[i32; 3]> = self.funnels_out.iter().collect();
         funnels.sort();
         let mut crushers: Vec<(&[i32; 3], &crusher::Inside)> = self.crushers.iter().collect();
@@ -484,6 +494,7 @@ impl Owner {
             "mills": mills,
             "basins": basins,
             "arms": arms,
+            "burners": burners,
             "funnels": funnels,
             "crushers": crushers,
             "chutes": chutes,
@@ -938,6 +949,8 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         | Part::Belt(_)
         | Part::Depot
         | Part::Basin
+        | Part::Burner
+        | Part::LitBurner
         | Part::Chute(_, _)
         | Part::Funnel(_) => Vec::new(),
     }
@@ -989,6 +1002,8 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         Part::Depot
         | Part::Arm
         | Part::Basin
+        | Part::Burner
+        | Part::LitBurner
         | Part::Funnel(_)
         | Part::CrushingWheel(_)
         | Part::LargeWaterWheel(_)
@@ -1006,7 +1021,7 @@ fn add(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
 }
 
 /// Whether a use of the part is Tachyon's (`Game::tachyon_use`): a motor's,
-/// a crank's, a machine's that holds items, a belt's, a funnel's.
+/// a crank's, a machine's that holds items, a burner's, a belt's, a funnel's.
 fn takes_use(part: Part) -> bool {
     matches!(
         part,
@@ -1015,6 +1030,8 @@ fn takes_use(part: Part) -> bool {
             | Part::Millstone
             | Part::Depot
             | Part::Basin
+            | Part::Burner
+            | Part::LitBurner
             | Part::Belt(_)
             | Part::Funnel(_)
     )
@@ -1126,14 +1143,21 @@ impl Game<'_> {
             let changed = owner
                 .index
                 .sync(&mut self.world, &kinds, false, &mut removed);
-            // A motor or controller broken forgets its speed or target.
+            // A motor or controller broken forgets its speed or target, a
+            // burner its fuel.
             let before = owner.motors.len();
             owner.motors.retain(|p, _| !removed.contains(p));
             let controllers = (changed || owner.dirty || owner.index.revision != revision)
                 && owner.sync_controllers(&removed);
             let funnels = owner.funnels_out.len();
             owner.funnels_out.retain(|p| !removed.contains(p));
-            if owner.motors.len() != before || owner.funnels_out.len() != funnels || controllers {
+            let burners = owner.burners.len();
+            owner.burners.retain(|p, _| !removed.contains(p));
+            if owner.motors.len() != before
+                || owner.funnels_out.len() != funnels
+                || owner.burners.len() != burners
+                || controllers
+            {
                 owner.save(&root, dimension);
             }
             // A millstone, a depot or a basin broken drops what it held.
@@ -1200,6 +1224,8 @@ impl Game<'_> {
                     .collect()
             })
         };
+        // The burners count down before the basins test their heat.
+        self.tachyon_burners();
         // The fans' air on the items in it, the belts under them, the
         // funnels they come to.
         self.tachyon_chute_shapes();
@@ -1208,6 +1234,18 @@ impl Game<'_> {
         self.tachyon_belts();
         self.tachyon_funnels();
         self.tachyon_crushers();
+        // BasinBlockEntity.getHeatLevel: the block directly below each
+        // basin, read before borrowing the world's random for the outputs.
+        let basin_heat: HashMap<[i32; 3], burner::Heat> = OWNERS.with_borrow(|owners| {
+            owners
+                .get(dimension)
+                .map(|o| {
+                    (o.basins.keys())
+                        .map(|p| (*p, self.tachyon_heat([p[0], p[1] - 1, p[2]])))
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
         self.tachyon_presses_on_ground();
         let create = self.tachyon_create_recipes();
         let send = OWNERS.with_borrow_mut(|owners| {
@@ -1347,6 +1385,7 @@ impl Game<'_> {
                 if owner.index.parts.get(p) != Some(&Part::Basin) {
                     continue;
                 }
+                let heat = basin_heat.get(p).copied().unwrap_or_default();
                 let stacks: Vec<(String, u32)> = (b.outputs.iter().chain(&b.inputs))
                     .take(4)
                     .map(|h| (h.item.clone(), h.count))
@@ -1363,7 +1402,7 @@ impl Game<'_> {
                     if owner.index.create.contains(&at) {
                         std::mem::swap(&mut first, &mut second);
                     }
-                    (at, if b.ready(first).is_some() { first } else { second }, false)
+                    (at, if b.ready(first, heat).is_some() { first } else { second }, false)
                 } else if let Some(at) = worker(&owner.index.parts, *p, |q| matches!(q, Part::Press(_))) {
                     (at, create.compacting.as_slice(), true)
                 } else {
@@ -1372,9 +1411,9 @@ impl Game<'_> {
                 let speed = owner.shown.speeds.get(&at).map_or(0.0, |s| s[0]);
                 let roll = &mut || random.next_float();
                 let made = if pressing {
-                    b.compact(speed, recipes, roll)
+                    b.compact(speed, recipes, heat, roll)
                 } else {
-                    b.mix(speed, recipes, roll)
+                    b.mix(speed, recipes, heat, roll)
                 };
                 if let Some(into) = made {
                     owner.mills_changed = true;
@@ -1543,6 +1582,12 @@ impl Game<'_> {
         let part = kinds.part(state);
         if !part.is_some_and(takes_use) {
             return false;
+        }
+        // Burners take their own uses, never their template's charging or
+        // respawn interaction, even when the held item isn't fuel.
+        if matches!(part, Some(Part::Burner | Part::LitBurner)) {
+            self.tachyon_use_burner(pos, part == Some(Part::LitBurner));
+            return true;
         }
         let sneaking = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft);
         let dimension = self.dim.id();
@@ -1802,6 +1847,7 @@ impl Game<'_> {
     pub(super) fn tachyon_tick(&mut self) {
         self.tachyon_quests_tick();
         self.tachyon_fan_particles();
+        self.tachyon_burner_particles();
         self.tachyon_press_heads();
         self.tachyon_crusher_particles();
         if self.remote.is_none() {
@@ -2200,6 +2246,8 @@ impl Game<'_> {
             Part::Mixer => ("mechanical_mixer", "Mechanical Mixer"),
             Part::Arm => ("mechanical_arm", "Mechanical Arm"),
             Part::Basin => ("basin", "Basin"),
+            Part::Burner => ("blaze_burner", "Blaze Burner"),
+            Part::LitBurner => ("lit_blaze_burner", "Lit Blaze Burner"),
             Part::Fan(_) => ("encased_fan", "Encased Fan"),
             Part::Belt(_) => ("belt", "Mechanical Belt"),
             Part::SpeedController(_) => ("rotation_speed_controller", "Rotation Speed Controller"),
@@ -2269,6 +2317,22 @@ impl Game<'_> {
                 "-".to_owned()
             } else {
                 names.join(", ")
+            };
+        }
+        // A burner shows its heat rather than a speed; a basin shows the
+        // heat of the block under it beside what it holds.
+        let heat_at = match part {
+            Part::Burner | Part::LitBurner => Some(hit.pos),
+            Part::Basin => Some([hit.pos[0], hit.pos[1] - 1, hit.pos[2]]),
+            _ => None,
+        };
+        if let Some(pos) = heat_at {
+            let heat = self.tachyon_heat(pos).name();
+            let heat = self.translate(&format!("kinetica.hud.heat.{heat}"), heat);
+            state = if part == Part::Basin {
+                format!("{state} | {heat}")
+            } else {
+                heat
             };
         }
         let line = format!("{what}: {state}");
@@ -2729,6 +2793,25 @@ mod tests {
         assert_eq!(legacy.controllers[&a], speed_controller::DEFAULT_SPEED);
         assert_eq!(legacy.motors[&[0, 64, 0]], 32.0);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn blaze_burners_take_uses_but_never_join_or_draw_a_turning_part() {
+        for (name, part) in [
+            ("create:blaze_burner", Part::Burner),
+            ("create:lit_blaze_burner", Part::LitBurner),
+        ] {
+            assert_eq!(part_of(name, |_| None), Some(part));
+            assert!(takes_use(part));
+            assert!(pieces(part, true).is_empty());
+            assert!(pieces(part, false).is_empty());
+            for d in Dir::ALL {
+                assert!(!part.shaft_toward(d));
+                assert!(kinetic::link(Part::Shaft(d.axis()), part, d.offset()).is_none());
+            }
+            assert_eq!(part.impact(), 0.0);
+        }
+        assert_eq!(part_of("minecraft:respawn_anchor", |_| None), None);
     }
 
     #[test]

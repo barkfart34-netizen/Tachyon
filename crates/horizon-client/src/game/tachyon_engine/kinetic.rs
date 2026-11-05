@@ -216,6 +216,12 @@ pub enum Part {
     Arm,
     /// A basin: the items to mix, which doesn't turn.
     Basin,
+    /// Create's blaze burner under a basin, which doesn't turn
+    /// (tachyon_engine/burner.rs, BlazeBurnerBlock).
+    Burner,
+    /// A lit empty cage: passive heat, not a fueled blaze
+    /// (LitBlazeBurnerBlock).
+    LitBurner,
     /// An encased fan, on a shaft along its axis; it blows out of one end
     /// (tachyon_engine/fan.rs).
     Fan(Axis),
@@ -263,6 +269,8 @@ impl Part {
             | Part::Depot
             | Part::Basin
             | Part::Funnel(_)
+            | Part::Burner
+            | Part::LitBurner
             | Part::Chute(_, _) => false,
         }
     }

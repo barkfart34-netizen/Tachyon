@@ -1164,6 +1164,12 @@ HUD = {
     # What a funnel does.
     "kinetica.hud.inserting": ("inserting", "memasukkan"),
     "kinetica.hud.extracting": ("extracting", "mengeluarkan"),
+    # A blaze burner's heat, also shown beside a basin's items.
+    "kinetica.hud.heat.none": ("no heat", "tanpa panas"),
+    "kinetica.hud.heat.smouldering": ("smouldering", "membara"),
+    "kinetica.hud.heat.fading": ("fading", "meredup"),
+    "kinetica.hud.heat.kindled": ("kindled", "menyala"),
+    "kinetica.hud.heat.seething": ("seething", "superpanas"),
 }
 
 
