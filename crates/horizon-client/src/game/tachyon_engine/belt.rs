@@ -286,7 +286,7 @@ mod tests {
             ([-1, 0, 0], Dir::East)
         };
         parts.insert(motor, Part::Motor(facing));
-        let solved = solve(&parts, &HashMap::from([(motor, speed)]), &Default::default());
+        let solved = solve(&parts, &HashMap::from([(motor, speed)]), &Default::default(), &Default::default());
         let belts = moving(&parts, &solved.speeds);
         (parts, belts)
     }
