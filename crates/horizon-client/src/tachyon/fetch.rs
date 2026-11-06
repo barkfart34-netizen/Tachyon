@@ -195,7 +195,7 @@ fn take(jar: &Path, out: &Path, take: &[&str]) -> Result<(), String> {
     let mut bytes = Vec::new();
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
-        let name = entry.name().to_owned();
+        let name = entry.name().map_err(|e| e.to_string())?.into_owned();
         if !taken(&name, take) {
             continue;
         }

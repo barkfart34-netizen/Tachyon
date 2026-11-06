@@ -171,7 +171,7 @@ fn archive(
             .map_err(|_| "Not a zip: a world, a pack or a mod comes as one.".to_owned())
     };
     let zip = open()?;
-    let names: Vec<String> = zip.file_names().map(str::to_owned).collect();
+    let names: Vec<String> = zip.file_names().filter_map(Result::ok).map(|n| n.into_owned()).collect();
     drop(zip);
     // The folder holding `marker`: "" at the top, or "<folder>/" one level down.
     let prefix = |marker: &str| -> Option<String> {
