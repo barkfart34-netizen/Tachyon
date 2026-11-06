@@ -499,6 +499,37 @@ desktop, Android tanpa default features, dan server; kode UI/Android tidak boleh
   Tidak ada aset, unduhan, dependency baru, atau perubahan Create. Port berhenti pada bagian lengkap
   ini karena mempertahankan renderer dan seluruh tes lama sudah melebihi perkiraan sekitar 600 baris.
 
+### Hasil tahap 4, 5, dan 6 (6 November 2026)
+
+- **Tahap 4** (adapter Android, dari GPT): `Overlay` memilih engine lewat preferensi `touchEngine`
+  di `horizon.txt`; Zalith tetap default. Frame Bedrock menuju `game/touch_input.rs::TouchInput`,
+  yang mencatat sumber setiap tekan (keyboard, mouse, pad, Zalith, tombol tetap Bedrock) beserta
+  mapping dan layar tujuannya, sehingga pelepasan tidak menjadi klik di layar baru dan pembatalan
+  (suspend, pindah layar, fokus hilang) melepas semua tahanan sentuh tanpa mengganggu toggle fisik.
+- **Pilihan di menu sentuh** (Claude): tombol bola "T" membuka menu dengan `Controls: Zalith /
+  Bedrock (beta)` untuk berganti engine saat itu juga (disimpan sebagai `touchEngine: bedrock`), dan,
+  pada Bedrock, skema berikutnya dari empat skema fork (`Mode::SCHEMES`), disimpan di
+  `touch/bedrock.json`. Edit controls, Gestures, dan Size khusus Zalith disembunyikan pada Bedrock.
+- **Tahap 5 dan 6, versi pertama** (Claude), memakai jari dunia yang sama dengan gesture Zalith:
+  - gesture dunia Bedrock aktif di skema tap, atau di skema crosshair bila `crosshair_gestures`;
+  - ketukan (tanpa geser, di bawah `LONG_PRESS` 300 ms) menyerang entitas yang kena, atau memakai
+    item; item yang dipakai dengan ditahan tidak dipakai oleh ketukan;
+  - tahan memakai item bila item itu dipakai dengan ditahan (`Game::touch_hold_uses`: makanan,
+    minuman, perisai, busur, crossbow, trident, spyglass, goat horn, brush, spear), selain itu
+    menambang;
+  - di skema tap, bidikan lewat titik sentuh: `Game::touch_aim` membuat `Game::aim()` memakai
+    `touch::screen_direction()` dengan FOV kamera terakhir dan rasio layar, hanya di orang pertama.
+    Outline blok mengikuti jari; titik tetap dipakai 150 ms setelah jari lepas agar klik di tick
+    berikutnya memakai bidikan yang sama. Jari yang bergeser memutar kamera dan berhenti membidik,
+    kecuali tahanannya sudah berjalan;
+  - jari Bedrock yang diam tidak memutar kamera.
+- Perbedaan dari fork: batas tahan 300 ms (Zalith), bukan 350 ms; klasifikasi item lebih sederhana
+  dari `touch_item_held_use()`; lingkaran progres menambang di HUD belum diisi (`TouchFeedback` tetap
+  nol), retak blok vanilla tetap terlihat.
+- Belum: tombol custom (7), editor (8), menu sentuh khusus (9; menu tetap memakai pointer Zalith),
+  unduhan tekstur (10; tombol memakai gambar prosedural), Bedrock sebagai default instalasi baru (11),
+  dan bukti emulator khusus Bedrock (12).
+
 ## Pengujian implementasi di emulator CI
 
 `.github/workflows/tachyon-smoke.yml` berjalan manual melalui `workflow_dispatch`. Ia membangun
