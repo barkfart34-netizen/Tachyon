@@ -1229,6 +1229,23 @@ impl AndroidGame {
         self.cancel_touch();
         let home = self.home.clone();
         match choice {
+            Choice::Engine => {
+                // The other engine from the next frame; the fingers were
+                // released above, so nothing stays held across the switch.
+                let engine = with_overlay(|o| {
+                    o.engine = match o.engine {
+                        Engine::Zalith => Engine::Bedrock,
+                        Engine::Bedrock => Engine::Zalith,
+                    };
+                    if o.engine == Engine::Bedrock {
+                        o.bedrock = load_bedrock(&home);
+                    }
+                    o.engine
+                })
+                .unwrap_or_default();
+                set_preference(&home, "touchEngine", (engine == Engine::Bedrock).then_some("bedrock"));
+                log::info!("Tachyon: touch engine {engine:?}");
+            }
             Choice::EditControls => {
                 if self.in_game()
                     && let App::Ready(game) = &mut self.app

@@ -26,6 +26,8 @@ pub struct Settings {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Choice {
+    /// Zalith's layout or the Bedrock-style controls.
+    Engine,
     EditControls,
     Gestures,
     Gyroscope,
@@ -177,6 +179,10 @@ impl Menu {
             let row = 40.0 * d;
             let on = |v: bool| if v { "on" } else { "off" };
             let items = [
+                (
+                    format!("Controls: {}", if zalith { "Zalith" } else { "Bedrock (beta)" }),
+                    Choice::Engine,
+                ),
                 ("Edit controls".to_owned(), Choice::EditControls),
                 (
                     format!("Gestures: {}", on(settings.gestures)),
