@@ -14,7 +14,6 @@
 //! long press holds the button.
 use super::*;
 use super::touch_input::{Engine, Source};
-use crate::android::jni::{self, Typed};
 use horizon_client::controls::editor::{Editor, Outcome};
 use horizon_client::controls::menu::{Choice, Menu, Settings as TouchSettings};
 use horizon_client::controls::{
@@ -29,6 +28,73 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use winit::event::{Touch as Finger, TouchPhase};
 use winit::keyboard::NativeKeyCode;
+
+/// What the soft keyboard typed, in order, until the game takes it.
+#[derive(Debug, PartialEq)]
+pub enum Typed {
+    Text(String),
+    Backspace,
+    Enter,
+    /// The back gesture.
+    Back,
+}
+
+/// The app's JNI glue (`android/jni.rs` beside `android_main.rs`), which this
+/// library holds no unsafe code for: it hands its calls over once at start.
+pub struct Platform {
+    /// `TachyonActivity.platform(op, arg)`; `None` when it returned null or failed.
+    pub platform: fn(&str, &str) -> Option<String>,
+    /// How far the phone turned, in radians, since the last call.
+    pub take_gyro: fn() -> (f32, f32),
+    /// Whether the soft keyboard came up or went away since the last call.
+    pub take_keyboard: fn() -> Option<bool>,
+    pub take_typed: fn() -> Vec<Typed>,
+}
+
+static PLATFORM: std::sync::OnceLock<Platform> = std::sync::OnceLock::new();
+
+pub fn install(platform: Platform) {
+    if PLATFORM.set(platform).is_err() {
+        log::warn!("Tachyon: Android platform calls already installed");
+    }
+}
+
+/// The calls the game makes to the activity, through [`Platform`].
+mod jni {
+    use super::Typed;
+
+    fn get() -> Option<&'static super::Platform> {
+        super::PLATFORM.get()
+    }
+
+    pub(super) fn platform(op: &str, arg: &str) -> Option<String> {
+        get().and_then(|p| (p.platform)(op, arg))
+    }
+
+    pub(super) fn gyroscope(on: bool) {
+        platform("gyroscope", if on { "1" } else { "0" });
+    }
+
+    pub(super) fn take_gyro() -> (f32, f32) {
+        get().map_or((0.0, 0.0), |p| (p.take_gyro)())
+    }
+
+    pub(super) fn show_keyboard(show: bool) {
+        platform("keyboard", if show { "1" } else { "0" });
+    }
+
+    pub(super) fn take_keyboard() -> Option<bool> {
+        get().and_then(|p| (p.take_keyboard)())
+    }
+
+    pub(super) fn take_typed() -> Vec<Typed> {
+        get().map_or_else(Vec::new, |p| (p.take_typed)())
+    }
+
+    pub(super) fn vibrate(millis: u32) {
+        platform("vibrate", &millis.to_string());
+    }
+}
 
 /// Zalith's long press and double tap timeouts.
 const LONG_PRESS: Duration = Duration::from_millis(300);
@@ -138,7 +204,7 @@ struct Contact {
     moved: bool,
 }
 
-pub(crate) struct AndroidGame {
+pub struct AndroidGame {
     app: App,
     home: PathBuf,
     contacts: HashMap<u64, Contact>,
@@ -305,7 +371,7 @@ fn save_layout(home: &Path, layout: &controls::layout::Layout) -> std::io::Resul
 
 impl AndroidGame {
     /// The game with `args` (`--resources`, `--session-file`), at its loading screen.
-    pub(crate) fn start(args: Vec<String>) -> Result<Self> {
+    pub fn start(args: Vec<String>) -> Result<Self> {
         let options = Options::from_args(args.into_iter())?.ok_or("no options")?;
         horizon_threads::put_helpers_behind();
         horizon_threads::favour_current();
@@ -439,7 +505,7 @@ impl AndroidGame {
     }
 
     /// The game's error once it stopped the loop.
-    pub(crate) fn error(&mut self) -> Option<Box<dyn std::error::Error>> {
+    pub fn error(&mut self) -> Option<Box<dyn std::error::Error>> {
         match &mut self.app {
             App::Ready(game) => {
                 let _ = write_report(game);
@@ -612,7 +678,7 @@ impl AndroidGame {
         self.sync_touch_lifecycle();
     }
 
-    pub(crate) fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+    pub fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         self.active = true;
         if self.window().is_none() {
             self.app.resumed(event_loop);
@@ -640,7 +706,7 @@ impl AndroidGame {
     }
 
     /// The app left the screen and its window with it.
-    pub(crate) fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+    pub fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         self.active = false;
         self.cancel_touch();
         self.ask_keyboard(false);
@@ -656,7 +722,7 @@ impl AndroidGame {
         }
     }
 
-    pub(crate) fn window_event(
+    pub fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
         id: WindowId,
@@ -706,7 +772,7 @@ impl AndroidGame {
         self.sync_touch_lifecycle();
     }
 
-    pub(crate) fn device_event(
+    pub fn device_event(
         &mut self,
         event_loop: &ActiveEventLoop,
         id: DeviceId,
@@ -744,14 +810,14 @@ impl AndroidGame {
         self.app.device_event(event_loop, id, event);
     }
 
-    pub(crate) fn exiting(&mut self, event_loop: &ActiveEventLoop) {
+    pub fn exiting(&mut self, event_loop: &ActiveEventLoop) {
         self.cancel_touch();
         jni::gyroscope(false);
         self.app.exiting(event_loop);
     }
 
     /// The back gesture: it leaves the editor or the menu, else does what Escape does.
-    pub(crate) fn back(&mut self) {
+    pub fn back(&mut self) {
         self.cancel_touch();
         if self.startup_loading() {
             match &mut self.app {
@@ -791,7 +857,7 @@ impl AndroidGame {
         }
     }
 
-    pub(crate) fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+    pub fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.sync_touch_lifecycle();
         let now = Instant::now();
         let screen = self.screen();

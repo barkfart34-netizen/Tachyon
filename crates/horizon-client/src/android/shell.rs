@@ -1,7 +1,7 @@
 //! The app's one event loop: the launcher until Play, then the game in the
 //! same window. Android gives a process one event loop, so both live in it.
 use super::launcher::Launcher;
-use crate::game::android::AndroidGame;
+use horizon_client::game::android::AndroidGame;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};

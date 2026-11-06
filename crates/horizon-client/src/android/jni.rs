@@ -7,14 +7,16 @@ use jni::{EnvUnowned, JValue, jni_sig, jni_str};
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-/// What the soft keyboard typed, in order, until the game takes it.
-#[derive(Debug, PartialEq)]
-pub enum Typed {
-    Text(String),
-    Backspace,
-    Enter,
-    /// The back gesture.
-    Back,
+pub use horizon_client::game::android::Typed;
+
+/// The game's calls to the activity (the game library holds no unsafe code).
+pub fn install_game() {
+    horizon_client::game::android::install(horizon_client::game::android::Platform {
+        platform,
+        take_gyro,
+        take_keyboard,
+        take_typed,
+    });
 }
 
 static TYPED: Mutex<VecDeque<Typed>> = Mutex::new(VecDeque::new());

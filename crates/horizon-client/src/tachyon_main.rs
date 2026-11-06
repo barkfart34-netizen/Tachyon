@@ -5,9 +5,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod desktop;
-// The game as `main.rs` runs it; parts of it only the Android app uses.
-#[allow(dead_code)]
-mod game;
 // The launchers' shared parts; some only the Android one uses.
 #[allow(dead_code)]
 mod tachyon;

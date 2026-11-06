@@ -55,6 +55,73 @@ pub fn main_with(mods: crate::mod_api::Mods) {
         log::info!("Horizon {}", crash::version());
         crash::install(home.clone(), side);
     }
+    install_hooks();
+    if let Err(error) = game::run_with() {
+        // A bad command line is the caller's mistake, not a crash: no report.
+        let usage = error.is::<game::UsageError>();
+        log::error!("Horizon: {error}");
+        logging::flush();
+        // The report's path is the last line on stderr (crash::SAVED_LINE).
+        if !help && !usage {
+            crash::report_error(&home, side, &*error);
+        }
+        // Started from Explorer, the console window closes with the game:
+        // keep the message on screen until it is read.
+        #[cfg(windows)]
+        if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            eprintln!("Press Enter to close.");
+            let _ = std::io::stdin().read_line(&mut String::new());
+        }
+        std::process::exit(if usage {
+            game::exit_code::USAGE
+        } else {
+            game::exit_code::ERROR
+        });
+    }
+    logging::flush();
+}
+
+/// The JVM raises its open-file limit to the hard limit as it starts
+/// (`-XX:+MaxFDLimit`, on by default), so a vanilla server may hold as many
+/// sockets and region files as the host allows, not the soft default (often
+/// 1024 in a container). The same here; macOS caps it at `OPEN_MAX`, as the
+/// JVM does there.
+fn raise_open_file_limit() {
+    #[cfg(unix)]
+    {
+        use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+        let limit = getrlimit(Resource::Nofile);
+        let hard = if cfg!(target_os = "macos") {
+            Some(limit.maximum.map_or(10_240, |h| h.min(10_240)))
+        } else {
+            limit.maximum
+        };
+        let raised = match (limit.current, hard) {
+            (Some(soft), Some(hard)) => hard > soft,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        if raised {
+            let to = Rlimit {
+                current: hard,
+                maximum: limit.maximum,
+            };
+            match setrlimit(Resource::Nofile, to) {
+                Ok(()) => log::info!(
+                    "Open file limit raised from {:?} to {hard:?}",
+                    limit.current
+                ),
+                Err(e) => log::warn!("Open file limit stays at {:?}: {e}", limit.current),
+            }
+        }
+    }
+}
+
+/// Hands the trait mods' renderers and the native data-load and client hooks to the
+/// crates below, and raises the open file limit; Tachyon's launchers start the game
+/// through this too.
+pub fn install_hooks() {
+    raise_open_file_limit();
     let renderers = crate::mod_api::mods()
         .iter()
         .filter_map(|m| m.render())
@@ -175,65 +242,5 @@ pub fn main_with(mods: crate::mod_api::Mods) {
     .is_err()
     {
         log::warn!("Native client hooks already installed; keeping the first callbacks");
-    }
-    raise_open_file_limit();
-    if let Err(error) = game::run_with() {
-        // A bad command line is the caller's mistake, not a crash: no report.
-        let usage = error.is::<game::UsageError>();
-        log::error!("Horizon: {error}");
-        logging::flush();
-        // The report's path is the last line on stderr (crash::SAVED_LINE).
-        if !help && !usage {
-            crash::report_error(&home, side, &*error);
-        }
-        // Started from Explorer, the console window closes with the game:
-        // keep the message on screen until it is read.
-        #[cfg(windows)]
-        if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            eprintln!("Press Enter to close.");
-            let _ = std::io::stdin().read_line(&mut String::new());
-        }
-        std::process::exit(if usage {
-            game::exit_code::USAGE
-        } else {
-            game::exit_code::ERROR
-        });
-    }
-    logging::flush();
-}
-
-/// The JVM raises its open-file limit to the hard limit as it starts
-/// (`-XX:+MaxFDLimit`, on by default), so a vanilla server may hold as many
-/// sockets and region files as the host allows, not the soft default (often
-/// 1024 in a container). The same here; macOS caps it at `OPEN_MAX`, as the
-/// JVM does there.
-fn raise_open_file_limit() {
-    #[cfg(unix)]
-    {
-        use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
-        let limit = getrlimit(Resource::Nofile);
-        let hard = if cfg!(target_os = "macos") {
-            Some(limit.maximum.map_or(10_240, |h| h.min(10_240)))
-        } else {
-            limit.maximum
-        };
-        let raised = match (limit.current, hard) {
-            (Some(soft), Some(hard)) => hard > soft,
-            (Some(_), None) => true,
-            (None, _) => false,
-        };
-        if raised {
-            let to = Rlimit {
-                current: hard,
-                maximum: limit.maximum,
-            };
-            match setrlimit(Resource::Nofile, to) {
-                Ok(()) => log::info!(
-                    "Open file limit raised from {:?} to {hard:?}",
-                    limit.current
-                ),
-                Err(e) => log::warn!("Open file limit stays at {:?}: {e}", limit.current),
-            }
-        }
     }
 }

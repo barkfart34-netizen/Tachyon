@@ -91,6 +91,9 @@ pub fn main(app: AndroidApp) {
     horizon_client::logging::init(&paths.home, "Render thread");
     horizon_client::crash::install(paths.home.clone(), "client");
     jni::install_clipboard();
+    jni::install_game();
+    horizon_client::spans::startup::init(std::time::Instant::now());
+    horizon_client::entry::install_hooks();
     horizon_client::brand::set(brand::NAME);
     horizon_client::brand::set_content(paths.content.clone());
     phone_defaults(&paths.home);
