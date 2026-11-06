@@ -28,6 +28,8 @@ pub struct Settings {
 pub enum Choice {
     /// Zalith's layout or the Bedrock-style controls.
     Engine,
+    /// The Bedrock-style controls' scheme: joystick or D-pad, crosshair or tap.
+    Scheme,
     EditControls,
     Gestures,
     Gyroscope,
@@ -139,6 +141,7 @@ impl Menu {
         screen: Screen,
         settings: Settings,
         zalith: bool,
+        scheme: &str,
     ) {
         let mut ui = Ui::new(atlas, batch, (0.0, 0.0));
         self.hits.clear();
@@ -183,6 +186,7 @@ impl Menu {
                     format!("Controls: {}", if zalith { "Zalith" } else { "Bedrock (beta)" }),
                     Choice::Engine,
                 ),
+                (scheme.to_owned(), Choice::Scheme),
                 ("Edit controls".to_owned(), Choice::EditControls),
                 (
                     format!("Gestures: {}", on(settings.gestures)),
@@ -239,7 +243,11 @@ impl Menu {
                 ("Close".to_owned(), Choice::Close),
             ];
             let items: Vec<_> = items.into_iter().filter(|(_, choice)| {
-                zalith || !matches!(choice, Choice::EditControls | Choice::Gestures | Choice::Size)
+                if zalith {
+                    *choice != Choice::Scheme
+                } else {
+                    !matches!(choice, Choice::EditControls | Choice::Gestures | Choice::Size)
+                }
             }).collect();
             let rows = items.len().div_ceil(2);
             let h = row * rows as f32 + 56.0 * d;

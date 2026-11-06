@@ -96,7 +96,12 @@ pub(crate) fn draw_touch(batch: &mut HudBatch, atlas: &horizon_client::hud::HudA
                 _ => {}
             }
         }
-        o.menu.draw(batch, atlas, o.screen, o.settings, o.engine == Engine::Zalith);
+        let s = &o.bedrock.settings;
+        let scheme = horizon_client::touch::Mode::SCHEMES
+            .iter()
+            .find(|(mode, split, _)| *mode == s.mode && *split == s.split_controls)
+            .map_or("Joystick & aim crosshair", |(_, _, name)| *name);
+        o.menu.draw(batch, atlas, o.screen, o.settings, o.engine == Engine::Zalith, scheme);
         if let Some(at) = o.pointer {
             controls::draw_pointer(batch, atlas, at, 24.0 * o.screen.density);
         }
@@ -1270,6 +1275,28 @@ impl AndroidGame {
                 .unwrap_or_default();
                 set_preference(&home, "touchEngine", (engine == Engine::Bedrock).then_some("bedrock"));
                 log::info!("Tachyon: touch engine {engine:?}");
+            }
+            Choice::Scheme => {
+                // The next of Bedrock's four schemes, kept in its own file.
+                let json = with_overlay(|o| {
+                    let s = &mut o.bedrock.settings;
+                    let schemes = horizon_client::touch::Mode::SCHEMES;
+                    let at = (schemes.iter())
+                        .position(|(mode, split, _)| *mode == s.mode && *split == s.split_controls)
+                        .map_or(0, |i| (i + 1) % schemes.len());
+                    (s.mode, s.split_controls) = (schemes[at].0, schemes[at].1);
+                    s.sanitize();
+                    s.to_json().ok()
+                })
+                .flatten();
+                if let Some(json) = json {
+                    let path = home.join("touch/bedrock.json");
+                    let written = std::fs::create_dir_all(home.join("touch"))
+                        .and_then(|()| std::fs::write(&path, json));
+                    if let Err(e) = written {
+                        log::warn!("Tachyon: touch settings {}: {e}", path.display());
+                    }
+                }
             }
             Choice::EditControls => {
                 if self.in_game()
