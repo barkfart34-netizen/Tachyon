@@ -748,7 +748,10 @@ impl HudAtlas {
             h: 4,
         };
         Self {
+            revision: Self::next_revision(),
             pixels,
+            packed: None,
+            galactic_widths: [0; 128],
             width,
             height,
             sprites: HashMap::from([("horizon/white".into(), white)]),
@@ -759,6 +762,11 @@ impl HudAtlas {
             font: crate::font::Font::loading((width, height), (5, height - 5), white),
             glint: (vec![0; 4], 1, 1),
             glint_armor: (vec![0; 4], 1, 1),
+            text_shader: None,
+            lines_shader: None,
+            random_textures: Default::default(),
+            emissive: Arc::default(),
+            blinks: Default::default(),
             white,
         }
     }
