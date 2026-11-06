@@ -6749,6 +6749,7 @@ impl Game<'_> {
         face: [i32; 3],
         claimed: &mut bool,
     ) {
+        self.tachyon_wrench(stack, pos, face, claimed);
         mod_api::dispatch_use_item_on(self, mod_api::mods(), stack, pos, face, claimed);
     }
     /// `DispenserBlock.getDispenseMethod`: choose a behaviour for any item,

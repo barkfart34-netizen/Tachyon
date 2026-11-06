@@ -31,6 +31,7 @@ mod obj_model;
 mod press;
 mod speed_controller;
 mod water_wheel;
+mod wrench;
 
 // The render crate's touch logic, tested by the desktop Tachyon target.
 #[cfg(test)]
