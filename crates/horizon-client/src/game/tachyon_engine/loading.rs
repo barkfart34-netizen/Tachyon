@@ -1,11 +1,12 @@
-//! Tachyon's own startup display: a light wordmark over navy, cyan tracks and
-//! a short message history, in GUI pixels. Only the idea of a mod-loader window is
+//! Tachyon's own startup display, in GUI pixels: two of Create's cogwheels
+//! turning faster as the load goes on, over drifting stars, the wordmark, the
+//! step with its percent, a bar, a tip that changes every few seconds, and
+//! the time (with an estimate from the last load), memory and mods. Only the idea of a mod-loader window is
 //! shared with Forge and NeoForge; none of their code or art is used.
 use crate::game::{Progress, UiResources};
 use horizon_client::hud::{HudAtlas, HudBatch, HudVertex};
 use std::{
     collections::{BTreeMap, VecDeque},
-    fmt::Write as _,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -22,6 +23,12 @@ const TRACK: u32 = color(0x1b2440);
 const INK: u32 = color(0xeaf2ff);
 const SOFT: u32 = color(0xbdd0ec);
 const ACCENT: u32 = color(0x38d6ff);
+const PAGE_LOW: u32 = color(0x0d1630);
+const GLOW: u32 = color(0x7fe6ff);
+const DIM: u32 = color(0x7d8fb0);
+const STAR: u32 = color(0xcfe3ff);
+const COG: u32 = color(0x2a6f8f);
+const COG_FACE: u32 = color(0x1c3a52);
 
 /// Fed at the checkpoints, not polled from the atomic: even steps that
 /// finish between frames stay in the history. No global logger is replaced.
@@ -178,93 +185,268 @@ fn segment(seconds: f32, ready: bool) -> (f32, f32) {
     }
 }
 
+/// Two meshing cogwheels, Create's large and small: the small turns twice as
+/// fast the other way. Their speed follows the loading's progress.
+const LARGE_TEETH: u32 = 16;
+const SMALL_TEETH: u32 = 8;
+/// How long a tip stays, and how long it fades in.
+const TIP_SECONDS: f32 = 7.0;
+const TIP_FADE: f32 = 0.6;
+const STARS: u32 = 56;
+/// The last complete load's length, to say about how long is left.
+const LOAD_SECONDS_FILE: &str = ".tachyon-load-seconds";
+
+/// The tips the screen turns through, Indonesian then English.
+const TIPS: [(&str, &str); 14] = [
+    (
+        "Roda gigi kecil yang bersentuhan berputar berlawanan arah.",
+        "Small cogwheels that mesh turn opposite ways.",
+    ),
+    (
+        "Roda gigi besar ke kecil: putarannya jadi dua kali lebih cepat.",
+        "A large cogwheel driving a small one doubles the speed.",
+    ),
+    (
+        "Pakai goggles untuk melihat RPM dan stress sebuah jaringan.",
+        "Wear goggles to read a network's speed and stress.",
+    ),
+    (
+        "Jaringan yang kelebihan stress berhenti: tambah sumber putaran.",
+        "An overstressed network stops: add another source.",
+    ),
+    (
+        "Kincir air berputar mengikuti arah aliran air di sekitarnya.",
+        "A water wheel turns the way the water around it flows.",
+    ),
+    (
+        "Kipas ke air mencuci barang, ke api mengasap, ke lava membakar.",
+        "A fan through water washes, through fire smokes, through lava blasts.",
+    ),
+    (
+        "Press di atas basin memadatkan isinya (compacting).",
+        "A press over a basin compacts what is in it.",
+    ),
+    (
+        "Blaze burner di bawah basin memberi panas untuk resep heated.",
+        "A blaze burner under a basin heats it for heated recipes.",
+    ),
+    (
+        "Dua crushing wheel yang berlawanan menghancurkan barang di celahnya.",
+        "Two crushing wheels turning inwards crush what falls between them.",
+    ),
+    (
+        "Mechanical arm memindahkan barang antar depot, corong, dan mesin.",
+        "A mechanical arm moves items between depots, funnels and machines.",
+    ),
+    (
+        "Buku quest Chronicles menunjukkan apa yang bisa dibuat berikutnya.",
+        "The Chronicles quest book shows what to build next.",
+    ),
+    (
+        "Reruntuhan Lost Realms menyimpan peti di menara pengawasnya.",
+        "Lost Realms ruins keep chests in their watchtowers.",
+    ),
+    (
+        "Di HP, tombol bola T membuka menu kontrol: Zalith atau Bedrock.",
+        "On a phone, the T ball opens the controls menu: Zalith or Bedrock.",
+    ),
+    (
+        "Loading pertama setelah update lebih lama: konten mod disusun sekali.",
+        "The first load after an update is longer: mod content is built once.",
+    ),
+];
+
+/// A step's words in Indonesian, for a game set to it.
+fn indonesian(step: &'static str) -> &'static str {
+    match step {
+        "Preparing resource packs and mods" => "Menyiapkan resource pack dan mod",
+        "Loading menu" => "Memuat menu",
+        "Loading assets" => "Memuat aset",
+        "Loading facts, biomes and environment" => "Memuat data blok dan bioma",
+        "Loading biomes and environment" => "Memuat bioma dan lingkungan",
+        "Loading pack tables" => "Memuat tabel pack",
+        "Loading collision and motion" => "Memuat tabrakan dan gerak",
+        "Preparing game resources" => "Menyiapkan sumber daya game",
+        "Loading mobs and items" => "Memuat mob dan item",
+        "Loading recipes and transformers" => "Memuat resep",
+        "Loading world resources" => "Memuat sumber daya dunia",
+        "World resources ready" => "Dunia siap",
+        other => other,
+    }
+}
+
+/// Whether the game's language is Indonesian (`options.txt`, read only).
+fn game_is_indonesian() -> bool {
+    std::fs::read_to_string("options.txt").is_ok_and(|text| {
+        text.lines()
+            .any(|line| line.trim().strip_prefix("lang:") == Some("id_id"))
+    })
+}
+
+/// `m:ss`.
+fn clock(seconds: f32) -> String {
+    let s = seconds.max(0.0) as u32;
+    format!("{}:{:02}", s / 60, s % 60)
+}
+
+/// A colour's alpha scaled by `a` (0..1).
+fn faded(color: u32, a: f32) -> u32 {
+    let alpha = ((color >> 24) as f32 * a.clamp(0.0, 1.0)) as u32;
+    (color & 0x00ff_ffff) | alpha << 24
+}
+
+/// Where everything goes, in GUI pixels inside the safe edges: the cogs
+/// above the panel, or beside it on a short (landscape phone) screen.
 #[derive(Debug)]
 struct Layout {
+    /// The large cog's centre and radius (to its teeth's tips); the small
+    /// one meshes at its upper right.
+    cog: (f32, f32, f32),
     x: f32,
     width: f32,
     title: f32,
     title_scale: f32,
-    overall: f32,
     step: f32,
-    memory: Option<f32>,
-    logs: f32,
-    log_rows: usize,
-    log_pitch: f32,
-    mods: f32,
+    bar: f32,
     bar_height: f32,
+    tip: f32,
+    footer: f32,
+}
+
+/// Where the small cog sits, from the large one's centre and radius.
+fn small_cog(cx: f32, cy: f32, r: f32) -> (f32, f32, f32) {
+    let rs = r * 0.55;
+    let d = (r + rs) * 0.84;
+    let a = -0.55f32;
+    (cx + d * a.cos(), cy + d * a.sin(), rs)
 }
 
 impl Layout {
-    fn new(width: f32, height: f32, memory: bool, margins: [f32; 4]) -> Self {
-        // The five-line desktop panel needs 206 pixels inside safe margins.
-        let compact = height - margins[1].max(16.0) - margins[3].max(16.0) < 206.0;
-        let gutter = if compact { 12.0 } else { 24.0 };
-        let edge = if compact { 6.0 } else { 16.0 };
+    fn new(width: f32, height: f32, margins: [f32; 4]) -> Self {
         let [left, top, right, bottom] = margins;
-        let (left, right) = (left.max(gutter), right.max(gutter));
-        let (top, bottom) = (top.max(edge), bottom.max(edge));
-        let available = (height - top - bottom).max(0.0);
-        let title_scale = if compact {
-            if available < 136.0 {
-                1.0
-            } else {
-                2.0
+        let (left, right) = (left.max(12.0), right.max(12.0));
+        let (top, bottom) = (top.max(8.0), bottom.max(8.0));
+        let inner_w = (width - left - right).max(0.0);
+        let inner_h = (height - top - bottom).max(0.0);
+        let footer = top + inner_h - 9.0;
+        // A short screen (a phone held sideways) puts the cogs beside the panel.
+        let side = inner_h < 180.0 && inner_w > 1.6 * inner_h;
+        if side {
+            let title_scale = if inner_h >= 120.0 { 2.0 } else { 1.0 };
+            let panel_h = 9.0 * title_scale + 8.0 + 9.0 + 4.0 + 4.0 + 8.0 + 9.0;
+            let box_size = (inner_h - 12.0).min(inner_w * 0.34).max(0.0);
+            let r = box_size * 0.36;
+            let panel_x = left + box_size + 12.0;
+            let width = (inner_w - box_size - 12.0).clamp(0.0, 420.0);
+            let title = top + ((inner_h - 12.0 - panel_h) * 0.5).max(0.0);
+            Self {
+                cog: (left + box_size * 0.42, top + (inner_h - 12.0) * 0.55, r),
+                x: panel_x,
+                width,
+                title,
+                title_scale,
+                step: title + 9.0 * title_scale + 8.0,
+                bar: title + 9.0 * title_scale + 8.0 + 13.0,
+                bar_height: 4.0,
+                tip: title + 9.0 * title_scale + 8.0 + 13.0 + 4.0 + 8.0,
+                footer,
             }
         } else {
-            3.0
-        };
-        let memory = memory && available >= 127.0;
-        let tight = compact && available < 107.0;
-        let gap = if tight {
-            2.0
-        } else if compact {
-            4.0
-        } else {
-            8.0
-        };
-        let pitch = if tight {
-            18.0
-        } else if compact {
-            20.0
-        } else {
-            26.0
-        };
-        let log_rows = if compact { 3 } else { LOG_ROWS };
-        let log_pitch = if tight {
-            10.0
-        } else if compact {
-            11.0
-        } else {
-            12.0
-        };
-        let overall = 9.0 * title_scale + 2.0 * gap;
-        let logs = overall + pitch * if memory { 3.0 } else { 2.0 } + gap;
-        let mods = logs + log_rows as f32 * log_pitch + gap;
-        let title = top
-            + ((available - mods - 9.0) * 0.5)
-                .max(0.0)
-                .min(available * 0.18);
-        let panel = (width - left - right).clamp(0.0, 560.0);
-        Self {
-            x: left + ((width - left - right - panel) * 0.5).max(0.0),
-            width: panel,
-            title,
-            title_scale,
-            overall: title + overall,
-            step: title + overall + pitch,
-            memory: memory.then_some(title + overall + 2.0 * pitch),
-            logs: title + logs,
-            log_rows,
-            log_pitch,
-            mods: title + mods,
-            bar_height: if tight {
-                3.0
-            } else if compact {
-                4.0
-            } else {
-                6.0
-            },
+            let title_scale = if inner_h >= 260.0 { 3.0 } else { 2.0 };
+            let panel_h = 9.0 * title_scale + 10.0 + 9.0 + 4.0 + 6.0 + 12.0 + 9.0;
+            let cog_box = ((inner_h - 14.0 - panel_h) * 0.8).clamp(0.0, 130.0);
+            let r = cog_box * 0.42;
+            let width = inner_w.min(420.0);
+            let x = left + (inner_w - width) * 0.5;
+            let block = cog_box + 10.0 + panel_h;
+            let start = top + ((inner_h - 14.0 - block) * 0.45).max(0.0);
+            let title = start + cog_box + 10.0;
+            let step = title + 9.0 * title_scale + 10.0;
+            Self {
+                cog: (left + inner_w * 0.5 - r * 0.35, start + cog_box * 0.58, r),
+                x,
+                width,
+                title,
+                title_scale,
+                step,
+                bar: step + 13.0,
+                bar_height: 6.0,
+                tip: step + 13.0 + 6.0 + 12.0,
+                footer,
+            }
         }
+    }
+}
+
+/// A cogwheel: a disc with `teeth` teeth at `angle`, a darker hub and its
+/// shaft's square hole, all of quads.
+fn cog(batch: &mut HudBatch, atlas: &HudAtlas, (cx, cy, r): (f32, f32, f32), teeth: u32, angle: f32) {
+    if r < 2.0 {
+        return;
+    }
+    let body = r * 0.8;
+    let segments = 36;
+    let point = |a: f32, d: f32| [cx + d * a.cos(), cy + d * a.sin()];
+    let disc = |batch: &mut HudBatch, d: f32, color: u32| {
+        for i in 0..segments {
+            let a0 = angle + i as f32 / segments as f32 * std::f32::consts::TAU;
+            let a1 = angle + (i + 1) as f32 / segments as f32 * std::f32::consts::TAU;
+            let (p0, p1) = (point(a0, d), point(a1, d));
+            batch.fill_quad(atlas, [[cx, cy], p0, p1, p1], color);
+        }
+    };
+    let step = std::f32::consts::TAU / teeth as f32;
+    for k in 0..teeth {
+        let a = angle + k as f32 * step;
+        let half = step * 0.22;
+        let tip = step * 0.15;
+        batch.fill_quad(
+            atlas,
+            [
+                point(a - half, body * 0.96),
+                point(a - tip, r),
+                point(a + tip, r),
+                point(a + half, body * 0.96),
+            ],
+            COG,
+        );
+    }
+    disc(batch, body, COG);
+    disc(batch, body * 0.78, COG_FACE);
+    disc(batch, body * 0.34, COG);
+    let s = body * 0.13;
+    let corner = |dx: f32, dy: f32| {
+        let (c, sn) = (angle.cos(), angle.sin());
+        [cx + dx * c - dy * sn, cy + dx * sn + dy * c]
+    };
+    batch.fill_quad(
+        atlas,
+        [corner(-s, -s), corner(s, -s), corner(s, s), corner(-s, s)],
+        PAGE,
+    );
+}
+
+/// A small integer hash, for the stars' fixed places.
+fn hash(mut x: u32) -> u32 {
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7feb_352d);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846c_a68b);
+    x ^ x >> 16
+}
+
+/// Slow stars drifting left, twinkling: the launcher's deep space.
+fn stars(batch: &mut HudBatch, atlas: &HudAtlas, w: f32, h: f32, seconds: f32) {
+    for i in 0..STARS {
+        let a = hash(i * 3 + 1);
+        let b = hash(i * 3 + 2);
+        let c = hash(i * 3 + 3);
+        let speed = 2.0 + (a % 7) as f32;
+        let x = ((b % 10_000) as f32 / 10_000.0 * (w + 8.0) - seconds * speed).rem_euclid(w + 8.0) - 4.0;
+        let y = (c % 10_000) as f32 / 10_000.0 * h;
+        let twinkle = 0.45 + 0.4 * (seconds * (0.6 + (a % 5) as f32 * 0.25) + i as f32).sin();
+        let size = if a % 9 == 0 { 2.0 } else { 1.0 };
+        batch.fill(atlas, x, y, size, size, faded(STAR, twinkle));
     }
 }
 
@@ -279,22 +461,50 @@ pub(in crate::game) fn early_gui() -> UiResources {
 /// the last memory sample don't restart when the second worker is running.
 pub(in crate::game) struct Screen {
     status: Status,
-    overall_text: String,
+    percent: u32,
     shown: f32,
     started: Instant,
     frame: Instant,
+    /// The cogs' turn, integrated so a change of speed doesn't jump.
+    turn: f32,
     sampled: Option<Instant>,
     memory: Option<(u64, u64)>,
-    memory_text: String,
+    /// The game's language is Indonesian.
+    indonesian: bool,
+    /// The last complete load's seconds, and whether this one was saved.
+    expected: Option<f32>,
+    saved: bool,
     font_epoch: u64,
-    label_layout: Option<(f32, f32, [f32; 4])>,
+    /// What the cached labels were laid out for: size, margins, percent,
+    /// tip, the second shown and the memory sample.
+    label_key: Option<LabelKey>,
     labels: Vec<HudVertex>,
+    /// Where the tip's text is, to fade it in.
+    tip_vertices: std::ops::Range<usize>,
     pending_patches: Vec<horizon_client::font::Patch>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LabelKey {
+    size: (f32, f32),
+    margins: [f32; 4],
+    percent: u32,
+    tip: usize,
+    second: u32,
+    revision: u64,
 }
 
 impl Screen {
     pub(in crate::game) fn for_brand(started: Instant) -> Option<Self> {
-        (horizon_client::brand::name() == "Tachyon").then(|| Self::new(started))
+        (horizon_client::brand::name() == "Tachyon").then(|| {
+            let mut screen = Self::new(started);
+            screen.indonesian = game_is_indonesian();
+            screen.expected = std::fs::read_to_string(LOAD_SECONDS_FILE)
+                .ok()
+                .and_then(|t| t.trim().parse::<f32>().ok())
+                .filter(|s| s.is_finite() && *s > 0.0);
+            screen
+        })
     }
 
     fn new(started: Instant) -> Self {
@@ -303,18 +513,26 @@ impl Screen {
                 revision: 0,
                 ..Default::default()
             },
-            overall_text: format!("0 / {STEPS} steps"),
+            percent: 0,
             shown: 0.0,
             started,
             frame: Instant::now(),
+            turn: 0.0,
             sampled: None,
             memory: None,
-            memory_text: String::with_capacity(64),
+            indonesian: false,
+            expected: None,
+            saved: false,
             font_epoch: 0,
-            label_layout: None,
+            label_key: None,
             labels: Vec::new(),
+            tip_vertices: 0..0,
             pending_patches: Vec::new(),
         }
+    }
+
+    fn say<'a>(&self, english: &'a str, indonesian: &'a str) -> &'a str {
+        if self.indonesian { indonesian } else { english }
     }
 
     pub(in crate::game) fn draw(&mut self, batch: &mut HudBatch, atlas: &HudAtlas, progress: &Progress) {
@@ -323,98 +541,145 @@ impl Screen {
             // glyph positions and patches from the previous texture no longer apply.
             self.pending_patches.clear();
             self.font_epoch = atlas.font.epoch();
-            self.label_layout = None;
+            self.label_key = None;
         }
         batch.patches.append(&mut self.pending_patches);
         if let Some(trace) = &progress.trace {
             let status = trace.lock().unwrap();
             if status.revision != self.status.revision {
                 self.status = status.clone();
-                self.overall_text.clear();
-                let _ = write!(self.overall_text, "{} / {STEPS} steps", status.done);
-                self.label_layout = None;
             }
         }
         let now = Instant::now();
-        self.shown = smooth(
-            self.shown,
-            self.status.done as f32 / STEPS as f32,
-            now.duration_since(self.frame).as_secs_f32(),
-        );
+        let seconds = now.duration_since(self.started).as_secs_f32();
+        let dt = now.duration_since(self.frame).as_secs_f32().clamp(0.0, 0.25);
+        self.shown = smooth(self.shown, self.status.done as f32 / STEPS as f32, dt);
+        self.percent = (self.shown * 100.0).round() as u32;
+        self.turn += dt * (0.5 + 2.5 * self.shown);
         self.frame = now;
+        let ready = self.status.done == STEPS;
+        if ready && !self.saved {
+            // Remembered for the next start's estimate.
+            self.saved = true;
+            let _ = std::fs::write(LOAD_SECONDS_FILE, format!("{seconds:.0}"));
+        }
         // Two small /proc reads, or two Windows API calls, once a second.
-        // A failed sample keeps the last good one instead of flickering.
         if self
             .sampled
             .is_none_or(|at| now.duration_since(at) >= Duration::from_secs(1))
         {
             self.sampled = Some(now);
-            if let Some(memory) = horizon_threads::process_memory().filter(|m| m.1 != 0)
-                && self.memory != Some(memory)
-            {
+            if let Some(memory) = horizon_threads::process_memory().filter(|m| m.1 != 0) {
                 self.memory = Some(memory);
-                self.memory_text.clear();
-                let _ = write!(
-                    self.memory_text,
-                    "Memory: {} / {} MB (RAM)",
-                    memory.0 / (1024 * 1024),
-                    memory.1 / (1024 * 1024)
-                );
-                self.label_layout = None;
             }
         }
         #[cfg(target_os = "android")]
         let margins = crate::game::android::hud_margins().map(|m| m / batch.scale);
         #[cfg(not(target_os = "android"))]
         let margins = [0.0; 4];
-        let l = Layout::new(batch.width, batch.height, self.memory.is_some(), margins);
         let (w, h) = (batch.width, batch.height);
-        batch.vertices.reserve(self.labels.len() + 48);
-        batch.fill(atlas, 0.0, 0.0, w, h, PAGE);
+        let l = Layout::new(w, h, margins);
+        batch.vertices.reserve(self.labels.len() + 1200);
+        batch.fill_gradient(atlas, (0.0, 0.0, w, h), PAGE, PAGE_LOW);
+        stars(batch, atlas, w, h, seconds);
+        let (cx, cy, r) = l.cog;
+        cog(batch, atlas, small_cog(cx, cy, r), SMALL_TEETH, -2.0 * self.turn + 0.2);
+        cog(batch, atlas, l.cog, LARGE_TEETH, self.turn);
         if l.width <= 0.0 {
             return;
         }
-        let layout = (w, h, margins);
-        if self.label_layout != Some(layout) {
+        let tip = (seconds / TIP_SECONDS) as usize % TIPS.len();
+        let key = LabelKey {
+            size: (w, h),
+            margins,
+            percent: self.percent,
+            tip,
+            second: seconds as u32,
+            revision: self.status.revision,
+        };
+        if self.label_key != Some(key) {
             // HudBatch.text resolves and lays out text with temporary buffers.
-            // Do that only when a label, layout or font changes, not each frame.
+            // Do that only when a label changes (at most a few times a second).
             let first = batch.vertices.len();
-            labels(
-                batch,
-                atlas,
-                &l,
-                &self.status,
-                &self.overall_text,
-                &self.memory_text,
-            );
+            let tips = self.labels(batch, atlas, &l, seconds, tip);
             self.labels.clear();
             self.labels.extend_from_slice(&batch.vertices[first..]);
-            self.label_layout = Some(layout);
+            self.tip_vertices = tips.start - first..tips.end - first;
+            self.label_key = Some(key);
         } else {
+            let first = batch.vertices.len();
             batch.vertices.extend_from_slice(&self.labels);
+            let fade = ((seconds % TIP_SECONDS) / TIP_FADE).min(1.0);
+            for v in &mut batch.vertices[first + self.tip_vertices.start..first + self.tip_vertices.end] {
+                v.color = faded(v.color, fade);
+            }
         }
-        bar(batch, atlas, &l, l.overall, (0.0, self.shown), ACCENT);
-        bar(
-            batch,
-            atlas,
-            &l,
-            l.step,
-            segment(
-                now.duration_since(self.started).as_secs_f32(),
-                self.status.done == STEPS,
-            ),
-            ACCENT,
+        // The bar: its track, the eased fill and a light running along it
+        // while the work has no total.
+        batch.fill(atlas, l.x, l.bar, l.width, l.bar_height, TRACK);
+        batch.fill(atlas, l.x, l.bar, l.width * self.shown, l.bar_height, ACCENT);
+        if !ready {
+            let (start, width) = segment(seconds, false);
+            let x = l.x + l.width * self.shown;
+            let room = l.width * (1.0 - self.shown);
+            batch.fill(atlas, x + room * start, l.bar, room * width, l.bar_height, GLOW);
+        }
+    }
+
+    /// The text: title, step and percent, the tip, and the footer (mods,
+    /// time, memory). Returns where the tip's vertices are, to fade it.
+    fn labels(
+        &self,
+        batch: &mut HudBatch,
+        atlas: &HudAtlas,
+        l: &Layout,
+        seconds: f32,
+        tip: usize,
+    ) -> std::ops::Range<usize> {
+        let name = horizon_client::brand::name().to_uppercase();
+        let name_width = HudBatch::text_width(atlas, &name).max(1.0);
+        let title_scale = l.title_scale.min(l.width / name_width);
+        let x = l.x + (l.width - name_width * title_scale) * 0.5;
+        let first = batch.vertices.len();
+        batch.text(atlas, &name, x, l.title, INK, false);
+        batch.scale_since(first, x, l.title, title_scale, title_scale);
+        let percent = format!("{}%", self.percent);
+        let percent_width = HudBatch::text_width(atlas, &percent);
+        let step = if self.indonesian {
+            indonesian(self.status.step)
+        } else {
+            self.status.step
+        };
+        line(batch, atlas, step, l.x, l.step, (l.width - percent_width - 8.0).max(0.0), INK);
+        batch.text(atlas, &percent, l.x + l.width - percent_width, l.step, ACCENT, false);
+        let (id, en) = TIPS[tip];
+        let text = format!("{} {}", self.say("Tip:", "Tips:"), self.say(en, id));
+        let tips_start = batch.vertices.len();
+        line(batch, atlas, &text, l.x, l.tip, l.width, SOFT);
+        let tips = tips_start..batch.vertices.len();
+        // The footer: mods on the left, time and memory on the right.
+        let mut time = clock(seconds);
+        if let Some(expected) = self.expected
+            && self.status.done < STEPS
+            && expected > seconds
+        {
+            time = format!(
+                "{time}  ·  {} {}",
+                self.say("about", "sekitar"),
+                clock(expected - seconds)
+            ) + self.say(" left", " lagi");
+        }
+        if let Some((used, _)) = self.memory {
+            time = format!("{time}  ·  {} MB", used / (1024 * 1024));
+        }
+        let time_width = HudBatch::text_width(atlas, &time).min(l.width);
+        let mods = self.status.mods.as_ref().map_or_else(
+            || self.say("Tachyon: discovering mods", "Tachyon: mencari mod").to_owned(),
+            |mods| mods.label(l.width - time_width - 12.0).to_owned(),
         );
-        if let (Some(y), Some((used, max))) = (l.memory, self.memory) {
-            bar(
-                batch,
-                atlas,
-                &l,
-                y,
-                (0.0, (used as f64 / max as f64).clamp(0.0, 1.0) as f32),
-                SOFT,
-            );
-        }
+        line(batch, atlas, &mods, l.x, l.footer, (l.width - time_width - 12.0).max(0.0), DIM);
+        line(batch, atlas, &time, l.x + l.width - time_width, l.footer, time_width, DIM);
+        tips
     }
 
     /// Surface acquisition can skip a frame before glyph patches are uploaded.
@@ -424,97 +689,6 @@ impl Screen {
         if !submitted {
             self.pending_patches.append(&mut batch.patches);
         }
-    }
-}
-
-fn labels(
-    batch: &mut HudBatch,
-    atlas: &HudAtlas,
-    l: &Layout,
-    status: &Status,
-    overall: &str,
-    memory: &str,
-) {
-    let name = horizon_client::brand::name();
-    let name_width = HudBatch::text_width(atlas, name).max(1.0);
-    let title_scale = l.title_scale.min(l.width / name_width);
-    let x = l.x + (l.width - name_width * title_scale) * 0.5;
-    let first = batch.vertices.len();
-    batch.text(atlas, name, x, l.title, INK, false);
-    batch.scale_since(first, x, l.title, title_scale, title_scale);
-    let rule = l.width.min(32.0);
-    batch.fill(
-        atlas,
-        l.x + (l.width - rule) * 0.5,
-        l.overall - 4.0,
-        rule,
-        1.0,
-        ACCENT,
-    );
-    let detail = HudBatch::text_width(atlas, overall).min(l.width);
-    line(
-        batch,
-        atlas,
-        "Overall loading",
-        l.x,
-        l.overall,
-        (l.width - detail - 8.0).max(0.0),
-        SOFT,
-    );
-    line(
-        batch,
-        atlas,
-        overall,
-        l.x + l.width - detail,
-        l.overall,
-        detail,
-        SOFT,
-    );
-    line(batch, atlas, status.step, l.x, l.step, l.width, INK);
-    if let Some(y) = l.memory {
-        line(batch, atlas, memory, l.x, y, l.width, SOFT);
-    }
-    let messages = &status.messages.0;
-    for (i, message) in messages
-        .iter()
-        .skip(messages.len().saturating_sub(l.log_rows))
-        .enumerate()
-    {
-        line(
-            batch,
-            atlas,
-            message,
-            l.x,
-            l.logs + i as f32 * l.log_pitch,
-            l.width,
-            SOFT,
-        );
-    }
-    let mods = status
-        .mods
-        .as_ref()
-        .map_or("Tachyon: discovering mods", |mods| mods.label(l.width));
-    line(batch, atlas, mods, l.x, l.mods, l.width, INK);
-}
-
-fn bar(
-    batch: &mut HudBatch,
-    atlas: &HudAtlas,
-    l: &Layout,
-    y: f32,
-    (start, width): (f32, f32),
-    color: u32,
-) {
-    batch.fill(atlas, l.x, y + 11.0, l.width, l.bar_height, TRACK);
-    if width > 0.0 {
-        batch.fill(
-            atlas,
-            l.x + start * l.width,
-            y + 11.0,
-            width * l.width,
-            l.bar_height,
-            color,
-        );
     }
 }
 
@@ -685,42 +859,52 @@ mod tests {
     }
 
     fn fits(l: &Layout, width: f32, height: f32) {
-        assert!(l.x >= 0.0 && l.x + l.width <= width);
+        let (cx, cy, r) = l.cog;
+        let (sx, sy, sr) = small_cog(cx, cy, r);
+        assert!(cx - r >= 0.0 && cy - r >= 0.0, "{l:?}");
+        assert!(sx + sr <= width && sy - sr >= 0.0, "{l:?}");
+        assert!(l.x >= 0.0 && l.x + l.width <= width, "{l:?}");
         assert!(l.title >= 0.0);
-        assert!(l.title + 9.0 * l.title_scale < l.overall);
-        assert!(l.overall + 11.0 + l.bar_height < l.step);
-        let last = l.memory.unwrap_or(l.step);
-        assert!(last + 11.0 + l.bar_height < l.logs);
-        assert!(l.logs + l.log_rows as f32 * l.log_pitch <= l.mods);
-        assert!(l.mods + 9.0 <= height);
+        assert!(l.title + 9.0 * l.title_scale < l.step, "{l:?}");
+        assert!(l.step + 9.0 <= l.bar, "{l:?}");
+        assert!(l.bar + l.bar_height < l.tip, "{l:?}");
+        assert!(l.tip + 9.0 <= l.footer, "{l:?}");
+        assert!(l.footer + 9.0 <= height, "{l:?}");
+        // Above the panel, the cogs end before the title; beside it, before its left.
+        assert!(cy + r <= l.title || cx + r <= l.x, "{l:?}");
     }
 
     #[test]
-    fn landscape_phone_fits_three_bars_and_three_messages_inside_safe_edges() {
-        let l = Layout::new(320.0, 160.0, true, [20.0, 8.0, 12.0, 6.0]);
+    fn landscape_phone_puts_the_cogs_beside_the_panel_inside_safe_edges() {
+        let l = Layout::new(320.0, 160.0, [20.0, 8.0, 12.0, 6.0]);
         fits(&l, 308.0, 154.0);
-        assert!(l.x >= 20.0 && l.memory.is_some());
-        assert_eq!(l.log_rows, 3);
-        let without_memory = Layout::new(320.0, 160.0, false, [0.0; 4]);
-        fits(&without_memory, 320.0, 160.0);
-        assert!(without_memory.memory.is_none());
-        let notched = Layout::new(320.0, 160.0, true, [24.0, 30.0, 24.0, 30.0]);
+        assert!(l.x > l.cog.0 && l.cog.0 >= 20.0);
+        let notched = Layout::new(320.0, 160.0, [24.0, 30.0, 24.0, 30.0]);
         fits(&notched, 296.0, 130.0);
-        assert!(notched.memory.is_none());
     }
 
     #[test]
-    fn desktop_centers_a_bounded_panel_with_five_messages() {
-        for (w, h) in [(426.0, 240.0), (1280.0, 720.0), (3840.0, 2160.0)] {
-            let l = Layout::new(w, h, true, [0.0; 4]);
+    fn desktop_centers_a_bounded_panel_under_the_cogs() {
+        for (w, h) in [(426.0, 240.0), (640.0, 360.0), (1280.0, 720.0), (3840.0, 2160.0)] {
+            let l = Layout::new(w, h, [0.0; 4]);
             fits(&l, w, h);
-            assert_eq!(l.log_rows, LOG_ROWS);
-            assert!(l.width <= 560.0);
+            assert!(l.width <= 420.0);
             assert!((l.x + l.width * 0.5 - w * 0.5).abs() < 0.01);
         }
-        let short = Layout::new(426.0, 230.0, true, [0.0; 4]);
-        fits(&short, 426.0, 230.0);
-        assert_eq!(short.log_rows, 3);
+    }
+
+    #[test]
+    fn tips_and_steps_read_in_both_languages_and_times_are_clocks() {
+        assert!(TIPS.iter().all(|(id, en)| !id.is_empty() && !en.is_empty() && id != en));
+        for stage in 0..=9 {
+            let step = checkpoint(stage).1;
+            assert_ne!(indonesian(step), step, "{step}");
+        }
+        assert_ne!(indonesian(Status::default().step), Status::default().step);
+        assert_eq!(clock(0.0), "0:00");
+        assert_eq!(clock(83.9), "1:23");
+        assert_eq!(faded(0xff12_3456, 0.5) >> 24, 0x7f);
+        assert_eq!(faded(0xff12_3456, 0.5) & 0x00ff_ffff, 0x12_3456);
     }
 
     #[test]
@@ -747,31 +931,20 @@ mod tests {
         batch.width = 320.0;
         batch.height = 160.0;
         screen.draw(&mut batch, &atlas, &progress);
-        let original = screen.labels.iter().map(|v| v.pos).collect::<Vec<_>>();
-        let capacity = screen.labels.capacity();
-
-        batch.vertices.clear();
-        batch.patches.clear();
-        screen.draw(&mut batch, &atlas, &progress);
-        assert_eq!(screen.labels.capacity(), capacity);
-        assert_eq!(
-            screen.labels.iter().map(|v| v.pos).collect::<Vec<_>>(),
-            original
-        );
+        let key = screen.label_key.unwrap();
+        assert!(!screen.labels.is_empty());
+        assert!(!screen.tip_vertices.is_empty());
 
         progress.set(6);
         batch.vertices.clear();
         screen.draw(&mut batch, &atlas, &progress);
-        assert_eq!(screen.overall_text, "5 / 8 steps");
-        assert_ne!(
-            screen.labels.iter().map(|v| v.pos).collect::<Vec<_>>(),
-            original
-        );
+        assert_eq!(screen.status.done, 5);
+        assert_ne!(screen.label_key.unwrap().revision, key.revision);
 
         batch.width = 640.0;
         batch.vertices.clear();
         screen.draw(&mut batch, &atlas, &progress);
-        assert_eq!(screen.label_layout.unwrap().0, 640.0);
+        assert_eq!(screen.label_key.unwrap().size.0, 640.0);
     }
 
     #[test]
