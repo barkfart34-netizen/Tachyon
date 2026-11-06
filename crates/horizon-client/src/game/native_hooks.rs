@@ -1211,6 +1211,7 @@ impl GameLevel<'_> {
         old: BlockStateId,
         new: BlockStateId,
     ) {
+        self.tachyon_water_wheel_changed(dimension_id(dimension), [pos.x, pos.y, pos.z], old, new);
         mod_api::dispatch_block_changed(self, mod_api::mods(), dimension, pos, old, new);
     }
 
@@ -1739,6 +1740,7 @@ impl GameLevel<'_> {
         fluid: FluidState,
         answer: &mut Option<Option<BlockStateId>>,
     ) {
+        self.tachyon_water_wheel_place(state, context, answer);
         mod_api::dispatch_state_for_placement(
             self,
             mod_api::mods(),
@@ -2518,6 +2520,7 @@ impl Game<'_> {
     }
     /// After a successful authoritative server level tick pass.
     pub(super) fn native_level_tick_post(&mut self, dimension: &str) {
+        self.tachyon_water_wheel_settle(dimension);
         mod_api::dispatch_level_tick_post(self, mod_api::mods(), dimension);
     }
     /// A client tick of the window starts (NeoForge's `ClientTickEvent.Pre`,

@@ -98,6 +98,7 @@ pub fn main(app: AndroidApp) {
     horizon_client::brand::set_content(paths.content.clone());
     phone_defaults(&paths.home);
     crate::tachyon::mods::settle(&paths.home);
+    crate::tachyon::create_port::refresh(&paths.home.join(horizon_client::mod_list::DIR).join("create"));
     log::info!(
         "{} {BUILD} on {}",
         brand::NAME,

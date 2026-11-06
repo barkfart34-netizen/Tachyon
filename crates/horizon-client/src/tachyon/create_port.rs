@@ -38,6 +38,8 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("stressometer", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
     ("clutch", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
     ("gearshift", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
+    ("encased_chain_drive", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
+    ("adjustable_chain_gearshift", "minecraft:quartz_pillar", 2.0, "minecraft:oak_planks"),
     ("encased_fan", "minecraft:quartz_pillar", 2.0, "minecraft:copper_block"),
     // Six ways, out of the block they were put on.
     ("creative_motor", "minecraft:waxed_lightning_rod", 1.5, "minecraft:copper_block"),
@@ -66,6 +68,9 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("crushing_wheel", "minecraft:iron_chain", 2.0, "minecraft:stone"),
     ("water_wheel", "minecraft:waxed_lightning_rod", 1.5, "minecraft:oak_planks"),
     ("large_water_wheel", "minecraft:iron_chain", 1.5, "minecraft:oak_planks"),
+    // The large wheel's body round it (WaterWheelStructuralBlock), facing
+    // the way to the wheel; no item, drawn by the wheel.
+    ("water_wheel_structure", "minecraft:waxed_lightning_rod", 1.5, "minecraft:oak_planks"),
 ];
 
 /// The blocks a whole block in every state, by their template's property.
@@ -74,10 +79,29 @@ const WHOLE: &[(&str, &str, &[&str])] = &[
     ("water_wheel", "facing", &["down", "up", "north", "south", "west", "east"]),
     ("large_water_wheel", "axis", &["x", "y", "z"]),
     ("crushing_wheel", "axis", &["x", "y", "z"]),
+    ("water_wheel_structure", "facing", &["down", "up", "north", "south", "west", "east"]),
 ];
 
 /// The blocks drawn by the engine alone, turning whole.
 const TURNING: &[&str] = &["shaft", "cogwheel", "large_cogwheel", "crushing_wheel", "large_water_wheel"];
+
+/// The version of [`fix`]: a port fixed by an older one is fixed again.
+const VERSION: &str = "2";
+const STAMP: &str = ".tachyon-fix";
+
+/// Fixes a Create ported into `dir` (`horizon-mods/create`) by an older
+/// Tachyon again, once: the engine has learned more of its blocks since.
+pub fn refresh(dir: &Path) {
+    if !dir.join("data/create/horizon/block").is_dir()
+        || fs::read_to_string(dir.join(STAMP)).is_ok_and(|v| v.trim() == VERSION)
+    {
+        return;
+    }
+    match fix(dir) {
+        Ok(()) => log::info!("Tachyon: Create's port fixed again for this version"),
+        Err(e) => log::warn!("Tachyon: Create's port: {e}"),
+    }
+}
 
 /// Makes the Create ported into `dir` (`horizon-mods/create`) the engine's.
 pub fn fix(dir: &Path) -> Result<(), String> {
@@ -100,6 +124,9 @@ pub fn fix(dir: &Path) -> Result<(), String> {
                 .map(|v| ((*v).to_owned(), json!(body)))
                 .collect();
             declaration["shapes"] = json!({"property": property, "values": values});
+        }
+        if *block == "water_wheel_structure" {
+            declaration["item"] = json!(false);
         }
         if *block == "chute" {
             declaration["default_state"] = json!({
@@ -167,6 +194,17 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         Some(format!("axis={axis}"))
     })?;
     controller_state(&blockstates.join("rotation_speed_controller.json"))?;
+    // ChainDriveBlock's single drive on each axis: its chain to the drives
+    // beside it is the engine's, not a state.
+    for chain in ["encased_chain_drive", "adjustable_chain_gearshift"] {
+        rekey(&blockstates.join(format!("{chain}.json")), |k| {
+            let axis = k.split(',').find_map(|p| p.strip_prefix("axis="))?;
+            let single = k.split(',').all(|p| {
+                p.starts_with("axis=") || matches!(p, "part=none" | "axis_along_first=false" | "powered=false")
+            });
+            (matches!(axis, "x" | "y" | "z") && single).then(|| format!("axis={axis}"))
+        })?;
+    }
     // ArmBlock on the floor only, for now.
     rekey(&blockstates.join("mechanical_arm.json"), |k| {
         (k == "ceiling=false" || k.is_empty()).then(String::new)
@@ -226,6 +264,7 @@ pub fn fix(dir: &Path) -> Result<(), String> {
     chute_models(&blockstates.join("chute.json"))?;
     burner_flames(&blockstates.join("lit_blaze_burner.json"))?;
     burner_loot(&dir.join("data/create/loot_table/blocks/blaze_burner.json"))?;
+    fs::write(dir.join(STAMP), VERSION).map_err(|e| format!("{}: {e}", dir.display()))?;
     Ok(())
 }
 
@@ -477,6 +516,11 @@ mod tests {
         let large = read(&dir.join("data/create/horizon/block/large_water_wheel.json")).unwrap();
         assert_eq!(large["template"], "minecraft:iron_chain");
         assert_eq!(large["properties"]["hardness"], 1.5);
+        let body = read(&dir.join("data/create/horizon/block/water_wheel_structure.json")).unwrap();
+        assert_eq!(body["template"], "minecraft:waxed_lightning_rod");
+        assert_eq!(body["item"], false);
+        assert_eq!(body["shapes"]["property"], "facing");
+        assert_eq!(fs::read_to_string(dir.join(STAMP)).unwrap(), VERSION);
         assert_eq!(large["shapes"]["property"], "axis");
         for axis in ["x", "y", "z"] {
             assert_eq!(

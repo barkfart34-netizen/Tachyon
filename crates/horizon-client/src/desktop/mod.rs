@@ -111,6 +111,7 @@ fn game() -> i32 {
     log::info!("{} {BUILD} (Horizon {})", brand::NAME, crash::version());
     let _ = std::fs::remove_file(home.join(ERROR_FILE));
     crate::tachyon::mods::settle(&home);
+    crate::tachyon::create_port::refresh(&home.join(horizon_client::mod_list::DIR).join("create"));
     horizon_client::spans::startup::init(std::time::Instant::now());
     horizon_client::entry::install_hooks();
     let code = match horizon_client::game::run_with() {

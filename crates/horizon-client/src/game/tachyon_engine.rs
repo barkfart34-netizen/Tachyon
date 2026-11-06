@@ -203,6 +203,10 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
         "water_wheel" => Part::WaterWheel(facing()?.axis()),
         // LargeWaterWheelBlock uses an axis, not a facing.
         "large_water_wheel" => Part::LargeWaterWheel(axis()?),
+        // ChainDriveBlock's part and axis_along_first follow from the
+        // drives beside it; create_port keeps the axis.
+        "encased_chain_drive" => Part::ChainDrive(axis()?),
+        "adjustable_chain_gearshift" => Part::ChainGearshift(axis()?),
         // The four-way template's facing gives HorizontalAxisKineticBlock's
         // shaft across the player's facing, below the cogwheel.
         "rotation_speed_controller" => Part::SpeedController(match facing()?.axis() {
@@ -349,6 +353,8 @@ struct Owner {
     cranks: HashMap<[i32; 3], (u64, f32)>,
     /// The clutches and gearshifts powered by redstone.
     powered: HashSet<[i32; 3]>,
+    /// The adjustable chain gearshifts' redstone signals, where above 0.
+    signals: HashMap<[i32; 3], u8>,
     /// The water wheels and windmills turning, at their own speeds.
     natural: HashMap<[i32; 3], f32>,
     /// What the millstones hold, kept with the motors' speeds.
@@ -918,10 +924,13 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
     const HALF: &str = "create:block/shaft_half";
     const SHAFT: &str = "create:block/shaft";
     match part {
+        // ChainDriveBlock's and ChainGearshiftBlock's ShaftRenderer.
         Part::Shaft(a)
         | Part::Press(a)
         | Part::SpeedGauge(a)
         | Part::StressGauge(a)
+        | Part::ChainDrive(a)
+        | Part::ChainGearshift(a)
         | Part::SpeedController(a) => {
             vec![(SHAFT, positive(a), 1.0, 0, Dir::Up)]
         }
@@ -1020,6 +1029,8 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::EncasedLargeCog(_)
         | Part::SpeedGauge(_)
         | Part::StressGauge(_)
+        | Part::ChainDrive(_)
+        | Part::ChainGearshift(_)
         | Part::SpeedController(_) => Vec::new(),
     }
 }
@@ -1190,12 +1201,15 @@ impl Game<'_> {
                     owner.save(&root, dimension);
                 }
             }
-            let split: Vec<[i32; 3]> = owner
+            // The second: whether the signal's strength counts.
+            let split: Vec<([i32; 3], bool)> = owner
                 .index
                 .parts
                 .iter()
-                .filter(|(_, part)| part.split() || matches!(part, Part::Arm | Part::Funnel(_)))
-                .map(|(p, _)| *p)
+                .filter(|(_, part)| {
+                    part.split() || matches!(part, Part::Arm | Part::Funnel(_) | Part::ChainGearshift(_))
+                })
+                .map(|(p, part)| (*p, matches!(part, Part::ChainGearshift(_))))
                 .collect();
             let nature: Option<Vec<([i32; 3], Part)>> = (owner.ticks % NATURE_TICKS == 1)
                 .then(|| {
@@ -1218,18 +1232,26 @@ impl Game<'_> {
             self.pop_resource(p, stack);
         }
         let natural = nature.map(|parts| self.tachyon_natural(&parts));
-        // Redstone at the clutches, gearshifts, arms and funnel points.
-        let powered: HashSet<[i32; 3]> = if split.is_empty() {
-            HashSet::new()
+        // Redstone at the clutches, gearshifts, arms and funnel points, and
+        // its strength at the adjustable chain gearshifts.
+        let (powered, signals) = if split.is_empty() {
+            (HashSet::new(), HashMap::new())
         } else {
             self.with_level(|b, level, ticks| {
-                split
-                    .into_iter()
-                    .filter(|p| {
-                        let at = horizon_core::position::BlockPos::new(p[0], p[1], p[2]);
-                        b.has_neighbor_signal(level, ticks, at)
-                    })
-                    .collect()
+                let mut powered: HashSet<[i32; 3]> = HashSet::new();
+                let mut signals: HashMap<[i32; 3], u8> = HashMap::new();
+                for (p, strength) in split {
+                    let at = horizon_core::position::BlockPos::new(p[0], p[1], p[2]);
+                    if strength {
+                        let signal = b.best_neighbor_signal(level, ticks, at).clamp(0, 15) as u8;
+                        if signal > 0 {
+                            signals.insert(p, signal);
+                        }
+                    } else if b.has_neighbor_signal(level, ticks, at) {
+                        powered.insert(p);
+                    }
+                }
+                (powered, signals)
             })
         };
         // The burners count down before the basins test their heat.
@@ -1260,6 +1282,10 @@ impl Game<'_> {
             let owner = owners.entry(dimension).or_default();
             if powered != owner.powered {
                 owner.powered = powered;
+                changed = true;
+            }
+            if signals != owner.signals {
+                owner.signals = signals;
                 changed = true;
             }
             if let Some(natural) = natural
@@ -1299,7 +1325,13 @@ impl Game<'_> {
                         Some((*p, if out.positive() { set } else { -set }))
                     })
                     .collect();
-                let solved = kinetic::solve(&owner.index.parts, &sources, &owner.powered, &owner.controllers);
+                let solved = kinetic::solve_with(
+                    &owner.index.parts,
+                    &sources,
+                    &owner.powered,
+                    &owner.controllers,
+                    &owner.signals,
+                );
                 let targets: HashMap<[i32; 3], i32> = owner
                     .controllers
                     .iter()
@@ -2250,6 +2282,8 @@ impl Game<'_> {
             Part::Gearshift(_) => ("gearshift", "Gearshift"),
             Part::WaterWheel(_) => ("water_wheel", "Water Wheel"),
             Part::LargeWaterWheel(_) => ("large_water_wheel", "Large Water Wheel"),
+            Part::ChainDrive(_) => ("encased_chain_drive", "Encased Chain Drive"),
+            Part::ChainGearshift(_) => ("adjustable_chain_gearshift", "Adjustable Chain Gearshift"),
             Part::Windmill(_) => ("windmill", "Windmill"),
             Part::Millstone => ("millstone", "Millstone"),
             Part::Press(_) => ("mechanical_press", "Mechanical Press"),

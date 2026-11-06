@@ -10,6 +10,10 @@
 //! and RotationPropagator, including EncasedCogwheelBlock's closed shafts.
 //! A rotation speed controller sets the speed across its link to the large
 //! cogwheel above it ([`super::speed_controller`]), without becoming a motor.
+//! Encased chain drives beside each other across their axes turn alike
+//! (ChainDriveBlock); an adjustable chain gearshift's redstone signal
+//! speeds up what it passes along the chain (ChainGearshiftBlockEntity), as
+//! Kinetics for Horizon ports them (sakurartro, MIT).
 //!
 //! [`solve`] gives every half of every part its speed from the sources it
 //! is joined to. A network whose parts disagree (two motors at odds, a loop
@@ -198,6 +202,12 @@ pub enum Part {
     /// Create's large water wheel, as LargeWaterWheelBlock: its shaft along
     /// the axis, its rim two blocks from the center.
     LargeWaterWheel(Axis),
+    /// Create's encased chain drive: a shaft along its axis, and a chain to
+    /// the drives beside it across the axis.
+    ChainDrive(Axis),
+    /// Create's adjustable chain gearshift: a chain drive whose redstone
+    /// signal changes the speed it passes along the chain.
+    ChainGearshift(Axis),
     /// Sails on a shaft along its axis, turned by the wind under open sky.
     Windmill(Axis),
     /// A millstone: turned by a shaft from below, or by small cogwheels
@@ -255,6 +265,8 @@ impl Part {
             | Part::LargeWaterWheel(a)
             | Part::Windmill(a)
             | Part::Fan(a)
+            | Part::ChainDrive(a)
+            | Part::ChainGearshift(a)
             | Part::CrushingWheel(a) => d.axis() == a,
             Part::Gearbox(a) => d.axis() != a,
             Part::Motor(out) | Part::Crank(out) => d == out,
@@ -287,6 +299,13 @@ impl Part {
             // AllBlocks registers CStress.setNoImpact for the controller.
             Part::SpeedController(_) => 0.0,
             _ => 0.0,
+        }
+    }
+    /// The axis of a chain drive or an adjustable chain gearshift.
+    pub fn chain(self) -> Option<Axis> {
+        match self {
+            Part::ChainDrive(a) | Part::ChainGearshift(a) => Some(a),
+            _ => None,
         }
     }
     /// Whether the part is two halves (a clutch, a gearshift).
@@ -353,6 +372,14 @@ pub fn link(from: Part, to: Part, diff: [i32; 3]) -> Option<(usize, usize, f32)>
         if from.shaft_toward(d) && to.shaft_toward(back) {
             let factor = from.side_factor(d) / to.side_factor(back);
             return Some((from.half(d), to.half(back), factor));
+        }
+        // Chain drives side by side across their shared axis: the same
+        // speed (an adjustable gearshift's signal is applied by `solve`).
+        if let (Some(a), Some(b)) = (from.chain(), to.chain())
+            && a == b
+            && a.pick(diff) == 0
+        {
+            return Some((0, 0, 1.0));
         }
         // Belt segments in a line, along it: the same speed.
         if let (Part::Belt(a), Part::Belt(b)) = (from, to)
@@ -456,6 +483,16 @@ pub struct Solved {
     pub stress: HashMap<[i32; 3], Stress>,
 }
 
+/// `ChainGearshiftBlockEntity.getModifierForSignal`: what an adjustable
+/// chain gearshift with redstone `signal` multiplies along its chain.
+pub fn chain_factor(signal: u8) -> f32 {
+    if signal == 0 {
+        1.0
+    } else {
+        1.0 + (f32::from(signal) + 1.0) / 16.0
+    }
+}
+
 /// Solves the speeds of `parts`, with `sources` (positions of motors and
 /// cranks among them) turning at their own speeds, and the clutches and
 /// gearshifts at `powered` powered. A controller's target is at `targets`,
@@ -466,6 +503,23 @@ pub fn solve(
     powered: &HashSet<[i32; 3]>,
     targets: &HashMap<[i32; 3], i32>,
 ) -> Solved {
+    solve_with(parts, sources, powered, targets, &HashMap::new())
+}
+
+/// [`solve`], with the adjustable chain gearshifts' redstone `signals`.
+pub fn solve_with(
+    parts: &HashMap<[i32; 3], Part>,
+    sources: &HashMap<[i32; 3], f32>,
+    powered: &HashSet<[i32; 3]>,
+    targets: &HashMap<[i32; 3], i32>,
+    signals: &HashMap<[i32; 3], u8>,
+) -> Solved {
+    // RotationPropagator: a gearshift multiplies what leaves it along the
+    // chain and divides what comes in.
+    let chained = |at: [i32; 3], part: Part| match part {
+        Part::ChainGearshift(_) => chain_factor(signals.get(&at).copied().unwrap_or(0)),
+        _ => 1.0,
+    };
     let mut halves: HashMap<Node, f32> = HashMap::new();
     let mut jammed: HashSet<[i32; 3]> = HashSet::new();
     let mut stress: HashMap<[i32; 3], Stress> = HashMap::new();
@@ -547,9 +601,14 @@ pub fn solve(
                         target, shaft_speed, wheel_speed, drive, targeting,
                     ))
                 } else {
-                    let Some((from, to, factor)) = link(part, other, diff) else {
+                    let Some((from, to, mut factor)) = link(part, other, diff) else {
                         continue;
                     };
+                    if let (Some(a), Some(_)) = (part.chain(), other.chain())
+                        && a.pick(diff) == 0
+                    {
+                        factor *= chained(pos, part) / chained(next, other);
+                    }
                     (from, to, here * factor)
                 };
                 if from != half {
@@ -916,6 +975,42 @@ mod tests {
         ]);
         let s = solve1(&p, &[([0, 0, 0], 200.0)]);
         assert!(s.jammed.contains(&[0, 1, 0]));
+    }
+
+    #[test]
+    fn chain_drives_turn_alike_across_their_axis_and_a_signal_speeds_them() {
+        let row = parts(&[
+            ([0, 0, 0], Part::Shaft(Axis::Y)),
+            ([0, 1, 0], Part::ChainDrive(Axis::Y)),
+            ([1, 1, 0], Part::ChainGearshift(Axis::Y)),
+            ([2, 1, 0], Part::ChainDrive(Axis::Y)),
+            ([2, 2, 0], Part::Shaft(Axis::Y)),
+            // Along the axis is a shaft's link, not a chain's.
+            ([0, 2, 0], Part::ChainDrive(Axis::X)),
+        ]);
+        let sources = HashMap::from([([0, 0, 0], 16.0)]);
+        let plain = solve(&row, &sources, &HashSet::new(), &HashMap::new());
+        assert_eq!(plain.speeds[&[2, 2, 0]][0], 16.0);
+        assert!(!plain.speeds.contains_key(&[0, 2, 0]));
+        let signals = HashMap::from([([1, 1, 0], 15)]);
+        let fast = solve_with(&row, &sources, &HashSet::new(), &HashMap::new(), &signals);
+        // Into the gearshift slower, out of it faster: the same at the ends.
+        assert_eq!(fast.speeds[&[1, 1, 0]][0], 8.0);
+        assert_eq!(fast.speeds[&[2, 2, 0]][0], 16.0);
+        assert_eq!(chain_factor(0), 1.0);
+        assert_eq!(chain_factor(15), 2.0);
+        // A drive driven from the gearshift's end alone turns faster.
+        let one = parts(&[
+            ([0, 0, 0], Part::Shaft(Axis::Y)),
+            ([0, 1, 0], Part::ChainGearshift(Axis::Y)),
+            ([1, 1, 0], Part::ChainDrive(Axis::Y)),
+        ]);
+        let s = solve_with(&one, &sources, &HashSet::new(), &HashMap::new(), &signals_at([0, 1, 0]));
+        assert_eq!(s.speeds[&[1, 1, 0]][0], 32.0);
+    }
+
+    fn signals_at(p: [i32; 3]) -> HashMap<[i32; 3], u8> {
+        HashMap::from([(p, 15)])
     }
 
     #[test]
