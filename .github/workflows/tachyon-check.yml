@@ -38,8 +38,12 @@ jobs:
           key: tachyon-check
           cache-on-failure: true
 
+      # The game (its Tachyon engine, the native hooks) is in the library; the
+      # launchers in the programs.
       - name: Tachyon's tests
-        run: cargo test -p horizon-client --bin tachyon-desktop -- tachyon desktop native_hooks
+        run: |
+          cargo test -p horizon-client --lib -- tachyon native_hooks
+          cargo test -p horizon-client --bin tachyon-desktop -- tachyon desktop
 
       - name: The import's Java mod port
         run: cargo test -p horizon-port-pack
@@ -50,6 +54,7 @@ jobs:
       # The touch controls' Android side compiles only for Android: checked
       # (not linked) with the NDK's compilers for the C parts, as the APK builds.
       - name: The Android build compiles
+        if: ${{ !cancelled() }}
         run: |
           rustup target add aarch64-linux-android
           llvm="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
