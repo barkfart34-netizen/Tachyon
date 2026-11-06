@@ -703,6 +703,14 @@ mod tests {
         let mut out = Vec::new();
         let at = horizon_core::geometry::Vec3::new(1.5, 0.3, 0.5);
         let mut dropped = vec![ItemEntity {
+            rotation: [0.0, 0.0],
+            join: Default::default(),
+            no_gravity: false,
+            vertical_collision: false,
+            horizontal_collision: false,
+            needs_sync: false,
+            stuck: horizon_core::geometry::Vec3::ZERO,
+            was_touching_water: false,
             health: 5,
             fire_ticks: 0,
             id: 7,

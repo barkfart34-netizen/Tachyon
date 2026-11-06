@@ -240,6 +240,14 @@ mod tests {
 
     fn item(id: u32, position: Vec3, count: u32) -> ItemEntity {
         ItemEntity {
+            rotation: [0.0, 0.0],
+            join: Default::default(),
+            no_gravity: false,
+            vertical_collision: false,
+            horizontal_collision: false,
+            needs_sync: false,
+            stuck: Vec3::ZERO,
+            was_touching_water: false,
             health: 5,
             fire_ticks: 0,
             id,
@@ -399,6 +407,7 @@ mod tests {
                         map_color: 0,
                     })
                     .collect(),
+                woods: Default::default(),
             };
             let assets = Assets {
                 registry,
@@ -434,7 +443,19 @@ mod tests {
         }
         fn tick(&self, dropped: &mut [ItemEntity]) {
             for d in dropped {
-                assert!(d.tick(&self.world, &self.facts, &self.collision, false, &self.fluids));
+                // ItemEntity.tick without fluids: the move, then the settle.
+                let _ = &self.fluids;
+                let step = d.tick_move(
+                    &self.world,
+                    &self.facts,
+                    &self.collision,
+                    false,
+                    (0.0, 0.0),
+                    &[],
+                    None,
+                    None,
+                );
+                assert!(d.tick_settle(&self.world, &self.facts, false, step));
             }
         }
     }
@@ -490,7 +511,7 @@ mod tests {
             let mut d = item(self.next_id, Vec3::new(at[0], at[1], at[2]), stack.count);
             d.stack = stack;
             d.velocity = Vec3::new(velocity[0], velocity[1], velocity[2]);
-            d.pickup_delay = delay;
+            d.pickup_delay = i64::from(delay);
             d.on_ground = false;
             self.dropped.push(d);
         }
