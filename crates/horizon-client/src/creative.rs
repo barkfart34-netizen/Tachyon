@@ -1880,7 +1880,7 @@ mod tests {
         // one tab, first as its items came first, by its own name and cogwheel;
         // ten tabs on the second page, the eleventh on the third.
         let gears = c.tabs.iter().find(|t| t.id == "gears:tachyon_tab").unwrap();
-        assert_eq!((gears.title.as_str(), gears.icon.as_str()), ("Create", "gears:cogwheel"));
+        assert_eq!((gears.title.as_str(), gears.icon.as_str()), ("Gears", "gears:cogwheel"));
         assert_eq!((gears.page, gears.top, gears.column), (1, true, 0));
         let last = c.tabs.iter().find(|t| t.id == "lost_realms_9:tachyon_tab").unwrap();
         assert_eq!((last.title.as_str(), last.page), ("Lost Realms 9", 2));
