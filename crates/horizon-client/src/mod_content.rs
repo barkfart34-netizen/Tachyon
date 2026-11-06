@@ -1930,8 +1930,6 @@ const ADDABLE: [(&str, &str); 3] = [
     ("worldgen/processor_lists.json", "processors"),
 ];
 
-/// The worldgen loader's bundle of biomes (id → the biome's text).
-const BIOMES: &str = "worldgen/biomes.json";
 /// The key of a mod's placed feature that also places it in every biome
 /// placing the feature it names, in the same step right after that one: how
 /// a mod's ore joins the biomes vanilla's ores are in, as NeoForge's biome
