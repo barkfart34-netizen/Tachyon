@@ -68,6 +68,7 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("crushing_wheel", "minecraft:iron_chain", 2.0, "minecraft:stone"),
     ("water_wheel", "minecraft:waxed_lightning_rod", 1.5, "minecraft:oak_planks"),
     ("large_water_wheel", "minecraft:iron_chain", 1.5, "minecraft:oak_planks"),
+    ("flywheel", "minecraft:iron_chain", 1.5, "minecraft:copper_block"),
     // The large wheel's body round it (WaterWheelStructuralBlock), facing
     // the way to the wheel; no item, drawn by the wheel.
     ("water_wheel_structure", "minecraft:waxed_lightning_rod", 1.5, "minecraft:oak_planks"),
@@ -79,11 +80,19 @@ const WHOLE: &[(&str, &str, &[&str])] = &[
     ("water_wheel", "facing", &["down", "up", "north", "south", "west", "east"]),
     ("large_water_wheel", "axis", &["x", "y", "z"]),
     ("crushing_wheel", "axis", &["x", "y", "z"]),
+    ("flywheel", "axis", &["x", "y", "z"]),
     ("water_wheel_structure", "facing", &["down", "up", "north", "south", "west", "east"]),
 ];
 
 /// The blocks drawn by the engine alone, turning whole.
-const TURNING: &[&str] = &["shaft", "cogwheel", "large_cogwheel", "crushing_wheel", "large_water_wheel"];
+const TURNING: &[&str] = &[
+    "shaft",
+    "cogwheel",
+    "large_cogwheel",
+    "crushing_wheel",
+    "large_water_wheel",
+    "flywheel",
+];
 
 /// The version of [`fix`]: a port fixed by an older one is fixed again.
 const VERSION: &str = "2";

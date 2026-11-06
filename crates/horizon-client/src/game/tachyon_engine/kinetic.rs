@@ -205,6 +205,9 @@ pub enum Part {
     /// Create's encased chain drive: a shaft along its axis, and a chain to
     /// the drives beside it across the axis.
     ChainDrive(Axis),
+    /// Create's flywheel (FlywheelBlock): a wheel on a shaft along its axis,
+    /// with no stress of its own.
+    Flywheel(Axis),
     /// Create's adjustable chain gearshift: a chain drive whose redstone
     /// signal changes the speed it passes along the chain.
     ChainGearshift(Axis),
@@ -267,6 +270,7 @@ impl Part {
             | Part::Fan(a)
             | Part::ChainDrive(a)
             | Part::ChainGearshift(a)
+            | Part::Flywheel(a)
             | Part::CrushingWheel(a) => d.axis() == a,
             Part::Gearbox(a) => d.axis() != a,
             Part::Motor(out) | Part::Crank(out) => d == out,
@@ -975,6 +979,20 @@ mod tests {
         ]);
         let s = solve1(&p, &[([0, 0, 0], 200.0)]);
         assert!(s.jammed.contains(&[0, 1, 0]));
+    }
+
+    #[test]
+    fn a_flywheel_passes_its_shaft_on_without_load() {
+        let line = parts(&[
+            ([0, 0, 0], Part::Shaft(Axis::X)),
+            ([1, 0, 0], Part::Flywheel(Axis::X)),
+            ([2, 0, 0], Part::Shaft(Axis::X)),
+            ([1, 1, 0], Part::Shaft(Axis::Y)),
+        ]);
+        let s = solve1(&line, &[([0, 0, 0], 32.0)]);
+        assert_eq!(s.speeds[&[2, 0, 0]][0], 32.0);
+        assert!(!s.speeds.contains_key(&[1, 1, 0]));
+        assert_eq!(Part::Flywheel(Axis::X).impact(), 0.0);
     }
 
     #[test]

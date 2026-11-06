@@ -206,6 +206,7 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
         // ChainDriveBlock's part and axis_along_first follow from the
         // drives beside it; create_port keeps the axis.
         "encased_chain_drive" => Part::ChainDrive(axis()?),
+        "flywheel" => Part::Flywheel(axis()?),
         "adjustable_chain_gearshift" => Part::ChainGearshift(axis()?),
         // The four-way template's facing gives HorizontalAxisKineticBlock's
         // shaft across the player's facing, below the cogwheel.
@@ -960,6 +961,11 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         // Their OBJ models (`obj_model.rs`), about Y.
         Part::CrushingWheel(a) => vec![("create:block/crushing_wheel/block", positive(a), 1.0, 0, Dir::Up)],
         Part::WaterWheel(a) => vec![("create:block/water_wheel/wheel", positive(a), 1.0, 0, Dir::Up)],
+        // FlywheelRenderer: the shaftless wheel (OBJ, about Y) on a shaft.
+        Part::Flywheel(a) => vec![
+            (SHAFT, positive(a), 1.0, 0, Dir::Up),
+            ("create:block/flywheel/block", positive(a), 1.0, 0, Dir::Up),
+        ],
         // WaterWheelRenderer's LARGE partial, about Y too.
         Part::LargeWaterWheel(a) => vec![(water_wheel::LARGE_MODEL, positive(a), 1.0, 0, Dir::Up)],
         Part::Windmill(_)
@@ -1031,6 +1037,7 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::StressGauge(_)
         | Part::ChainDrive(_)
         | Part::ChainGearshift(_)
+        | Part::Flywheel(_)
         | Part::SpeedController(_) => Vec::new(),
     }
 }
@@ -2283,6 +2290,7 @@ impl Game<'_> {
             Part::WaterWheel(_) => ("water_wheel", "Water Wheel"),
             Part::LargeWaterWheel(_) => ("large_water_wheel", "Large Water Wheel"),
             Part::ChainDrive(_) => ("encased_chain_drive", "Encased Chain Drive"),
+            Part::Flywheel(_) => ("flywheel", "Flywheel"),
             Part::ChainGearshift(_) => ("adjustable_chain_gearshift", "Adjustable Chain Gearshift"),
             Part::Windmill(_) => ("windmill", "Windmill"),
             Part::Millstone => ("millstone", "Millstone"),
