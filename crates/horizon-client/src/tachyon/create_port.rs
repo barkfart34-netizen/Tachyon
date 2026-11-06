@@ -91,7 +91,8 @@ const STAMP: &str = ".tachyon-fix";
 
 /// Fixes a Create ported into `dir` (`horizon-mods/create`) by an older
 /// Tachyon again, once: the engine has learned more of its blocks since.
-pub fn refresh(dir: &Path) {
+/// `jar`, Create's own file where it is kept, gives back their recipes.
+pub fn refresh(dir: &Path, jar: Option<&Path>) {
     if !dir.join("data/create/horizon/block").is_dir()
         || fs::read_to_string(dir.join(STAMP)).is_ok_and(|v| v.trim() == VERSION)
     {
@@ -100,6 +101,76 @@ pub fn refresh(dir: &Path) {
     match fix(dir) {
         Ok(()) => log::info!("Tachyon: Create's port fixed again for this version"),
         Err(e) => log::warn!("Tachyon: Create's port: {e}"),
+    }
+    if let Some(jar) = jar.filter(|j| j.is_file())
+        && let Err(e) = restore_recipes(dir, jar)
+    {
+        log::warn!("Tachyon: Create's recipes: {e}");
+    }
+}
+
+/// The recipes of the blocks the porter left out (no vanilla block to
+/// copy) that the engine makes: Create's own, from its file.
+const RECIPES: &[&str] = &[
+    "crafting/kinetics/encased_chain_drive",
+    "crafting/kinetics/encased_chain_drive_from_zinc",
+    "crafting/kinetics/adjustable_chain_gearshift",
+    "crafting/kinetics/large_water_wheel",
+];
+
+/// Puts [`RECIPES`] from Create's `jar` into the port at `dir`, their
+/// ingredients written as the porter writes them (`"id"`, `"#tag"`), and
+/// the iron nuggets' convention tag they use where the port has none.
+pub fn restore_recipes(dir: &Path, jar: &Path) -> Result<(), String> {
+    let file = fs::File::open(jar).map_err(|e| format!("{}: {e}", jar.display()))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    for recipe in RECIPES {
+        let out = dir.join(format!("data/create/recipe/{recipe}.json"));
+        if out.is_file() {
+            continue;
+        }
+        let Ok(mut entry) = zip.by_name(&format!("data/create/recipe/{recipe}.json")) else {
+            continue;
+        };
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut bytes).map_err(|e| e.to_string())?;
+        let Ok(mut json) = serde_json::from_slice::<Value>(&bytes) else {
+            continue;
+        };
+        porter_ingredients(&mut json);
+        write(&out, &json)?;
+    }
+    let iron = dir.join("data/c/tags/item/nuggets/iron.json");
+    if !iron.is_file() {
+        write(&iron, &json!({"values": ["minecraft:iron_nugget"]}))?;
+    }
+    Ok(())
+}
+
+/// A 1.21.1 recipe's ingredients as the game reads them: `{"item": id}`
+/// as `id`, `{"tag": t}` as `#t`, a list of them each so.
+fn porter_ingredients(recipe: &mut Value) {
+    fn one(v: &Value) -> Value {
+        if let Some(list) = v.as_array() {
+            return Value::Array(list.iter().map(one).collect());
+        }
+        if let Some(item) = v["item"].as_str() {
+            return json!(item);
+        }
+        if let Some(tag) = v["tag"].as_str() {
+            return json!(format!("#{tag}"));
+        }
+        v.clone()
+    }
+    if let Some(list) = recipe["ingredients"].as_array_mut() {
+        for v in list {
+            *v = one(v);
+        }
+    }
+    if let Some(key) = recipe["key"].as_object_mut() {
+        for v in key.values_mut() {
+            *v = one(v);
+        }
     }
 }
 
@@ -656,6 +727,32 @@ mod tests {
             assert_eq!(read(&states.join(format!("{block}.json"))).unwrap(), state);
             assert!(!dir.join(format!("assets/create/models/block/tachyon_still/{block}.json")).exists());
         }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn left_out_recipes_come_back_from_creates_file_as_the_porter_writes_them() {
+        let dir = scratch("recipes");
+        fs::create_dir_all(&dir).unwrap();
+        let jar = dir.join("create.jar");
+        {
+            let mut zip = zip::ZipWriter::new(fs::File::create(&jar).unwrap());
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file("data/create/recipe/crafting/kinetics/encased_chain_drive.json", options)
+                .unwrap();
+            let recipe = json!({"type": "minecraft:crafting_shapeless",
+                "ingredients": [{"item": "create:andesite_casing"}, {"tag": "c:nuggets/iron"}],
+                "result": {"count": 1, "id": "create:encased_chain_drive"}});
+            std::io::Write::write_all(&mut zip, recipe.to_string().as_bytes()).unwrap();
+            zip.finish().unwrap();
+        }
+        restore_recipes(&dir, &jar).unwrap();
+        let out = read(&dir.join("data/create/recipe/crafting/kinetics/encased_chain_drive.json")).unwrap();
+        assert_eq!(out["ingredients"], json!(["create:andesite_casing", "#c:nuggets/iron"]));
+        let iron = read(&dir.join("data/c/tags/item/nuggets/iron.json")).unwrap();
+        assert_eq!(iron["values"], json!(["minecraft:iron_nugget"]));
+        // Missing ones are skipped; a second time keeps what is there.
+        restore_recipes(&dir, &jar).unwrap();
         let _ = fs::remove_dir_all(&dir);
     }
 

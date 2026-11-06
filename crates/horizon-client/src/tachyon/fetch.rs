@@ -80,7 +80,9 @@ pub fn get(f: &Fetch, home: &Path, cache: &Path, report: &dyn Fn(String)) -> Res
     let imported = result?;
     // Create's machines, for Kinetica's engine to turn.
     if f.id == CREATE.id {
-        super::create_port::fix(&home.join(horizon_client::mod_list::DIR).join(f.id))?;
+        let port = home.join(horizon_client::mod_list::DIR).join(f.id);
+        super::create_port::fix(&port)?;
+        super::create_port::restore_recipes(&port, &jar)?;
     }
     Ok(imported)
 }

@@ -111,7 +111,14 @@ fn game() -> i32 {
     log::info!("{} {BUILD} (Horizon {})", brand::NAME, crash::version());
     let _ = std::fs::remove_file(home.join(ERROR_FILE));
     crate::tachyon::mods::settle(&home);
-    crate::tachyon::create_port::refresh(&home.join(horizon_client::mod_list::DIR).join("create"));
+    // Create's file is in the launcher's cache, above the installation.
+    let jar = (home.ancestors().take(4))
+        .map(|d| d.join("cache").join(crate::tachyon::fetch::CREATE.file))
+        .find(|j| j.is_file());
+    crate::tachyon::create_port::refresh(
+        &home.join(horizon_client::mod_list::DIR).join("create"),
+        jar.as_deref(),
+    );
     horizon_client::spans::startup::init(std::time::Instant::now());
     horizon_client::entry::install_hooks();
     let code = match horizon_client::game::run_with() {
