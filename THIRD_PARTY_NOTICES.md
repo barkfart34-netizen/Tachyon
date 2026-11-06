@@ -187,6 +187,45 @@ SOFTWARE.
 Create's assets are not under that license (All Rights Reserved) and are not in this repository or
 its releases: the game fetches Create from Modrinth on the player's device and reads them there.
 
+## Kinetics for Horizon
+
+Tachyon's large water wheel body (its eight structure blocks, built, checked and taken away with
+the wheel) and its encased chain drives and adjustable chain gearshift follow the rules of
+[Kinetics for Horizon](https://github.com/sakurartro/kinetics-for-horizon), a port of Create's
+kinetic core to Horizon, ported again here onto Create's own blocks. Its code is under the MIT
+license:
+
+```
+MIT License
+
+Copyright (c) 2026 sakurartro
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+The rotation rules in native/mixins/kinetics/runtime.rs are ported from Create
+(https://github.com/Creators-of-Create/Create, mc1.21.1/dev, commit 4148fd8),
+Copyright (c) The Create Team / The Creators of Create, MIT License; that file
+carries its notice. No Create assets are included.
+```
+
 ## CIT Resewn
 
 `crates/horizon-optifine/src/cit.rs` and `crates/horizon-client-render/src/cit.rs` follow the
