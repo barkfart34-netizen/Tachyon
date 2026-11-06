@@ -1847,13 +1847,13 @@ mod tests {
     #[test]
     fn each_mod_gets_a_tab_ten_to_a_page_after_vanillas() {
         let dir = std::env::temp_dir().join(format!("tachyon-creative-tabs-{}", std::process::id()));
-        fs::create_dir_all(dir.join("assets/create/lang")).unwrap();
+        fs::create_dir_all(dir.join("assets/gears/lang")).unwrap();
         fs::write(
-            dir.join("assets/create/lang/en_us.json"),
-            r#"{"itemGroup.create.palettes": "Create's Building Blocks", "itemGroup.create.base": "Create"}"#,
+            dir.join("assets/gears/lang/en_us.json"),
+            r#"{"itemGroup.gears.palettes": "Gears' Building Blocks", "itemGroup.gears.base": "Gears"}"#,
         )
         .unwrap();
-        let mut ids = vec!["minecraft:stone".to_owned(), "create:shaft".into(), "create:cogwheel".into()];
+        let mut ids = vec!["minecraft:stone".to_owned(), "gears:shaft".into(), "gears:cogwheel".into()];
         ids.extend((0..10).map(|i| format!("lost_realms_{i}:thing")));
         let entries: serde_json::Map<String, Value> = (ids.iter().enumerate())
             .map(|(i, id)| (id.clone(), serde_json::json!({"protocol_id": i})))
@@ -1876,18 +1876,19 @@ mod tests {
         .unwrap();
         c.add_mod_tabs(&dir);
         let _ = fs::remove_dir_all(&dir);
-        // Create first (its items came first), by its own name and cogwheel;
+        // A mod without a kinds table (Create has one: creative_kinds.rs) gets
+        // one tab, first as its items came first, by its own name and cogwheel;
         // ten tabs on the second page, the eleventh on the third.
-        let create = c.tabs.iter().find(|t| t.id == "create:tachyon_tab").unwrap();
-        assert_eq!((create.title.as_str(), create.icon.as_str()), ("Create", "create:cogwheel"));
-        assert_eq!((create.page, create.top, create.column), (1, true, 0));
+        let gears = c.tabs.iter().find(|t| t.id == "gears:tachyon_tab").unwrap();
+        assert_eq!((gears.title.as_str(), gears.icon.as_str()), ("Create", "gears:cogwheel"));
+        assert_eq!((gears.page, gears.top, gears.column), (1, true, 0));
         let last = c.tabs.iter().find(|t| t.id == "lost_realms_9:tachyon_tab").unwrap();
         assert_eq!((last.title.as_str(), last.page), ("Lost Realms 9", 2));
         let tenth = c.tabs.iter().find(|t| t.id == "lost_realms_8:tachyon_tab").unwrap();
         assert_eq!((tenth.page, tenth.top, tenth.column), (1, false, 4));
         assert_eq!(c.pages(), 3);
         // The search tab finds the mods' items.
-        assert!(c.search_items().iter().any(|s| &*s.item == "create:shaft"));
+        assert!(c.search_items().iter().any(|s| &*s.item == "gears:shaft"));
         // The first page: vanilla's, and the search and inventory tabs on every page.
         let shown = |c: &Creative| -> Vec<String> {
             c.tabs.iter().filter(|t| c.on_page(t)).map(|t| t.id.clone()).collect()
@@ -1895,7 +1896,7 @@ mod tests {
         assert_eq!(shown(&c), ["minecraft:building_blocks", "minecraft:search", "minecraft:inventory"]);
         // The next page shows its first tab, the search tab still there.
         c.set_page(1);
-        assert_eq!((c.page, c.tab().id.as_str()), (1, "create:tachyon_tab"));
+        assert_eq!((c.page, c.tab().id.as_str()), (1, "gears:tachyon_tab"));
         assert!(shown(&c).contains(&"minecraft:search".to_owned()));
         assert!(!shown(&c).contains(&"minecraft:building_blocks".to_owned()));
         c.set_page(5);
