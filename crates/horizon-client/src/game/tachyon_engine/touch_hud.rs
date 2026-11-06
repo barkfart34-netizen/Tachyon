@@ -335,13 +335,19 @@ mod tests {
                     for b in &buttons {
                         let p = t.placement(b.control);
                         let r = p.rect(w / h);
-                        let bounds = [r[0] * w, r[1] * h, r[2] * w, r[3] * h];
-                        for (actual, expected) in b.bounds.into_iter().zip(bounds) {
+                        for (actual, expected) in [
+                            (b.bounds[0], r[0] * w),
+                            (b.bounds[1], r[1] * h),
+                            (b.bounds[0] + b.bounds[2], (r[0] + r[2]) * w),
+                            (b.bounds[1] + b.bounds[3], (r[1] + r[3]) * h),
+                        ] {
                             near(actual, expected);
                         }
                         assert_eq!(
                             hud::control_at(&buttons, [p.center[0] * w, p.center[1] * h]),
-                            t.control_at(p.center)
+                            t.control_at(p.center),
+                            "{mode:?}, {window:?}, mirrored={mirrored}, control={:?}",
+                            b.control
                         );
                     }
                     let offhand = *buttons
@@ -368,6 +374,48 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn engine_snapshots_preserve_inclusive_edges_and_overlap_priority() {
+        let mut t = TouchControls::default();
+        t.viewport(401, 901);
+        t.settings.left_handed = true;
+        t.settings.button_scale = 1.5;
+        let attack = t.placement(Control::Attack).center;
+        let use_rect = t.placement(Control::Use).rect(401.0 / 901.0);
+        // In this fitted portrait layout, Attack's center is on Use's bottom edge.
+        assert_eq!(attack[1], use_rect[1] + use_rect[3]);
+        assert_eq!(t.control_at(attack), Some(Control::Use));
+        let buttons = t.hud_buttons();
+        let use_button = buttons.iter().find(|b| b.control == Control::Use).unwrap();
+        let edge = [attack[0] * 401.0, attack[1] * 901.0];
+        assert_eq!(hud::control_at(&buttons, edge), Some(Control::Use));
+        let [x, y, w, h] = use_button.bounds;
+        assert_eq!(y + h, edge[1]);
+        let [nx, ny, nw, nh] = use_rect;
+        for point in [[nx, ny], [nx + nw, ny], [nx, ny + nh], [nx + nw, ny + nh]] {
+            let physical = [point[0] * 401.0, point[1] * 901.0];
+            assert!(use_button.contains(physical));
+            assert_eq!(hud::control_at(&buttons, physical), t.control_at(point));
+        }
+        // Inclusion stays exact: no epsilon may enlarge the physical hit target.
+        for point in [
+            [x.next_down(), y + h / 2.0],
+            [(x + w).next_up(), y + h / 2.0],
+            [x + w / 2.0, y.next_down()],
+            [x + w / 2.0, (y + h).next_up()],
+        ] {
+            assert!(!use_button.contains(point));
+        }
+        assert_eq!(
+            hud::control_at(&buttons, [edge[0], edge[1].next_up()]),
+            Some(Control::Attack)
+        );
+        assert_eq!(
+            t.control_at([attack[0], attack[1].next_up()]),
+            Some(Control::Attack)
+        );
     }
 
     #[test]

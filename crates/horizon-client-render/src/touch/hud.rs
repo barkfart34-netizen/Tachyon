@@ -66,6 +66,10 @@ impl TouchControls {
                 let p = self.placement(control);
                 let rect = p.rect(self.aspect());
                 let [x, y, width, height] = rect;
+                // Project inclusive endpoints first: scaling origin and extent
+                // separately can round an edge away from the engine's hit bounds.
+                let (left, top) = (x * w, y * h);
+                let (right, bottom) = ((x + width) * w, (y + height) * h);
                 let held = Self::button(control).is_some_and(|button| match button {
                     PadButton::LeftTrigger => pad.triggers[0] > 0.0,
                     PadButton::RightTrigger => pad.triggers[1] > 0.0,
@@ -73,7 +77,7 @@ impl TouchControls {
                 });
                 Button {
                     control,
-                    bounds: [x * w, y * h, width * w, height * h],
+                    bounds: [left, top, right - left, bottom - top],
                     opacity: p.opacity,
                     pressed: held
                         || self.fingers.values().any(|(_, point)| layout::contains(rect, *point)),
