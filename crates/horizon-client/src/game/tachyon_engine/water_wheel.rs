@@ -317,7 +317,12 @@ impl super::super::Game<'_> {
                         continue;
                     };
                     for (p, facing) in missing {
-                        let placed = self.native_state_with_property(default, "facing", facing.name());
+                        let registry = &self.pack.assets.registry;
+                        let placed = registry.state(default).and_then(|state| {
+                            let mut next = state.clone();
+                            next.properties.insert("facing".into(), facing.name().into());
+                            registry.id(&next)
+                        });
                         if let Some(id) = placed {
                             self.native_set_block(dimension, p, id, 3);
                         }
