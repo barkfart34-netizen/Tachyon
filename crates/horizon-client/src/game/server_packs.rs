@@ -74,6 +74,7 @@ impl ServerPackState {
             .iter()
             .filter_map(|n| n.toast.as_ref())
             .chain(self.load_fail.as_ref())
+            .chain(self.chunk_io.iter().flatten())
             .filter_map(|t| t.slot)
     }
 }
@@ -95,6 +96,9 @@ pub(super) struct ServerPackState {
     notifiers: Vec<PackNotifier>,
     /// `SystemToastId.PACK_LOAD_FAILURE`: the toast `Minecraft.clearResourcePacksOnError` adds.
     pub(super) load_fail: Option<SystemToast>,
+    /// `SystemToastId.LOW_DISK_SPACE`, `CHUNK_LOAD_FAILURE` and `CHUNK_SAVE_FAILURE`:
+    /// the toasts the integrated server's chunk IO reports add (`chunk_io`).
+    pub(super) chunk_io: [Option<SystemToast>; 3],
 }
 /// `DownloadedPackSource.createDownloadNotifier`: one batch's progress in its
 /// own `SystemToast`.
@@ -239,6 +243,12 @@ impl Game<'_> {
         let setting = entry.as_ref().and_then(|e| e.accept_textures);
         state.address = entry.map(|e| e.ip);
         state.packs.connect(Prompt::for_server(setting));
+        // GetServerDetailsTask.scheduleResourcePackDownload: the Realm's own pack, which the
+        // player agreed to before connecting (`allowServerPacks`, then `pushPack`).
+        if let Some(pack) = horizon_client::realms::take_pending_pack(address) {
+            state.packs.allow();
+            state.packs.push(pack.id, &pack.url, parse_sha1(&pack.hash));
+        }
     }
     /// `Minecraft.clearDownloadedResourcePacks`: every server pack goes at once.
     pub(super) fn server_packs_disconnect(&mut self) {
@@ -298,6 +308,19 @@ impl Game<'_> {
         }
     }
 
+    /// Splitscreen: this player's answer for the server's packs, once it gave one (or its
+    /// server list entry did).
+    pub(super) fn pack_answer(&self) -> Option<bool> {
+        match self.server_packs.packs.prompt() {
+            Prompt::Allowed => Some(true),
+            Prompt::Declined => Some(false),
+            Prompt::Pending => None,
+        }
+    }
+    /// Splitscreen: this player is asked about a server's packs right now.
+    pub(super) fn pack_prompt_open(&self) -> bool {
+        self.server_packs.prompt.is_some()
+    }
     /// The prompt's answer (`PackConfirmScreen`'s callback): the server's
     /// setting follows it, declining a required pack disconnects, and every
     /// pack it asked about is pushed.
@@ -340,12 +363,26 @@ impl Game<'_> {
     /// that finished, the ones to start, a resource reload when the active
     /// packs change, and the statuses for the server.
     pub(super) fn tick_server_packs(&mut self) {
-        self.server_packs.notifiers.retain_mut(PackNotifier::poll);
+        // SystemToast.addOrUpdate's addToast: mods hear each new toast, so a
+        // cancelled one is asked again at the batch's next change.
+        let mut notifiers = std::mem::take(&mut self.server_packs.notifiers);
+        notifiers.retain_mut(|n| {
+            let new = n.toast.is_none();
+            let keep = n.poll();
+            if new && n.toast.is_some() && !self.toast_allowed("system", "pack_download") {
+                n.toast = None;
+            }
+            keep
+        });
+        notifiers.append(&mut self.server_packs.notifiers);
+        self.server_packs.notifiers = notifiers;
+        self.drive_mod_browser();
         // A reload waits for the world's resources (`reload_packs`).
-        if self.rest_loader.is_some() || self.world_loader.is_some() {
+        if self.rest_loader.is_some() {
             return;
         }
         self.drive_pack_reload();
+        self.drive_pack_browser();
         // One reload at a time: the player's own waits under its overlay
         // before the server's packs can ask for theirs (`ServerPacks` keeps
         // its own reload from overlapping).
@@ -443,6 +480,7 @@ impl Game<'_> {
         let Some(prompt) = &self.server_packs.prompt else {
             return;
         };
+        horizon_client::widgets::cover_frame();
         let atlas = &self.gui.atlas;
         let (w, h) = (batch.width, batch.height);
         if self.player.is_none() {
@@ -457,15 +495,47 @@ impl Game<'_> {
             );
         }
         ui::menu_background(batch, atlas, 0.0, 0.0, w, h, self.player.is_some());
-        let (_, _, [yes, no]) = prompt.texts();
-        prompt
-            .layout(atlas, (w, h))
-            .draw(batch, atlas, self.cursor, [&yes, &no]);
+        let (title, message, [yes, no]) = prompt.texts();
+        // PackConfirmScreen is a ConfirmScreen.
+        horizon_client::widgets::begin_screen(|| {
+            super::screen_info::confirm("pack_prompt", &title.plain(), &message.plain())
+        });
+        let mut layout = prompt.layout(atlas, (w, h));
+        layout.declare_no();
+        layout.draw(batch, atlas, self.cursor, [&yes, &no]);
     }
+    /// `IntegratedServer.reportChunkLoadFailure` and the like: what the server
+    /// thread reported since the last frame, each in `SystemToast.addOrUpdate`
+    /// (a toast still shown is reset, else a new one).
+    fn add_chunk_io_toasts(&mut self) {
+        let pending = horizon_client::chunk_io::take();
+        let toasts = [
+            pending
+                .low_disk_space
+                .then(horizon_client::chunk_io::low_disk_space_toast),
+            pending
+                .load_failure
+                .map(|(x, z)| horizon_client::chunk_io::load_failure_toast(x, z)),
+            pending
+                .save_failure
+                .map(|(x, z)| horizon_client::chunk_io::save_failure_toast(x, z)),
+        ];
+        let ids = ["low_disk_space", "chunk_load_failure", "chunk_save_failure"];
+        for (i, (new, id)) in toasts.into_iter().zip(ids).enumerate() {
+            let Some(new) = new else { continue };
+            if let Some(shown) = self.server_packs.chunk_io[i].as_mut() {
+                shown.reset_from(new);
+            } else if self.toast_allowed("system", id) {
+                self.server_packs.chunk_io[i] = Some(new);
+            }
+        }
+    }
+
     /// The download notifiers' toasts, each in a free 32-pixel slot of the
     /// `ToastManager` (`hidden`, F1, keeps them timing out undrawn).
     pub(super) fn draw_pack_toasts(&mut self, batch: &mut HudBatch, hidden: bool) {
         let multiplier = f64::from(self.settings.notification_display_time);
+        self.add_chunk_io_toasts();
         let mut used = self.toast_slots_used();
         let packs = &mut self.server_packs;
         for slot_toast in packs
@@ -473,6 +543,7 @@ impl Game<'_> {
             .iter_mut()
             .map(|n| &mut n.toast)
             .chain(std::iter::once(&mut packs.load_fail))
+            .chain(packs.chunk_io.iter_mut())
         {
             let Some(toast) = slot_toast else {
                 continue;
@@ -498,6 +569,7 @@ impl Game<'_> {
                 toast.draw(&self.gui.atlas, batch, 32.0 * slot as f32);
             }
         }
+        self.draw_split_hud(batch, hidden);
     }
     /// A left click on the prompt: its answer when it hit a button.
     pub(super) fn pack_prompt_click(&mut self) -> Result<()> {

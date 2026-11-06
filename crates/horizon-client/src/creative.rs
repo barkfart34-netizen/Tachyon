@@ -26,10 +26,9 @@ pub struct Tab {
     /// `CreativeModeTab.Type.HOTBAR`: the saved toolbars, filled when the
     /// tab is selected (`set_saved_hotbars`).
     pub hotbar: bool,
-    /// Tachyon: the page it is on (NeoForge's creative pages: vanilla's tabs
-    /// on the first, the mods' after); None for the right-aligned ones,
-    /// shown on every page.
-    pub page: Option<usize>,
+    /// The page of tabs it is on: vanilla's are 0, mods' after, as NeoForge
+    /// pages them.
+    pub page: u32,
 }
 impl Tab {
     /// The tab without its stacks.
@@ -74,8 +73,8 @@ pub struct Creative {
     /// permissions put in them.
     pub tabs: Vec<Tab>,
     pub selected: usize,
-    /// Tachyon: the page of tabs shown (`Tab::page`).
-    pub page: usize,
+    /// The page of tabs shown.
+    pub page: u32,
     /// Scroll position 0..1 (scrollOffs).
     pub scroll: f32,
     /// The scrollbar is held (scrolling): dragging moves it.
@@ -95,30 +94,14 @@ pub struct Creative {
     /// ItemPickerMenu.items: what the grid shows, filled when the tab or the
     /// search changes (selectTab, refreshSearchResults), not on every frame.
     shown: Mutex<Option<Shown>>,
+    /// SessionSearchTrees.creativeByNameSearch: the lower-cased tooltip lines
+    /// of every search item in one language (keyed by the `itemGroup.search`
+    /// string), built on the first search and kept until the language or the
+    /// item list changes.
+    lines_cache: Mutex<Option<(String, Arc<[Vec<String>]>)>>,
 }
 /// Tachyon: the mods' tabs a page (NeoForge's: five on top, five below).
 const MOD_TABS_A_PAGE: usize = 10;
-/// Tachyon: the page turners' top, over the screen (NeoForge's).
-pub const PAGE_BUTTON_Y: f32 = -50.0;
-
-/// Tachyon: where the page turners and the page's number go, relative to
-/// the screen origin.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PageLayout {
-    pub back: (f32, f32),
-    pub next: (f32, f32),
-    /// The number's left, top and width, centred in it.
-    pub label: (f32, f32, f32),
-    /// The number as "1/3", narrow, rather than "1 / 3".
-    pub narrow: bool,
-}
-
-/// Tachyon: a vanilla tab's page, the first; the right-aligned (search,
-/// inventory, saved hotbars, operator) on every page.
-fn vanilla_page(column: u64) -> Option<usize> {
-    (column < 5).then_some(0)
-}
-
 /// Tachyon: a mod's tab title: its own `itemGroup.<mod>...` name (Create's
 /// "Create"), else its namespace in words ("lost_realms": "Lost Realms").
 fn mod_title(root: &Path, namespace: &str) -> String {
@@ -306,7 +289,7 @@ impl Creative {
                 root.join("creative-tabs.json"),
             )?)?)?
         };
-        // Tachyon: the content mods' items in tabs of their own.
+        // Tachyon: the content mods' items without a tab of their mod's own.
         creative.add_mod_tabs(root);
         Ok(creative)
     }
@@ -339,6 +322,13 @@ impl Creative {
             }
         }
         namespaces.sort_by_key(|n| !own.iter().any(|o| o == n));
+        // A mod that declares its own tabs (`creative_tab/`) keeps them.
+        namespaces.retain(|n| {
+            let prefix = format!("{n}:");
+            !self.exported.iter().any(|e| e.tab.id.starts_with(&prefix))
+        });
+        // After the pages vanilla's and the declared mods' tabs take.
+        let first_page = self.exported.iter().map(|e| e.tab.page + 1).max().unwrap_or(1);
         let mut tab_index = 0;
         for namespace in namespaces {
             let items: Vec<ItemStack> = (ids.iter())
@@ -376,6 +366,7 @@ impl Creative {
                         kind.title.to_owned(),
                         kind.icon,
                         items,
+                        first_page,
                         tab_index,
                     );
                     tab_index += 1;
@@ -386,6 +377,7 @@ impl Creative {
                     mod_title(root, namespace),
                     &format!("{namespace}:cogwheel"),
                     items,
+                    first_page,
                     tab_index,
                 );
                 tab_index += 1;
@@ -401,6 +393,7 @@ impl Creative {
         title: String,
         preferred_icon: &str,
         items: Vec<ItemStack>,
+        first_page: u32,
         index: usize,
     ) {
         let icon = items
@@ -422,71 +415,10 @@ impl Creative {
                 search: false,
                 inventory: false,
                 hotbar: false,
-                page: Some(1 + index / MOD_TABS_A_PAGE),
+                page: first_page + (index / MOD_TABS_A_PAGE) as u32,
             },
             category: false,
         });
-    }
-    /// Tachyon: how many pages of tabs there are.
-    pub fn pages(&self) -> usize {
-        self.tabs.iter().filter_map(|t| t.page).max().map_or(1, |p| p + 1)
-    }
-    /// Tachyon: whether `tab` shows on the page shown.
-    pub fn on_page(&self, tab: &Tab) -> bool {
-        tab.page.is_none_or(|p| p == self.page)
-    }
-    /// Tachyon: the page `by` pages on (NeoForge's "<" and ">"), its first tab
-    /// selected unless the one selected shows on it too.
-    pub fn turn_page(&mut self, by: isize) {
-        let page = self.page.saturating_add_signed(by).min(self.pages() - 1);
-        if page == self.page {
-            return;
-        }
-        self.page = page;
-        if !self.on_page(self.tab())
-            && let Some(first) = self.tabs.iter().position(|t| t.page == Some(page))
-        {
-            self.select(first);
-        }
-    }
-    /// Tachyon: the page turners' places for a screen whose origin is `top`
-    /// down the window: over the screen as NeoForge's, or, where that would
-    /// leave the window (a phone held sideways), beside the screen's top.
-    pub fn page_layout(top: f32) -> PageLayout {
-        if top + PAGE_BUTTON_Y >= 0.0 {
-            PageLayout {
-                back: (0.0, PAGE_BUTTON_Y),
-                next: (Self::WIDTH - 20.0, PAGE_BUTTON_Y),
-                label: (0.0, PAGE_BUTTON_Y + 6.0, Self::WIDTH),
-                narrow: false,
-            }
-        } else {
-            PageLayout {
-                back: (-24.0, 4.0),
-                next: (Self::WIDTH + 4.0, 4.0),
-                label: (Self::WIDTH + 4.0, 26.0, 20.0),
-                narrow: true,
-            }
-        }
-    }
-    /// Tachyon: the page turner at `mouse` (relative to the screen origin,
-    /// itself `top` down the window): -1 for "<", 1 for ">", when there is
-    /// more than one page and it can turn.
-    pub fn page_button_at(&self, mouse: (f32, f32), top: f32) -> Option<isize> {
-        if self.pages() < 2 {
-            return None;
-        }
-        let layout = Self::page_layout(top);
-        let inside = |(x, y): (f32, f32)| {
-            (x..x + 20.0).contains(&mouse.0) && (y..y + 20.0).contains(&mouse.1)
-        };
-        if inside(layout.back) && self.page > 0 {
-            Some(-1)
-        } else if inside(layout.next) && self.page + 1 < self.pages() {
-            Some(1)
-        } else {
-            None
-        }
     }
     pub fn from_json(raw: &Value) -> Result<Self> {
         let mut tabs = Vec::new();
@@ -542,7 +474,7 @@ impl Creative {
                     search: kind == "SEARCH",
                     inventory: kind == "INVENTORY",
                     hotbar: kind == "HOTBAR",
-                    page: vanilla_page(t["column"].as_u64().unwrap_or(0)),
+                    page: t["page"].as_u64().unwrap_or(0) as u32,
                 },
                 category: kind == "CATEGORY",
                 operator,
@@ -582,7 +514,7 @@ impl Creative {
                     search: kind == "SEARCH",
                     inventory: kind == "INVENTORY",
                     hotbar: false,
-                    page: vanilla_page(t["column"].as_u64().unwrap_or(0)),
+                    page: 0,
                 },
                 category: false,
             });
@@ -621,6 +553,7 @@ impl Creative {
             exported_search,
             permissions: false,
             shown: Mutex::new(None),
+            lines_cache: Mutex::new(None),
         };
         creative.rebuild();
         creative
@@ -646,6 +579,7 @@ impl Creative {
                 })
             })
             .collect();
+        *self.lines_cache.lock().unwrap_or_else(|e| e.into_inner()) = None;
         (self.search_items, self.search_index) = self
             .exported_search
             .iter()
@@ -672,9 +606,6 @@ impl Creative {
         match self.tabs.iter().position(|t| t.id == selected) {
             Some(tab) => {
                 self.selected = tab;
-                if let Some(page) = self.tabs[tab].page {
-                    self.page = page;
-                }
                 // ItemPickerMenu.getScrollForRowIndex.
                 let hidden = self.hidden_rows(names);
                 self.scroll = if hidden > 0 {
@@ -711,21 +642,62 @@ impl Creative {
     pub fn tab(&self) -> &Tab {
         &self.tabs[self.selected.min(self.tabs.len() - 1)]
     }
+    /// The search tab's index (`CreativeModeTabs.searchTab`), the tab the chat
+    /// key opens while another one is shown.
+    pub fn search_tab(&self) -> Option<usize> {
+        self.tabs.iter().position(|t| t.search)
+    }
     /// selectTab: a different tab empties the search box; the scrollbar goes to the top.
+    /// A tab on another page shows that page.
     pub fn select(&mut self, tab: usize) {
         if tab != self.selected {
             self.search.set_value("");
         }
         self.selected = tab;
-        // Tachyon: the page follows the tab.
-        if let Some(page) = self.tab().page {
-            self.page = page;
+        if let Some(t) = self.tabs.get(tab)
+            && !Self::on_every_page(t)
+        {
+            self.page = t.page;
         }
         self.scroll = 0.0;
-        if self.tab().search {
-            self.search.focused = true;
+        // The search box is shown, focused and impossible to unfocus only on
+        // its own tab; another tab hides it and takes the focus away.
+        let search = self.tab().search;
+        if search {
             self.search.reset_blink();
         }
+        self.search.focused = search;
+    }
+    /// How many pages of tabs there are (1 without mods' tabs).
+    pub fn pages(&self) -> u32 {
+        self.tabs.iter().map(|t| t.page + 1).max().unwrap_or(1)
+    }
+    /// The tabs every page shows (NeoForge's): the right-hand ones, saved
+    /// hotbars, search, operator blocks and the inventory.
+    fn on_every_page(t: &Tab) -> bool {
+        t.column >= 5
+    }
+    /// Whether tab `t` shows on the page shown.
+    pub fn on_page(&self, t: &Tab) -> bool {
+        t.page == self.page || Self::on_every_page(t)
+    }
+    /// Shows page `page` (NeoForge's page buttons) and selects its first tab,
+    /// unless the selected tab is one every page shows.
+    pub fn set_page(&mut self, page: u32) {
+        let page = page.min(self.pages() - 1);
+        let kept = self
+            .tabs
+            .get(self.selected)
+            .is_some_and(Self::on_every_page);
+        if !kept
+            && let Some(first) = self
+                .tabs
+                .iter()
+                .position(|t| t.page == page && !Self::on_every_page(t))
+        {
+            self.select(first);
+        }
+        self.page = page;
     }
     /// The search tab's stacks.
     pub fn search_items(&self) -> &[ItemStack] {
@@ -749,6 +721,46 @@ impl Creative {
     /// the name tree, both over vanilla's suffix arrays (substring matches,
     /// results in the tab's order).
     pub fn search_results(&self, term: &str, names: &Names) -> Vec<usize> {
+        let english =
+            names.display_get("itemGroup.search").as_deref() == names.get("itemGroup.search");
+        let local = if term.is_empty() || term.starts_with('#') {
+            Arc::from([])
+        } else if english && self.search_index.iter().all(|e| !e.lines.is_empty()) {
+            // The exported English lines are the whole index.
+            Arc::from([])
+        } else {
+            let language = names.display_get("itemGroup.search").unwrap_or_default();
+            let mut cache = self.lines_cache.lock().unwrap_or_else(|e| e.into_inner());
+            match cache.as_ref().filter(|(l, _)| *l == language) {
+                Some((_, lines)) => lines.clone(),
+                None => {
+                    let lines = self.localized_lines(&|k| names.display_get(k));
+                    *cache = Some((language, lines.clone()));
+                    lines
+                }
+            }
+        };
+        self.search_results_in(term, names, &local, english)
+    }
+    /// Every search item's tooltip lines through `translate`, lower-cased.
+    fn localized_lines(&self, translate: &dyn Fn(&str) -> Option<String>) -> Arc<[Vec<String>]> {
+        self.search_items
+            .iter()
+            .map(|s| {
+                crate::item_tooltip::lines(s, None, translate)
+                    .iter()
+                    .map(|l| java_lower(l))
+                    .collect()
+            })
+            .collect()
+    }
+    fn search_results_in(
+        &self,
+        term: &str,
+        names: &Names,
+        local: &[Vec<String>],
+        english: bool,
+    ) -> Vec<usize> {
         let all = 0..self.search_index.len();
         if term.is_empty() {
             return all.collect();
@@ -770,18 +782,13 @@ impl Creative {
                 })
                 .collect();
         }
-        // FullTextSearchTree: tooltip lines, and the item id after a colon.
-        // The export's lines are English (they come from the vanilla jars);
-        // the hover name in the selected language is matched too, so a
-        // localized search finds the item. It is the whole name (a tipped
-        // arrow's potion, the ominous banner), as the first line is.
+        // FullTextSearchTree: the creative tooltip lines in the selected
+        // language, and the item id after a colon. The export's lines are
+        // English (they come from the vanilla jars), so they stand in only
+        // while the language is English; otherwise every line (name, lore,
+        // effects, ...) is rebuilt through the language, as vanilla's
+        // getTooltipLines does.
         let text = java_lower(term);
-        let localized = |i: usize| {
-            java_lower(&crate::item_tooltip::name_line(
-                &self.search_items[i],
-                &|k| names.display_get(k),
-            ))
-        };
         all.filter(|&i| {
             let e = &self.search_index[i];
             let fallback;
@@ -791,16 +798,17 @@ impl Creative {
             } else {
                 &e.lines
             };
+            let exported = english || e.lines.is_empty();
+            let local = local.get(i).map_or(&[][..], Vec::as_slice);
+            let hit = |t: &str| {
+                (exported && any(lines.iter().map(String::as_str), t))
+                    || any(local.iter().map(String::as_str), t)
+            };
             match text.split_once(':') {
-                None => {
-                    any(lines.iter().map(String::as_str), &text) || localized(i).contains(&text)
-                }
+                None => hit(&text),
                 Some((ns, path)) => {
                     let (ns, path) = (java_trim(ns), java_trim(path));
-                    e.namespace.contains(ns)
-                        && (e.path.contains(path)
-                            || any(lines.iter().map(String::as_str), path)
-                            || localized(i).contains(path))
+                    e.namespace.contains(ns) && (e.path.contains(path) || hit(path))
                 }
             }
         })
@@ -1453,6 +1461,41 @@ mod tests {
         assert_eq!(c.search.value, "");
     }
 
+    #[test]
+    fn stepping_through_tabs_turns_their_pages() {
+        let stack = |id: &str| format!("{{count:1,id:\"minecraft:{id}\"}}");
+        let tab = |id: &str, column: u32, page: u32| {
+            serde_json::json!({"id": format!("minecraft:{id}"), "type": "CATEGORY", "row": "TOP",
+                "column": column, "page": page, "title": id, "icon": stack("stone"),
+                "visible": true, "items": [stack("stone")]})
+        };
+        let raw = serde_json::json!({"schema": 3, "tabs": [
+            tab("first", 0, 0), tab("second", 1, 0), tab("modded", 0, 1), tab("more", 1, 2),
+            tab("everywhere", 6, 0)
+        ]});
+        let mut c = Creative::from_json(&raw).unwrap();
+        assert_eq!(c.pages(), 3);
+        let count = c.tabs.len();
+        let mut pages = Vec::new();
+        for step in 1..=count {
+            let tab = (c.selected + 1) % count;
+            c.select(tab);
+            assert_eq!(c.selected, tab, "step {step}");
+            assert!(
+                c.on_page(&c.tabs[tab]),
+                "tab {tab} selected on another page"
+            );
+            pages.push(c.page);
+        }
+        // A tab every page shows keeps the page it was reached from; then it wraps.
+        assert_eq!(pages, [0, 1, 2, 2, 0]);
+        // Backwards off the first tab, across pages, the same way.
+        c.select((c.selected + count - 1) % count);
+        assert_eq!(c.page, 0);
+        c.select((c.selected + count - 1) % count);
+        assert_eq!(c.page, 2);
+    }
+
     /// An export built with permissions: the operator tab's stacks, and their
     /// place at the end of the search tab, only with them.
     fn with_operator_tab() -> Creative {
@@ -1578,6 +1621,22 @@ mod tests {
         }
     }
 
+    /// `CreativeModeInventoryScreen.keyPressed`: from a tab that is not the
+    /// search, the chat key selects `CreativeModeTabs.searchTab`, which focuses
+    /// the search box and empties the query the other tab left.
+    #[test]
+    fn the_chat_key_opens_the_search_tab() {
+        let mut c = creative(0);
+        c.search.set_value("anvil");
+        let tab = c.search_tab().expect("the fixture has a search tab");
+        assert!(c.tabs[tab].search);
+        assert!(!c.tab().search);
+        c.select(tab);
+        assert!(c.tab().search);
+        assert!(c.search.focused);
+        assert_eq!(c.search.value, "", "another tab empties the query");
+    }
+
     #[test]
     fn search_matches_vanilla_trees() {
         let c = creative(0);
@@ -1614,13 +1673,31 @@ mod tests {
                 ("item.minecraft.wooden_hoe".to_owned(), "木锄".to_owned()),
             ]),
         };
-        let q = |s: &str| c.search_results(s, &names);
+        let tr = |k: &str| names.get(k).map(str::to_owned);
+        let local = c.localized_lines(&tr);
+        let q = |s: &str| c.search_results_in(s, &names, &local, false);
         assert_eq!(q("铁砧"), [0]);
         assert_eq!(q("木锄"), [2]);
-        // The English tooltip lines the export indexed still match.
-        assert_eq!(q("anvil"), [0]);
+        // Only the selected language's lines count outside English.
+        assert!(q("anvil").is_empty());
+        assert_eq!(c.search_results_in("anvil", &names, &local, true), [0]);
         // A colon's path searches the display name too.
         assert_eq!(q("minecraft:铁砧"), [0]);
+    }
+
+    #[test]
+    fn search_matches_every_localized_tooltip_line() {
+        // Vanilla's FullTextSearchTree indexes the selected language's
+        // tooltip lines; the export's English lines do not apply.
+        let c = creative(0);
+        let names = Names::default();
+        let ru: HashMap<&str, &str> = HashMap::from([("item.minecraft.anvil", "Наковальня")]);
+        let tr = |k: &str| ru.get(k).map(|v| (*v).to_owned());
+        let local = c.localized_lines(&tr);
+        let q = |s: &str, english| c.search_results_in(s, &names, &local, english);
+        assert_eq!(q("наков", false), [0]);
+        assert!(q("anvil", false).is_empty());
+        assert_eq!(q("anvil", true), [0]);
     }
 
     #[test]
@@ -1656,6 +1733,26 @@ mod tests {
         c.selected = 0;
         assert!(c.press_scrollbar(180.0, 60.0, &names));
         assert!(!c.scrolling);
+    }
+
+    /// `CreativeModeInventoryScreen.selectTab`: the search box is focused on
+    /// its own tab and loses the focus when another tab is shown (and, hidden,
+    /// is no longer the field a key types into).
+    #[test]
+    fn the_search_box_loses_the_focus_with_its_tab() {
+        let mut c = creative(0);
+        let search = c
+            .tabs
+            .iter()
+            .position(|t| t.search)
+            .expect("the fixture has a search tab");
+        c.select(search);
+        assert!(c.search.focused);
+        c.select(0);
+        assert!(!c.search.focused, "another tab takes the focus away");
+        assert!(!c.tab().search);
+        c.select(search);
+        assert!(c.search.focused, "and the search tab takes it back");
     }
 
     #[test]
@@ -1723,7 +1820,7 @@ mod tests {
             search: false,
             inventory: false,
             hotbar: false,
-            page: Some(0),
+            page: 0,
         };
         // Top row, second column: the button spans x 27..53, y -28..4.
         let t = tab(true, 1);
@@ -1783,11 +1880,11 @@ mod tests {
         // ten tabs on the second page, the eleventh on the third.
         let create = c.tabs.iter().find(|t| t.id == "create:tachyon_tab").unwrap();
         assert_eq!((create.title.as_str(), create.icon.as_str()), ("Create", "create:cogwheel"));
-        assert_eq!((create.page, create.top, create.column), (Some(1), true, 0));
+        assert_eq!((create.page, create.top, create.column), (1, true, 0));
         let last = c.tabs.iter().find(|t| t.id == "lost_realms_9:tachyon_tab").unwrap();
-        assert_eq!((last.title.as_str(), last.page), ("Lost Realms 9", Some(2)));
+        assert_eq!((last.title.as_str(), last.page), ("Lost Realms 9", 2));
         let tenth = c.tabs.iter().find(|t| t.id == "lost_realms_8:tachyon_tab").unwrap();
-        assert_eq!((tenth.page, tenth.top, tenth.column), (Some(1), false, 4));
+        assert_eq!((tenth.page, tenth.top, tenth.column), (1, false, 4));
         assert_eq!(c.pages(), 3);
         // The search tab finds the mods' items.
         assert!(c.search_items().iter().any(|s| &*s.item == "create:shaft"));
@@ -1796,22 +1893,13 @@ mod tests {
             c.tabs.iter().filter(|t| c.on_page(t)).map(|t| t.id.clone()).collect()
         };
         assert_eq!(shown(&c), ["minecraft:building_blocks", "minecraft:search", "minecraft:inventory"]);
-        // ">" over the right corner turns to the next page and its first tab.
-        let room = 60.0;
-        assert_eq!(c.page_button_at((5.0, PAGE_BUTTON_Y + 5.0), room), None);
-        assert_eq!(c.page_button_at((Creative::WIDTH - 5.0, PAGE_BUTTON_Y + 5.0), room), Some(1));
-        // A screen near the window's top has them beside its top.
-        assert_eq!(c.page_button_at((Creative::WIDTH - 5.0, PAGE_BUTTON_Y + 5.0), 12.0), None);
-        assert_eq!(c.page_button_at((Creative::WIDTH + 10.0, 10.0), 12.0), Some(1));
-        c.turn_page(1);
+        // The next page shows its first tab, the search tab still there.
+        c.set_page(1);
         assert_eq!((c.page, c.tab().id.as_str()), (1, "create:tachyon_tab"));
         assert!(shown(&c).contains(&"minecraft:search".to_owned()));
         assert!(!shown(&c).contains(&"minecraft:building_blocks".to_owned()));
-        c.turn_page(1);
-        c.turn_page(1);
+        c.set_page(5);
         assert_eq!(c.page, 2);
-        assert_eq!(c.page_button_at((Creative::WIDTH - 5.0, PAGE_BUTTON_Y + 5.0), room), None);
-        assert_eq!(c.page_button_at((-20.0, 10.0), 12.0), Some(-1));
         // Selecting a tab shows its page.
         c.select(0);
         assert_eq!(c.page, 0);

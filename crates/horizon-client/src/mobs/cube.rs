@@ -143,13 +143,13 @@ pub(super) fn set_wanted(m: &mut Mob, speed: f64) {
     m.ai.mov.operation = Operation::MoveTo;
 }
 /// AbstractCubeMob.jumpFromGround (and MagmaCube's size boost).
-pub fn jump(m: &mut Mob) {
+pub fn jump(m: &mut Mob, w: &MobWorld) {
     let boost = if m.species() == Species::MagmaCube {
         m.extra.size as f32 * 0.1
     } else {
         0.0
     };
-    m.velocity.y = f64::from(m.jump_power() + boost);
+    m.velocity.y = f64::from(m.jump_power(w) + boost);
 }
 /// `AbstractCubeMob.tick`'s landing splash: crumbs of goo (or flames) around
 /// the cube's feet, drawn by the side that ticks the mob.
@@ -179,13 +179,31 @@ fn landing_splash(m: &mut Mob, events: &mut Vec<MobEvent>) {
         i += 1;
     }
 }
-/// `AbstractCubeMob.tick` on a client of a server: the landing splash follows
-/// the on-ground flag the server sends.
+/// `AbstractCubeMob.tick` on a client of a server: the squish scale (`oSquish`,
+/// the step toward `targetSquish`, the land and takeoff targets, then
+/// `decreaseSquish`) and the landing splash follow the on-ground flag the
+/// server sends. The squish sound stays the server's broadcast.
 pub fn client_tick(m: &mut Mob, events: &mut Vec<MobEvent>) {
-    if m.on_ground && !m.extra.flag2 {
+    if m.species() == Species::SulfurCube {
+        super::sulfur_cube::client_tick(m);
+    }
+    // `AbstractCubeMob.tick`: `oSquish = squish`, then squish toward the target.
+    m.anim.vo[SQUISH] = m.anim.v[SQUISH];
+    m.anim.v[SQUISH] += (m.anim.v[TARGET_SQUISH] - m.anim.v[SQUISH]) * 0.5;
+    let was = m.extra.flag2;
+    if m.on_ground && !was {
         landing_splash(m, events);
+        m.anim.v[TARGET_SQUISH] = -0.5;
+    } else if !m.on_ground && was {
+        m.anim.v[TARGET_SQUISH] = 1.0;
     }
     m.extra.flag2 = m.on_ground;
+    // `AbstractCubeMob.decreaseSquish`; `MagmaCube` multiplies by 0.9.
+    m.anim.v[TARGET_SQUISH] *= if m.species() == Species::MagmaCube {
+        0.9
+    } else {
+        0.6
+    };
 }
 /// AbstractCubeMob.tick squish and landing sounds, plus contact damage.
 pub fn ai_step(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
@@ -216,31 +234,25 @@ pub fn ai_step(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
     };
     // playerTouch -> dealDamage
     if can_deal_damage(m)
+        && !m.no_ai
         && m.alive()
         && let Some(p) = &w.player
         && p.alive
         && !p.creative
+        && crate::scoreboard::teams_allow_damage(
+            w.teams.of(Who::Mob(m.id)),
+            w.teams.of(Who::Player),
+        )
         // Player.touch: entities within the player's box grown by (1, 0.5, 1).
         && m.bounds().intersects(p.bounds.inflate(Vec3::new(1.0, 0.5, 1.0)))
     {
-        let reach = 2.04f32.sqrt() as f64 - 0.6;
-        if m.bounds()
-            .inflate(Vec3::new(reach, 0.0, reach))
-            .intersects(p.bounds)
-        {
-            events.push(MobEvent::AttackPlayer(
-                attack_damage(m),
-                [m.position.x, m.position.y, m.position.z],
-            ));
-            if m.species() == Species::Slime {
-                let pitch = (m.random.next_float() - m.random.next_float()) * 0.2 + 1.0;
-                events.push(MobEvent::Sound(
-                    "entity.slime.attack",
-                    m.center(),
-                    1.0,
-                    pitch,
-                ));
-            }
+        // isWithinMeleeAttackRange, with what the cube holds.
+        if m.melee_reaches(p.bounds) && m.sees(w, Who::Player) {
+            events.push(MobEvent::CubeHurtPlayer {
+                cube: m.id,
+                amount: attack_damage(m),
+                from: [m.position.x, m.position.y, m.position.z],
+            });
         }
     }
     hurt_touching_golems(m, w, events);
@@ -258,7 +270,8 @@ fn attack_damage(m: &Mob) -> f32 {
 /// `AbstractCubeMob.push(entity)`: an iron golem whose `pushEntities` takes
 /// this cube (its box overlaps the cube's, `EntitySelector.pushableBy`) gets
 /// `dealDamage`: alive, `doTeamsAllowDamage`, `isWithinMeleeAttackRange`
-/// (always true for overlapping boxes) and `hasLineOfSight`, then a
+/// (true for overlapping boxes unless a held spear's minimum range refuses
+/// them) and `hasLineOfSight`, then a
 /// `mobAttack` hit for `getAttackDamage`.
 fn hurt_touching_golems(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
     // canDealDamage also needs Mob.isEffectiveAi: a NoAI cube never hurts.
@@ -276,6 +289,7 @@ fn hurt_touching_golems(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
                 && o.species == Species::IronGolem
                 && o.alive
                 && o.bounds.intersects(bounds)
+                && m.melee_reaches(o.bounds)
                 && crate::scoreboard::pushable_by(theirs, own, pushable)
                 && crate::scoreboard::teams_allow_damage(own, theirs)
         })
@@ -488,6 +502,88 @@ mod golem_touch_tests {
                 .unwrap()
                 .is_empty(),
             "a NoAI cube is not isEffectiveAi, so it cannot deal damage"
+        );
+    }
+
+    /// #4569: `AbstractCubeMob.dealDamage` on a touching player emits
+    /// `CubeHurtPlayer` without queueing `entity.slime.attack` in `ai_step`
+    /// (the sound only follows a hit that `hurtServer` accepts).
+    #[test]
+    fn a_cube_touching_a_player_defers_its_attack_sound_to_hurt_server() {
+        use horizon_core::geometry::Aabb;
+        let mut events = Vec::new();
+        let ran = with_test_world(&[], |w, types| {
+            let mut w = w.clone();
+            let at = Vec3::new(0.5, 64.0, 0.5);
+            w.player = Some(crate::mobs::PlayerView {
+                position: at,
+                bounds: Aabb::new(
+                    Vec3::new(at.x - 0.3, at.y, at.z - 0.3),
+                    Vec3::new(at.x + 0.3, at.y + 1.8, at.z + 0.3),
+                ),
+                eye: [at.x, at.y + 1.62, at.z],
+                alive: true,
+                creative: false,
+                sneaking: false,
+                swimming: false,
+                look: [0.0, 0.0, 1.0],
+                main_hand: None,
+                off_hand: None,
+                head: None,
+                chest: None,
+                legs: None,
+                feet: None,
+                armor_cover: 0.0,
+                invisible: false,
+                spectator: false,
+                gold_armor: false,
+                hurt_by: None,
+                last_hurt: None,
+                velocity: Vec3::ZERO,
+                yaw: 0.0,
+                sprinting: false,
+                riding: false,
+                hero: false,
+                effects: Vec::new(),
+                uuid: [0; 4],
+                allies: Default::default(),
+                remote: false,
+                sleeping: false,
+                sleep_timer: 0,
+                passenger: false,
+                riding_vehicle: None,
+                vehicle: None,
+            });
+            let mut slime = Mob::new(
+                1,
+                Arc::new(types.types["minecraft:slime"].clone()),
+                Vec3::new(1.2, 64.0, 0.5),
+                0.0,
+            );
+            set_size(&mut slime, 2);
+            slime.on_ground = true;
+            slime.extra.flag2 = true;
+            ai_step(&mut slime, &w, &mut events);
+        });
+        if !ran {
+            return;
+        }
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                MobEvent::CubeHurtPlayer {
+                    cube: 1,
+                    amount,
+                    ..
+                } if (*amount - 2.0).abs() < f32::EPSILON
+            )),
+            "expected CubeHurtPlayer for size-2 slime, got {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, MobEvent::Sound("entity.slime.attack", ..))),
+            "ai_step must not emit entity.slime.attack before hurtServer: {events:?}"
         );
     }
 }

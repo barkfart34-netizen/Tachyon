@@ -44,8 +44,8 @@ jobs:
       - name: The import's Java mod port
         run: cargo test -p horizon-port-pack
 
-      - name: Content mods in the resource root (features beside vanilla's)
-        run: cargo test -p horizon-client --lib -- mod_content
+      - name: Content mods in the resource root (features beside vanilla's) and the creative tabs
+        run: cargo test -p horizon-client-lib --lib -- mod_content creative
 
       # The touch controls' Android side compiles only for Android: checked
       # (not linked) with the NDK's compilers for the C parts, as the APK builds.

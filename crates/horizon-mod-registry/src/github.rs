@@ -212,21 +212,14 @@ impl GitHub {
         Ok(Some((entry, file["sha"].as_str().unwrap_or("").to_owned())))
     }
 
-    /// A public repository `owner/name`: its GitHub JSON, None when it is not found (or private).
-    pub fn repository(&self, repo: &str) -> Result<Option<Value>> {
+    /// The blob sha of `path` on main, None when it isn't there: what replacing it needs.
+    pub fn blob(&self, path: &str) -> Result<Option<String>> {
         match self
-            .agent
-            .get(&format!("{}/repos/{repo}", self.at.api))
-            .timeout(self.call_timeout)
-            .set("Authorization", &format!("Bearer {}", self.bot_token))
-            .set("Accept", "application/vnd.github+json")
-            .set("X-GitHub-Api-Version", "2022-11-28")
+            .call("GET", &format!("/contents/{path}"))
+            .query("ref", "main")
             .call()
         {
-            Ok(r) => {
-                let repo = read(r)?;
-                Ok((repo["private"] == false).then_some(repo))
-            }
+            Ok(r) => Ok(read(r)?["sha"].as_str().map(str::to_owned)),
             Err(ureq::Error::Status(404, _)) => Ok(None),
             Err(e) => Err(failure(e)),
         }
@@ -285,18 +278,65 @@ impl GitHub {
         }
     }
 
+    /// The address of the open pull request from `branch`, if there is one.
+    pub fn open_pull(&self, branch: &str) -> Result<Option<String>> {
+        let owner = self.repo.split('/').next().unwrap_or("");
+        let pulls = self
+            .call("GET", "/pulls")
+            .query("head", &format!("{owner}:{branch}"))
+            .query("state", "open")
+            .call()
+            .map_err(failure)
+            .and_then(read)?;
+        Ok(pulls
+            .as_array()
+            .and_then(|p| p.first())
+            .map(|p| p["html_url"].as_str().unwrap_or("").to_owned()))
+    }
+
+    /// The messages of `branch`'s commits that aren't on main.
+    pub fn commits(&self, branch: &str) -> Result<Vec<String>> {
+        let compare = self
+            .call("GET", &format!("/compare/main...{branch}"))
+            .call()
+            .map_err(failure)
+            .and_then(read)?;
+        Ok(compare["commits"]
+            .as_array()
+            .map(|c| {
+                c.iter()
+                    .map(|c| c["commit"]["message"].as_str().unwrap_or("").to_owned())
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// Moves branch `name` back to main, dropping its own commits.
+    pub fn reset(&self, name: &str) -> Result<()> {
+        let main = self
+            .call("GET", "/git/ref/heads/main")
+            .call()
+            .map_err(failure)
+            .and_then(read)?;
+        let sha = main["object"]["sha"].as_str().unwrap_or("");
+        self.call("PATCH", &format!("/git/refs/heads/{name}"))
+            .send_json(json!({"sha": sha, "force": true}))
+            .map_err(failure)?;
+        Ok(())
+    }
+
     /// Writes `path` on `branch` in one commit; `sha` is the blob it replaces.
     pub fn put(
         &self,
         path: &str,
-        text: &str,
+        content: impl AsRef<[u8]>,
         branch: &str,
         sha: Option<&str>,
         message: &str,
     ) -> Result<()> {
         let mut body = json!({
             "message": message,
-            "content": STANDARD.encode(text),
+            "content": STANDARD.encode(content),
             "branch": branch,
         });
         if let Some(sha) = sha {

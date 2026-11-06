@@ -50,6 +50,18 @@ pub(super) enum Source {
     Request(TouchRequest),
 }
 impl Source {
+    /// The device Horizon's held keys (`HeldKeys`) count it under: touch
+    /// as a script's input, neither the keyboard nor a controller.
+    fn held(self) -> horizon_client::held::Source {
+        use horizon_client::held::Source as Held;
+        match self {
+            Self::Keyboard(_) | Self::Mouse(_) => Held::Keyboard,
+            Self::Pad(_) => Held::Pad,
+            #[cfg(any(target_os = "android", test))]
+            _ => Held::Agent,
+        }
+    }
+
     fn fixed(self) -> bool {
         match self {
             #[cfg(any(target_os = "android", test))]
@@ -392,7 +404,7 @@ impl Game<'_> {
                     match mapping {
                         Err(_) | Ok(KeyCode::KeyE | KeyCode::KeyF) => self.touch_input.queue(source, mapping),
                         Ok(KeyCode::Escape) => self.pad_back()?,
-                        Ok(key) => self.key_pressed(key)?,
+                        Ok(key) => self.key_pressed(key, key)?,
                     }
                 }
             } else {
@@ -421,15 +433,15 @@ impl Game<'_> {
                     Ok(KeyCode::ShiftLeft) if matches!(source, Source::Pad(_))
                         && self.settings.controller.toggle_sneak && !self.settings.toggle_crouch => {
                         if down {
-                            self.mapped_key(KeyCode::ShiftLeft, !self.toggles.is_down(0), false)?;
+                            self.mapped_key(KeyCode::ShiftLeft, !self.toggles.is_down(0), false, KeyCode::ShiftLeft, source.held())?;
                         } else if !self.touch_input.latched[0].is_some_and(|s| matches!(s, Source::Pad(_))) {
-                            self.mapped_key(KeyCode::ShiftLeft, false, false)?;
+                            self.mapped_key(KeyCode::ShiftLeft, false, false, KeyCode::ShiftLeft, source.held())?;
                         }
                     }
                     Ok(key) if matches!(source, Source::Mouse(_)) => {
                         if down {
                             self.keys.insert(key);
-                            self.key_pressed(key)?;
+                            self.key_pressed(key, key)?;
                         } else {
                             self.sync_touch_mapping(mapping);
                         }
@@ -439,7 +451,7 @@ impl Game<'_> {
                         self.keys.insert(key);
                         self.touch_input.queue(source, mapping);
                     }
-                    Ok(key) => self.mapped_key(key, down, repeat)?,
+                    Ok(key) => self.mapped_key(key, down, repeat, key, source.held())?,
                 }
                 if let Some((slot, was_down)) = toggle {
                     self.touch_input.toggle_changed(source, mapping, was_down, self.toggles.is_down(slot));
@@ -543,7 +555,7 @@ impl Game<'_> {
             if !self.touch_playing() { self.cancel_touch_input(); break; }
             match mapping {
                 Err(button) => self.click_mouse(button, true)?,
-                Ok(key) => self.key_pressed(key)?,
+                Ok(key) => self.key_pressed(key, key)?,
             }
         }
         Ok(())

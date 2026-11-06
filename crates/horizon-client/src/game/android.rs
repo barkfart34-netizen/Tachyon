@@ -1950,3 +1950,17 @@ mod tests {
         assert_eq!(pad_button(96), Some(PadButton::South));
     }
 }
+
+/// The app's game is Horizon's splitscreen around the first player's: the
+/// phone has one player, so the overlay reaches that game through it.
+impl<'a> std::ops::Deref for super::split::Split<'a> {
+    type Target = super::Game<'a>;
+    fn deref(&self) -> &Self::Target {
+        &self.host
+    }
+}
+impl std::ops::DerefMut for super::split::Split<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.host
+    }
+}

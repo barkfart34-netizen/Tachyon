@@ -161,6 +161,45 @@ impl Game<'_> {
                 [[s.u0, s.v0], [s.u1, s.v0], [s.u1, s.v1], [s.u0, s.v1]],
                 u32::MAX,
             );
+            if let Some(name) = &d.name {
+                let text = horizon_client::text::Text::literal(name);
+                let f = self.gui.atlas.font.width_text(&text);
+                if f > 0.0 {
+                    let f1 = (25.0 / f).clamp(0.0, 6.0 / 9.0);
+                    let mut temp = HudBatch::new([1, 1]);
+                    temp.name_tag(&self.gui.atlas, &text, 0.0, 0xFFFF_FFFF, 0x8000_0000);
+                    batch.patches.extend(temp.patches);
+                    let tm = glam::Mat4::from_translation(glam::Vec3::new(
+                        x + (f32::from(d.x) / 2.0 + 64.0) * scale,
+                        y + (f32::from(d.y) / 2.0 + 64.0 + 4.0) * scale,
+                        0.0,
+                    )) * glam::Mat4::from_scale(glam::Vec3::splat(scale * f1));
+                    for quad in temp.vertices.as_chunks::<6>().0 {
+                        let corners = [quad[0], quad[1], quad[2], quad[5]].map(|v| {
+                            let p = tm.transform_point3(glam::Vec3::new(v.pos[0], v.pos[1], 0.0));
+                            [p.x, p.y]
+                        });
+                        let uvs = [quad[0].uv, quad[1].uv, quad[2].uv, quad[5].uv];
+                        batch.quad(corners, uvs, quad[0].color);
+                    }
+                }
+            }
+        }
+        // A native mod's own icons (`native_map_decorations`).
+        for d in self.mod_map_decorations(id, true) {
+            let Some(s) = self.gui.atlas.sprites.get(d.sprite.as_str()).copied() else {
+                continue;
+            };
+            batch.quad(
+                pose_corners(
+                    super::maps::decoration_pose_at(d.x, d.y, d.rot, 0.0),
+                    x,
+                    y,
+                    scale,
+                ),
+                [[s.u0, s.v0], [s.u1, s.v0], [s.u1, s.v1], [s.u0, s.v1]],
+                u32::MAX,
+            );
         }
     }
 }
@@ -169,9 +208,14 @@ impl Game<'_> {
 /// `scale` GUI pixels per map pixel: (-1, 1), (1, 1), (1, -1), (-1, -1)
 /// under `MapRenderer.render`'s pose.
 fn decoration_corners(d: &super::maps::Decoration, x: f32, y: f32, scale: f32) -> [[f32; 2]; 4] {
+    pose_corners(super::maps::decoration_pose(d, 0.0), x, y, scale)
+}
+/// The corners of a decoration drawn under `pose` (`decoration_pose`), like
+/// [`decoration_corners`].
+fn pose_corners(pose: glam::Mat4, x: f32, y: f32, scale: f32) -> [[f32; 2]; 4] {
     let m = glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0))
         * glam::Mat4::from_scale(glam::Vec3::new(scale, scale, 1.0))
-        * super::maps::decoration_pose(d, 0.0);
+        * pose;
     [(-1.0, 1.0), (1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)].map(|(cx, cy)| {
         let p = m.transform_point3(glam::Vec3::new(cx, cy, 0.0));
         [p.x, p.y]
@@ -191,7 +235,8 @@ impl MapData {
         m.unlimited = self.unlimited;
         m
     }
-    /// `MapItemSavedData.locked`: the same pixels and banner markers, locked.
+    /// `MapItemSavedData.locked`: the same pixels, banner markers and
+    /// decorations, locked (the frame markers are not copied).
     pub(super) fn locked_copy(&self) -> MapData {
         let mut m = MapData::fresh(
             f64::from(self.center[0]),
@@ -202,6 +247,7 @@ impl MapData {
         m.center = self.center;
         m.colors = self.colors.clone();
         m.banners = self.banners.clone();
+        m.decorations = self.decorations.clone();
         m.tracking = self.tracking;
         m.unlimited = self.unlimited;
         m.locked = true;
@@ -212,7 +258,7 @@ impl MapData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::maps::Decoration;
+    use crate::game::maps::{Decoration, Key};
 
     fn close(a: [[f32; 2]; 4], b: [[f32; 2]; 4]) {
         for (a, b) in a.iter().zip(&b) {
@@ -239,7 +285,8 @@ mod tests {
             x,
             y,
             rot,
-            holder: None,
+            name: None,
+            key: Key::Item,
         };
         // The centre, facing north: 8 map pixels wide, nudged by (-0.5, 0.5).
         close(
