@@ -2228,7 +2228,9 @@ impl Overlay<'_> {
                 continue;
             }
             if meta.is_ok() {
-                fs::remove_file(&path)?;
+                // A link to the base's file or directory (a Windows junction
+                // goes as a directory): only the name goes, never the base.
+                fs::remove_file(&path).or_else(|_| fs::remove_dir(&path))?;
             }
             fs::create_dir(&path)?;
             self.link_children(&at)?;
@@ -2255,12 +2257,20 @@ fn out_path(overlay: &Overlay<'_>, rel: &str) -> PathBuf {
 fn link(target: &Path, at: &Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(target, at)
 }
-/// Without symbolic links (Windows lets only some users make them): real
-/// directories holding hard links to the files, which take no room, or
-/// copies where a hard link cannot be (another disk).
+/// Without symbolic links (Windows lets only some users make them): a
+/// directory as a junction, which needs no privilege, else real directories
+/// holding hard links to the files, which take no room, or copies where a
+/// hard link cannot be (another disk). Tachyon: the junction is one name
+/// where the mirror was one per file, 38,000 of them with Create, minutes
+/// on a hard disk; `Overlay::dir` makes a directory real before anything
+/// is written in it, so nothing is written through to the base.
 #[cfg(not(unix))]
 fn link(target: &Path, at: &Path) -> std::io::Result<()> {
     if target.is_dir() {
+        #[cfg(windows)]
+        if horizon_threads::junction(target, at).is_ok() {
+            return Ok(());
+        }
         fs::create_dir_all(at)?;
         for entry in fs::read_dir(target)?.flatten() {
             link(&entry.path(), &at.join(entry.file_name()))?;
