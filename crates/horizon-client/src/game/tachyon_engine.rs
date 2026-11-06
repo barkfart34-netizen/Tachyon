@@ -2199,6 +2199,9 @@ impl Game<'_> {
                         }],
                         oversized_in_gui: false,
                         animated: false,
+                        cit_glint: None,
+                        hdr_tier: 0,
+                        hdr_light: 0,
                     })
                 })
                 .clone()

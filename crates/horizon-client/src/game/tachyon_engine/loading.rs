@@ -271,10 +271,7 @@ impl Layout {
 pub(in crate::game) fn early_gui() -> UiResources {
     UiResources {
         atlas: HudAtlas::loading(),
-        panorama: Arc::new(horizon_client::gfx::panorama::Faces {
-            size: 1,
-            pixels: [0u8; 4].repeat(6),
-        }),
+        panorama: Arc::new(horizon_client::gfx::panorama::Faces::colour([0; 4])),
     }
 }
 

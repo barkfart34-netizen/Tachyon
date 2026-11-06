@@ -334,7 +334,7 @@ impl Game<'_> {
         self.options.execution_role.is_client() && self.focused
             && self.screen == Screen::Playing && self.title.is_none() && self.player.is_some()
             && !self.screen_over_playing() && self.pending_entry.is_none()
-            && self.world_loader.is_none() && self.startup_loading.is_none()
+            && self.startup_loading.is_none()
              && self.integrated_starting.is_none() && !self.remote_loading()
              && self.remote_touch_ready()
             && self.pending_save.is_none() && self.pack_reload.is_none()

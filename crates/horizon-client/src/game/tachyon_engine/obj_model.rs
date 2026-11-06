@@ -222,6 +222,11 @@ fn quad(corners: &[([f32; 3], [f32; 2])], material: &Material) -> Option<ModelQu
         tint_index: -1,
         shade_direction_override: None,
         light_emission: 0,
+        light: [0, 0],
+        color: None,
+        ambient_occlusion: None,
+        render_type: None,
+        shade: true,
     })
 }
 
