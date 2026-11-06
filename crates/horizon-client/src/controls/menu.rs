@@ -111,7 +111,11 @@ impl Menu {
             }
             return None;
         }
-        let (f, choice) = self.pending.take()?;
+        let (f, choice) = self.pending?;
+        if f != finger {
+            return None;
+        }
+        self.pending = None;
         (f == finger && self.hits.at(at) == Some(choice)).then_some(choice)
     }
 
@@ -120,12 +124,19 @@ impl Menu {
             || self.pending.is_some_and(|(f, _)| f == finger)
     }
 
+    /// Cancellation is not an up: it never toggles the ball or accepts a choice.
+    pub fn cancel(&mut self) {
+        self.on_ball = None;
+        self.pending = None;
+    }
+
     pub fn draw(
         &mut self,
         batch: &mut HudBatch,
         atlas: &HudAtlas,
         screen: Screen,
         settings: Settings,
+        zalith: bool,
     ) {
         let mut ui = Ui::new(atlas, batch, (0.0, 0.0));
         self.hits.clear();
@@ -221,6 +232,9 @@ impl Menu {
                 ("Pause".to_owned(), Choice::Pause),
                 ("Close".to_owned(), Choice::Close),
             ];
+            let items: Vec<_> = items.into_iter().filter(|(_, choice)| {
+                zalith || !matches!(choice, Choice::EditControls | Choice::Gestures | Choice::Size)
+            }).collect();
             let rows = items.len().div_ceil(2);
             let h = row * rows as f32 + 56.0 * d;
             let p = Rect {

@@ -68,6 +68,8 @@ pub struct TouchFrame {
     /// Left/forward input; eight keyboard directions unless analog is enabled.
     pub movement: Option<[f32; 2]>,
     pub edges: Vec<(Button, bool)>,
+    /// Ground D-pad crouch policy, captured at down rather than at release.
+    pub sneak_toggle: bool,
     pub look_degrees: [f32; 2],
     pub aim: Option<[f32; 2]>,
     pub taps: VecDeque<TouchTap>,
@@ -91,6 +93,7 @@ enum Role {
     Move([f32; 2]),
     Button(Button),
     Shield,
+    SneakToggle,
     Ignore,
 }
 
@@ -102,6 +105,7 @@ pub struct TouchControls {
     pub context: TouchContext,
     fingers: BTreeMap<u64, (Role, [f32; 2])>,
     pending: PadState,
+    pending_sneak_toggle: bool,
     edges: Edges,
     requests: Vec<TouchRequest>,
     aspect: f32,
@@ -201,7 +205,7 @@ impl TouchControls {
                     .and_then(|t| now.checked_sub(t))
                     .is_some_and(|elapsed| elapsed < Duration::from_millis(300))
                 {
-                    Role::Button(Button::RightStick)
+                    Role::SneakToggle
                 } else {
                     self.last_sneak_tap = Some(now);
                     Role::Ignore
@@ -228,6 +232,9 @@ impl TouchControls {
         };
         if let Role::Button(button) = role {
             Self::press(&mut self.pending, button);
+        } else if matches!(role, Role::SneakToggle) {
+            self.pending_sneak_toggle = true;
+            Self::press(&mut self.pending, Button::RightStick);
         }
         self.fingers.insert(id, (role, point));
         true
@@ -277,6 +284,7 @@ impl TouchControls {
                 }
                 Role::Button(button) => Self::press(&mut state, *button),
                 Role::Shield => Self::press(&mut state, Button::LeftTrigger),
+                Role::SneakToggle => Self::press(&mut state, Button::RightStick),
                 Role::Ignore => {}
             }
         }
@@ -296,6 +304,8 @@ impl TouchControls {
             pad,
             movement,
             edges: self.edges.update(&pad, 0.5),
+            sneak_toggle: std::mem::take(&mut self.pending_sneak_toggle)
+                || self.fingers.values().any(|(r, _)| matches!(r, Role::SneakToggle)),
             requests: std::mem::take(&mut self.requests),
             shield_held: self.shield_held(),
             ..TouchFrame::default()
@@ -306,6 +316,7 @@ impl TouchControls {
     pub fn clear(&mut self) -> TouchFrame {
         self.fingers.clear();
         self.pending = PadState::default();
+        self.pending_sneak_toggle = false;
         self.requests.clear();
         self.last_sneak_tap = None;
         self.sprint_latched = false;

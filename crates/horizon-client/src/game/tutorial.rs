@@ -268,7 +268,7 @@ impl super::Game<'_> {
             .iter()
             .any(|key| self.keys.contains(key))
                 || self
-                    .pad_move()
+                    .input_move()
                     .is_some_and(|[left, forward]| left.abs() > 0.3 || forward.abs() > 0.3))
         {
             self.tutorial.input();

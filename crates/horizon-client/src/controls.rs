@@ -521,6 +521,19 @@ impl Controls {
         }
     }
 
+    /// Lifecycle cancellation also resets buttons whose layout toggled them on.
+    pub fn cancel(&mut self) {
+        self.release_all();
+        for l in 0..self.pressed.len() {
+            for i in 0..self.pressed[l].len() {
+                if std::mem::take(&mut self.pressed[l][i]) {
+                    let events = self.button((l, i)).click_events.clone();
+                    self.send(&events, false);
+                }
+            }
+        }
+    }
+
     fn stick_of(&self, id: u64) -> Option<Id> {
         self.sticks.iter().enumerate().find_map(|(l, row)| {
             row.iter()

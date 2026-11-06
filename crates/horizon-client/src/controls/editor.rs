@@ -550,6 +550,15 @@ impl Editor {
         self.place_at(widget, x, y, screen);
     }
 
+    /// Stop a cancelled contact without accepting Save or another pending button.
+    pub fn cancel_input(&mut self) {
+        self.drag = None;
+        self.resize = None;
+        self.sliding = None;
+        self.pending = None;
+        self.guides.clear();
+    }
+
     pub fn up(&mut self, finger: u64, at: (f32, f32), screen: Screen) -> Outcome {
         if self.sliding.is_some_and(|(f, _, _)| f == finger) {
             self.sliding = None;

@@ -2,7 +2,9 @@
 //! touch screen, the soft keyboard, a gamepad, the gyroscope, the back
 //! gesture and the window that goes away while the app is in the background.
 //!
-//! Touch works as in Zalith Launcher 2. The control layout
+//! Zalith remains the default; `touchEngine=bedrock` opts into fixed gameplay
+//! buttons and movement. Both engines use the same menu, hotbar and look fallback.
+//! Bedrock world gestures and custom keys are not active yet. The Zalith layout
 //! (`horizon_client::controls`) takes the fingers that land on its buttons
 //! and joysticks, and its floating ball opens the game menu and the layout
 //! editor. In the world any other finger looks around (with gestures on, a
@@ -11,6 +13,7 @@
 //! mouse pointer the way a touchpad does: a tap clicks where it points and a
 //! long press holds the button.
 use super::*;
+use super::touch_input::{Engine, Source};
 use crate::android::jni::{self, Typed};
 use horizon_client::controls::editor::{Editor, Outcome};
 use horizon_client::controls::menu::{Choice, Menu, Settings as TouchSettings};
@@ -19,6 +22,7 @@ use horizon_client::controls::{
 };
 use horizon_client::gamepad::{Button as PadButton, PadState};
 use horizon_client::osk;
+use horizon_client::touch::{TouchContext, TouchControls, TouchFeedback, TouchScreen};
 use horizon_client::ui_theme::{preference, set_preference};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -36,7 +40,10 @@ const GYRO: f32 = 380.0;
 
 /// What the HUD draws for touch, kept for `draw_touch`.
 struct Overlay {
+    engine: Engine,
     controls: Controls,
+    bedrock: TouchControls,
+    feedback: TouchFeedback,
     menu: Menu,
     editor: Option<Editor>,
     settings: TouchSettings,
@@ -80,10 +87,16 @@ pub(crate) fn draw_touch(batch: &mut HudBatch, atlas: &horizon_client::hud::HudA
             return;
         }
         if !o.settings.controls_hidden {
-            o.controls
-                .draw(batch, atlas, o.in_game, o.screen, o.settings.opacity);
+            match o.engine {
+                Engine::Bedrock if o.in_game => {
+                    o.bedrock.draw(batch, atlas, None, o.feedback, o.settings.opacity);
+                }
+                Engine::Zalith => o.controls
+                    .draw(batch, atlas, o.in_game, o.screen, o.settings.opacity),
+                _ => {}
+            }
         }
-        o.menu.draw(batch, atlas, o.screen, o.settings);
+        o.menu.draw(batch, atlas, o.screen, o.settings, o.engine == Engine::Zalith);
         if let Some(at) = o.pointer {
             controls::draw_pointer(batch, atlas, at, 24.0 * o.screen.density);
         }
@@ -122,9 +135,9 @@ pub(crate) struct AndroidGame {
     home: PathBuf,
     contacts: HashMap<u64, Contact>,
     /// Mouse buttons the controls hold down.
-    buttons: Vec<MouseButton>,
+    buttons: Vec<(MouseButton, bool)>,
     /// Clicks a gesture tap made, released a moment later.
-    releases: Vec<(MouseButton, Instant)>,
+    releases: Vec<(u64, MouseButton, Instant)>,
     /// A launcher scroll event held: the direction and the next wheel step.
     scrolling: Option<(f32, Instant)>,
     /// The last tap on the hotbar, for a double tap.
@@ -140,10 +153,14 @@ pub(crate) struct AndroidGame {
     /// The IME button opened the keyboard without a field.
     forced_keyboard: bool,
     enabled: bool,
+    active: bool,
     /// Physical pixels per dp.
     dp: f32,
     dark: bool,
+    /// Caller-owned monotonic clock for the pure touch engine.
+    touch_epoch: Instant,
     was_in_game: bool,
+    was_screen: Option<Screen>,
     /// When the last status line was logged (`Tachyon status`).
     last_status: Instant,
     /// How many frames, CPU and GPU times the stats held at the last status line.
@@ -232,6 +249,21 @@ fn load_controls(home: &Path) -> Controls {
     Controls::default_layout()
 }
 
+/// Bedrock has its own explicit path, never parsed as a Zalith layout or saved here.
+fn load_bedrock(home: &Path) -> TouchControls {
+    let path = home.join("touch/bedrock.json");
+    let mut touch = TouchControls::default();
+    match std::fs::read_to_string(&path) {
+        Ok(json) => match horizon_client::touch::Settings::parse(&json) {
+            Ok(settings) => touch.settings = settings,
+            Err(e) => log::warn!("Tachyon: touch settings {}: {e}", path.display()),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log::warn!("Tachyon: touch settings {}: {e}", path.display()),
+    }
+    touch
+}
+
 fn flag(home: &Path, key: &str, default: bool) -> bool {
     preference(home, key).map_or(default, |v| v == "true")
 }
@@ -274,6 +306,12 @@ impl AndroidGame {
         let settings = Settings::load(&home.join("options.txt"));
         Behaviours::set_cache_dir(home.join(".horizon-cache"));
         let enabled = flag(&home, "touchControls", true);
+        let engine = Engine::preference(preference(&home, "touchEngine").as_deref());
+        let bedrock = if engine == Engine::Bedrock {
+            load_bedrock(&home)
+        } else {
+            TouchControls::default()
+        };
         let dp = jni::platform("density", "")
             .and_then(|d| d.parse().ok())
             .unwrap_or(2.0);
@@ -302,6 +340,7 @@ impl AndroidGame {
             },
             controls.layout.info.name.default.trim()
         );
+        log::info!("Tachyon: touch engine {engine:?}");
         let touch = TouchSettings {
             gestures: flag(&home, "touchGestures", false),
             gyroscope: flag(&home, "touchGyroscope", false),
@@ -344,7 +383,10 @@ impl AndroidGame {
         }
         OVERLAY.with(|o| {
             *o.borrow_mut() = Some(Overlay {
+                engine,
                 controls,
+                bedrock,
+                feedback: TouchFeedback::default(),
                 menu: Menu::new(ball),
                 editor: None,
                 settings: touch,
@@ -373,9 +415,12 @@ impl AndroidGame {
             keyboard_dismissed: false,
             forced_keyboard: false,
             enabled,
+            active: true,
             dp,
             dark,
+            touch_epoch: started,
             was_in_game: false,
+            was_screen: None,
             last_status: Instant::now(),
             stats_mark: [0; 3],
             first_fps: None,
@@ -429,11 +474,12 @@ impl AndroidGame {
     }
 
     /// The world has the pointer, with nothing over it.
-    fn in_game(&mut self) -> bool {
-        match &mut self.app {
+    fn in_game(&self) -> bool {
+        let playing = match &self.app {
             App::Ready(game) => game.touch_playing(),
             App::Loading(_) => false,
-        }
+        };
+        self.active && playing && !with_overlay(|o| o.menu.open || o.editor.is_some()).unwrap_or(false)
     }
 
     fn startup_loading(&self) -> bool {
@@ -447,7 +493,114 @@ impl AndroidGame {
         with_overlay(|o| o.editor.is_some()).unwrap_or(false)
     }
 
+    fn touch_context(&self) -> TouchContext {
+        let mut context = match &self.app {
+            App::Ready(game) => game.touch_context(),
+            App::Loading(_) => TouchContext::default(),
+        };
+        if !self.active { context.screen = TouchScreen::Inactive; }
+        if context.screen == TouchScreen::Playing && !self.in_game() {
+            context.screen = TouchScreen::Menu;
+        }
+        context
+    }
+
+    /// Drop unpolled work; the game ledger releases only the virtual sources
+    /// already emitted. No old world release is sent as a mouse event to a new menu.
+    fn cancel_touch(&mut self) {
+        let pointer_held = self.contacts.values().any(|c| matches!(c.role, Role::Pointer { held: true, .. }))
+            || self.buttons.iter().any(|(button, playing)| *button == MouseButton::Left && !playing);
+        self.contacts.clear();
+        self.buttons.clear();
+        self.releases.clear();
+        self.scrolling = None;
+        self.last_slot_tap = None;
+        with_overlay(|o| {
+            o.bedrock.clear();
+            o.feedback = TouchFeedback::default();
+            o.controls.cancel();
+            o.controls.take_events();
+            o.menu.cancel();
+            if let Some(editor) = &mut o.editor { editor.cancel_input(); }
+        });
+        if let App::Ready(game) = &mut self.app {
+            game.cancel_touch_input();
+            game.cancel_zalith_input();
+            for key in std::mem::take(&mut game.touch_input.zalith_keys) {
+                if !game.touch_input.keyboard_keys.contains(&key) {
+                    game.physical_keys.remove(&key);
+                    game.debug_key(key, horizon_client::debug_keys::KeyAction::Release);
+                    game.native_key_event(key, false, false);
+                }
+            }
+            if pointer_held && !game.physical_buttons.contains(&MouseButton::Left) {
+                // Stop drags without a synthetic release that could click the new screen.
+                game.reset_inventory_clicks();
+                game.dragging = false;
+                game.ui.options.release();
+                game.creative_screen.release();
+                game.station_release();
+                if let Some(title) = &mut game.title {
+                    title.release();
+                    title.release_field();
+                }
+            }
+        }
+    }
+
+    fn sync_touch_lifecycle(&mut self) {
+        let screen = self.screen();
+        let game_screen = match &self.app {
+            App::Ready(game) => Some(game.screen),
+            App::Loading(_) => None,
+        };
+        let in_game = self.in_game();
+        let resized = with_overlay(|o| o.screen != screen).unwrap_or(false);
+        if in_game != self.was_in_game || game_screen != self.was_screen || resized {
+            self.cancel_touch();
+        }
+        self.was_in_game = in_game;
+        self.was_screen = game_screen;
+        let context = self.touch_context();
+        with_overlay(|o| {
+            if resized { o.settings.fitted = 0.0; }
+            o.screen = screen;
+            o.in_game = in_game;
+            o.bedrock.viewport(screen.width as u32, screen.height as u32);
+            o.bedrock.context = context;
+        });
+    }
+
+    /// The frame is owned before borrowing Game; feedback goes back afterwards.
+    fn poll_touch(&mut self) {
+        let frame = with_overlay(|o| {
+            if o.engine == Engine::Bedrock && o.shown && o.in_game && !o.settings.controls_hidden {
+                Some(o.bedrock.poll_frame())
+            } else {
+                o.bedrock.clear();
+                None
+            }
+        }).flatten();
+        let mut settings = false;
+        if let App::Ready(game) = &mut self.app {
+            if let Some(frame) = frame {
+                match game.apply_touch_frame(frame) {
+                    Ok(open) => settings = open,
+                    Err(e) => log::warn!("Tachyon: touch input: {e}"),
+                }
+            } else {
+                game.cancel_touch_input();
+            }
+        }
+        if settings {
+            self.cancel_touch();
+            with_overlay(|o| o.menu.open = true);
+        }
+        self.sync_touch_lifecycle();
+    }
+
     pub(crate) fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.active = true;
         if self.window().is_none() {
             self.app.resumed(event_loop);
             return;
@@ -474,7 +627,9 @@ impl AndroidGame {
     }
 
     /// The app left the screen and its window with it.
-    pub(crate) fn suspended(&mut self, event_loop: &ActiveEventLoop) {
+    pub(crate) fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        self.active = false;
+        self.cancel_touch();
         self.ask_keyboard(false);
         jni::gyroscope(false);
         self.forced_keyboard = false;
@@ -482,11 +637,7 @@ impl AndroidGame {
             renderer.release_surface();
             renderer.suspended = true;
         }
-        self.contacts.clear();
         GAMEPAD.with(|g| g.set(PadState::default()));
-        with_overlay(|o| o.controls.release_all());
-        self.apply_control_events(event_loop);
-        self.release_mouse_buttons();
         if let App::Ready(game) = &mut self.app {
             game.audio.set_output(false);
         }
@@ -498,6 +649,9 @@ impl AndroidGame {
         id: WindowId,
         event: WindowEvent,
     ) {
+        if matches!(&event, WindowEvent::Focused(false) | WindowEvent::Resized(_)) {
+            self.cancel_touch();
+        }
         match event {
             WindowEvent::Touch(finger) => {
                 with_overlay(|o| o.controls.gamepad = false);
@@ -536,6 +690,7 @@ impl AndroidGame {
             }
             event => self.app.window_event(event_loop, id, event),
         }
+        self.sync_touch_lifecycle();
     }
 
     pub(crate) fn device_event(
@@ -577,12 +732,14 @@ impl AndroidGame {
     }
 
     pub(crate) fn exiting(&mut self, event_loop: &ActiveEventLoop) {
+        self.cancel_touch();
         jni::gyroscope(false);
         self.app.exiting(event_loop);
     }
 
     /// The back gesture: it leaves the editor or the menu, else does what Escape does.
     pub(crate) fn back(&mut self) {
+        self.cancel_touch();
         if self.startup_loading() {
             match &mut self.app {
                 App::Loading(loading) => {
@@ -622,6 +779,7 @@ impl AndroidGame {
     }
 
     pub(crate) fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.sync_touch_lifecycle();
         let now = Instant::now();
         let screen = self.screen();
         let startup_loading = self.startup_loading();
@@ -665,13 +823,7 @@ impl AndroidGame {
                 App::Loading(_) => log::info!("Tachyon status: loading"),
             }
         }
-        if in_game != self.was_in_game {
-            self.was_in_game = in_game;
-            if !in_game {
-                self.release_mouse_buttons();
-            }
-        }
-        let enabled = self.enabled;
+        let enabled = self.enabled && self.active;
         let gyroscope = with_overlay(|o| {
             if o.screen != screen || o.settings.fitted == 0.0 {
                 // A new screen: Auto fits the layout to it again.
@@ -707,9 +859,9 @@ impl AndroidGame {
         self.keyboard_changed();
         self.typed();
         self.timers(event_loop, now);
-        for (button, _) in self.releases.extract_if(.., |(_, at)| now >= *at) {
+        for (owner, button, _) in self.releases.extract_if(.., |(_, _, at)| now >= *at) {
             if let App::Ready(game) = &mut self.app {
-                let _ = game.play_mouse(button, false);
+                let _ = game.input_from(Source::ZalithGesture(owner, button), Vec::new(), false, false);
             }
         }
         self.apply_control_events(event_loop);
@@ -735,13 +887,14 @@ impl AndroidGame {
             if !typing {
                 self.keyboard_dismissed = false;
             }
-            let want = (typing && !self.keyboard_dismissed)
+            let want = self.active && ((typing && !self.keyboard_dismissed)
                 || self.forced_keyboard
-                || (editing && self.keyboard);
+                || (editing && self.keyboard));
             if want != self.keyboard {
                 self.ask_keyboard(want);
             }
         }
+        self.poll_touch();
         self.app.about_to_wait(event_loop);
     }
 
@@ -841,8 +994,8 @@ impl AndroidGame {
     fn timers(&mut self, event_loop: &ActiveEventLoop, now: Instant) {
         let mut hold = false;
         let mut drop = false;
-        let mut gesture = false;
-        for contact in self.contacts.values_mut() {
+        let mut gestures = Vec::new();
+        for (&owner, contact) in &mut self.contacts {
             if contact.moved || now - contact.since < LONG_PRESS {
                 continue;
             }
@@ -863,7 +1016,7 @@ impl AndroidGame {
                     held,
                 } if held.is_none() => {
                     *held = Some(MouseButton::Left);
-                    gesture = true;
+                    gestures.push(owner);
                 }
                 _ => {}
             }
@@ -879,8 +1032,9 @@ impl AndroidGame {
                 tap_key(game, KeyCode::KeyQ);
                 jni::vibrate(15);
             }
-            if gesture {
-                let _ = game.play_mouse(MouseButton::Left, true);
+            for owner in gestures {
+                let _ = game.input_from(Source::ZalithGesture(owner, MouseButton::Left),
+                    vec![Err(MouseButton::Left)], true, false);
             }
         }
     }
@@ -907,6 +1061,10 @@ impl AndroidGame {
                 position: winit::dpi::PhysicalPosition::new(f64::from(at.0), f64::from(at.1)),
             },
         );
+        if let App::Ready(game) = &mut self.app {
+            if !pressed && game.physical_buttons.contains(&button) { return; }
+            game.touch_input.window_mouse = Some(Source::ZalithPointer(button));
+        }
         self.app.window_event(
             event_loop,
             id,
@@ -920,6 +1078,9 @@ impl AndroidGame {
                 button,
             },
         );
+        if let App::Ready(game) = &mut self.app {
+            game.touch_input.window_mouse = None;
+        }
     }
 
     fn move_pointer(&mut self, event_loop: &ActiveEventLoop, id: WindowId, delta: (f32, f32)) {
@@ -964,25 +1125,19 @@ impl AndroidGame {
     /// A mouse button from the controls: the game's in the world, the
     /// menu pointer's over a screen.
     fn mouse_button(&mut self, event_loop: &ActiveEventLoop, button: MouseButton, pressed: bool) {
-        if pressed {
-            self.buttons.push(button);
+        let destination = if pressed {
+            let in_game = self.in_game();
+            self.buttons.push((button, in_game));
+            Some(in_game)
         } else {
-            self.buttons.retain(|b| *b != button);
-        }
-        if self.in_game() {
+            self.buttons.extract_if(.., |(b, _)| *b == button).next().map(|(_, playing)| playing)
+        };
+        if destination == Some(true) {
             if let App::Ready(game) = &mut self.app {
-                let _ = game.play_mouse(button, pressed);
+                let _ = game.input_from(Source::ZalithMouse(button), vec![Err(button)], pressed, false);
             }
-        } else if let Some(id) = self.window().map(|w| w.id()) {
+        } else if destination == Some(false) && let Some(id) = self.window().map(|w| w.id()) {
             self.menu_mouse(event_loop, id, button, pressed);
-        }
-    }
-
-    fn release_mouse_buttons(&mut self) {
-        if let App::Ready(game) = &mut self.app {
-            for button in std::mem::take(&mut self.buttons) {
-                let _ = game.play_mouse(button, false);
-            }
         }
     }
 
@@ -1009,26 +1164,33 @@ impl AndroidGame {
                         // As a keyboard's key goes (window_event): held for the F3
                         // combinations, the debug keys first, then the game's.
                         if pressed {
+                            game.touch_input.zalith_keys.insert(key);
                             game.physical_keys.insert(key);
                         } else {
-                            game.physical_keys.remove(&key);
+                            game.touch_input.zalith_keys.remove(&key);
+                            if !game.touch_input.keyboard_keys.contains(&key) {
+                                game.physical_keys.remove(&key);
+                            }
                         }
                         let action = if pressed {
                             horizon_client::debug_keys::KeyAction::Press
                         } else {
                             horizon_client::debug_keys::KeyAction::Release
                         };
-                        if game.debug_key(key, action) {
+                        let last_owner = pressed || !game.physical_keys.contains(&key);
+                        if last_owner && game.debug_key(key, action) {
                             continue;
                         }
                         // The native mods' keys (zoom, the quest book) too.
-                        game.native_key_event(key, pressed, false);
+                        if last_owner { game.native_key_event(key, pressed, false); }
                         if key == KeyCode::Escape {
                             if pressed {
                                 let _ = game.pad_back();
                             }
                         } else {
-                            let _ = game.mapped_key(key, pressed, false);
+                            // Zalith's GLFW tokens stay canonical, without the
+                            // keyboard rebinding that future raw custom keys use.
+                            let _ = game.input_from(Source::ZalithKey(key), vec![Ok(key)], pressed, false);
                         }
                     }
                 }
@@ -1060,6 +1222,11 @@ impl AndroidGame {
 
     /// A choice from the game menu.
     fn choose(&mut self, choice: Choice) {
+        if matches!(choice, Choice::EditControls | Choice::Gestures | Choice::Size)
+            && with_overlay(|o| o.engine != Engine::Zalith).unwrap_or(false) {
+            return;
+        }
+        self.cancel_touch();
         let home = self.home.clone();
         match choice {
             Choice::EditControls => {
@@ -1069,7 +1236,6 @@ impl AndroidGame {
                     // The world pauses behind the editor.
                     let _ = game.pad_back();
                 }
-                self.release_mouse_buttons();
                 with_overlay(|o| {
                     o.menu.open = false;
                     let controls = std::mem::replace(&mut o.controls, Controls::default_layout());
@@ -1173,12 +1339,19 @@ impl AndroidGame {
     }
 
     fn touch(&mut self, event_loop: &ActiveEventLoop, id: WindowId, finger: Finger) {
-        if self.startup_loading() {
+        if finger.phase == TouchPhase::Cancelled {
+            self.cancel_touch();
+            return;
+        }
+        self.sync_touch_lifecycle();
+        if !self.active || self.startup_loading() {
             return;
         }
         let at = (finger.location.x as f32, finger.location.y as f32);
         let now = Instant::now();
         let screen = self.screen();
+        let point = [at.0 / screen.width.max(1.0), at.1 / screen.height.max(1.0)];
+        let elapsed = now.saturating_duration_since(self.touch_epoch);
         if self.enabled && self.editing() {
             self.edit_touch(finger.id, finger.phase, at, screen);
             return;
@@ -1198,10 +1371,15 @@ impl AndroidGame {
                     if o.settings.controls_hidden {
                         return Claim::None;
                     }
-                    o.controls.down(finger.id, at, in_game, screen)
+                    match o.engine {
+                        Engine::Zalith => o.controls.down(finger.id, at, in_game, screen),
+                        Engine::Bedrock if in_game
+                            && o.bedrock.down(finger.id, point, elapsed) => Claim::Taken,
+                        _ => Claim::None,
+                    }
                 })
                 .unwrap_or(Claim::None);
-                let gestures = with_overlay(|o| o.settings.gestures).unwrap_or(false);
+                let gestures = with_overlay(|o| o.engine == Engine::Zalith && o.settings.gestures).unwrap_or(false);
                 let role = match claim {
                     Claim::Taken => Role::Control,
                     Claim::MoveOnly if in_game => Role::Look {
@@ -1246,6 +1424,8 @@ impl AndroidGame {
                     with_overlay(|o| {
                         if o.menu.holds(finger.id) {
                             o.menu.moved(finger.id, at, screen);
+                        } else if o.engine == Engine::Bedrock {
+                            o.bedrock.moved(finger.id, point);
                         } else {
                             o.controls.moved(finger.id, at, in_game, screen);
                         }
@@ -1289,7 +1469,10 @@ impl AndroidGame {
                 if self.enabled {
                     choice = with_overlay(|o| {
                         let choice = o.menu.up(finger.id, at);
-                        o.controls.up(finger.id, screen);
+                        match o.engine {
+                            Engine::Bedrock => o.bedrock.up(finger.id),
+                            Engine::Zalith => o.controls.up(finger.id, screen),
+                        }
                         choice
                     })
                     .flatten();
@@ -1323,12 +1506,13 @@ impl AndroidGame {
                     Role::Look { gestures, held } => {
                         if let App::Ready(game) = &mut self.app {
                             if let Some(button) = held {
-                                let _ = game.play_mouse(button, false);
+                                let _ = game.input_from(Source::ZalithGesture(finger.id, button), Vec::new(), false, false);
                             } else if gestures && quick {
                                 // Zalith's gesture tap: the right button.
-                                let _ = game.play_mouse(MouseButton::Right, true);
+                                let _ = game.input_from(Source::ZalithGesture(finger.id, MouseButton::Right),
+                                    vec![Err(MouseButton::Right)], true, false);
                                 self.releases
-                                    .push((MouseButton::Right, now + Duration::from_millis(60)));
+                                    .push((finger.id, MouseButton::Right, now + Duration::from_millis(60)));
                             }
                         }
                     }
@@ -1349,6 +1533,7 @@ impl AndroidGame {
                 }
             }
         }
+        self.sync_touch_lifecycle();
     }
 
     /// A finger on the layout editor.
@@ -1445,8 +1630,9 @@ fn set_larger_interface(on: bool) {
 }
 
 fn tap_key(game: &mut Game, key: KeyCode) {
-    let _ = game.mapped_key(key, true, false);
-    let _ = game.mapped_key(key, false, false);
+    let source = Source::ZalithAction(key);
+    let _ = game.input_from(source, vec![Ok(key)], true, false);
+    let _ = game.input_from(source, Vec::new(), false, false);
 }
 
 /// Android's gamepad key codes (KeyEvent.KEYCODE_BUTTON_*) as the pad's buttons.
@@ -1630,21 +1816,6 @@ fn glfw_key(name: &str) -> Option<KeyCode> {
         "MENU" => K::ContextMenu,
         _ => return None,
     })
-}
-
-impl Game<'_> {
-    /// The world is on screen with nothing over it: the game has the pointer.
-    fn touch_playing(&mut self) -> bool {
-        self.screen == Screen::Playing
-            && self.title.is_none()
-            && self.player.is_some()
-            && self.sign_edit.is_none()
-            && self.book.is_none()
-            && self.pending_entry.is_none()
-            && self.world_loader.is_none()
-            && !self.dialog_open()
-            && self.server_packs.prompt.is_none()
-    }
 }
 
 #[cfg(test)]

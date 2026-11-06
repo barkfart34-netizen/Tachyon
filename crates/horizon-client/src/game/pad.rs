@@ -184,6 +184,9 @@ impl Game<'_> {
         if down && !self.pad_focused() {
             return Ok(());
         }
+        if !down {
+            self.input_from(super::touch_input::Source::Pad(button), Vec::new(), false, false)?;
+        }
         if self.startup_loading.is_some() {
             return if down && matches!(button, Button::East | Button::Start) {
                 self.pad_back()
@@ -204,49 +207,25 @@ impl Game<'_> {
         } else if button == Button::Start {
             return if down { self.pad_back() } else { Ok(()) };
         }
+        if !down { return Ok(()); }
         // Releases always reach the mappings, so nothing stays held when a
         // screen opened in between.
+        let mut mappings = Vec::new();
         for action in self.settings.controller.actions_of(button) {
-            self.pad_action(action, down)?;
-        }
-        Ok(())
-    }
-
-    /// A bound action: a vanilla mapping acts as its default key or mouse
-    /// button, like a rebound keyboard key.
-    fn pad_action(&mut self, action: &str, down: bool) -> Result<()> {
-        match action {
-            gamepad::HOTBAR_PREVIOUS | gamepad::HOTBAR_NEXT => {
-                if down && self.screen == Screen::Playing {
-                    self.selected =
-                        gamepad::hotbar_step(self.selected, action == gamepad::HOTBAR_NEXT);
+            if matches!(action, gamepad::HOTBAR_PREVIOUS | gamepad::HOTBAR_NEXT) {
+                if down && playing {
+                    self.selected = gamepad::hotbar_step(self.selected, action == gamepad::HOTBAR_NEXT);
                 }
-                Ok(())
-            }
-            "key.sneak"
-                if self.settings.controller.toggle_sneak && !self.settings.toggle_crouch =>
-            {
-                // A stick click flips sneaking instead of holding it.
-                if down {
-                    let sneaking = self.keys.contains(&KeyCode::ShiftLeft);
-                    self.mapped_key(KeyCode::ShiftLeft, !sneaking, false)?;
-                }
-                Ok(())
-            }
-            _ => {
+            } else {
                 let default = KeyBinds::default_of(action);
                 if let Some(button) = mouse_button(default) {
-                    if self.title.is_none() && self.screen == Screen::Playing {
-                        self.play_mouse(button, down)?;
-                    }
-                    Ok(())
+                    mappings.push(Err(button));
                 } else if let Some(key) = key_code(default) {
-                    self.mapped_key(key, down, false)
-                } else {
-                    Ok(())
+                    mappings.push(Ok(key));
                 }
             }
         }
+        self.input_from(super::touch_input::Source::Pad(button), mappings, down, false)
     }
 
     /// B and Start: what Escape does where the pad is.

@@ -37,6 +37,8 @@ mod water_wheel;
 mod touch;
 #[cfg(test)]
 mod touch_hud;
+#[cfg(test)]
+mod touch_input;
 
 use super::Game;
 use glam::{DVec3, Mat4, Vec3};

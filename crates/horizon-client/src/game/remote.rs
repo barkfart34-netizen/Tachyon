@@ -4496,7 +4496,7 @@ impl Game<'_> {
             }
             self.capture_loaded_world();
         }
-        let stick = self.pad_move();
+        let stick = self.input_move();
         if self.player.is_none() {
             return Ok(());
         }
@@ -6548,18 +6548,8 @@ impl Game<'_> {
     pub(super) fn remote_mouse(&mut self, button: MouseButton, pressed: bool) -> Result<()> {
         use horizon_client::interaction_input::Button;
         let input = match button {
-            MouseButton::Left => {
-                self.toggles
-                    .button(2, pressed, false, self.settings.toggle_attack);
-                self.left = self.toggles.is_down(2);
-                Some(Button::Attack)
-            }
-            MouseButton::Right => {
-                self.toggles
-                    .button(3, pressed, false, self.settings.toggle_use);
-                self.right = self.toggles.is_down(3);
-                Some(Button::Use)
-            }
+            MouseButton::Left => Some(Button::Attack),
+            MouseButton::Right => Some(Button::Use),
             MouseButton::Middle => Some(Button::Pick),
             _ => None,
         };
@@ -6576,6 +6566,11 @@ impl Game<'_> {
         if let Some(r) = self.remote.as_mut() {
             r.stop_mining = true;
         }
+    }
+
+    /// Touch cancellation must release use even behind a screen or while suspended.
+    pub(super) fn remote_release_using(&mut self) {
+        horizon_client::interaction_input::InteractionWorld::release_using(&mut RemoteInputWorld(self));
     }
 
     fn remote_handle_input(&mut self) {
@@ -7458,6 +7453,10 @@ impl Game<'_> {
     /// `LevelLoadingScreen`, over the panorama with its blur.
     pub(super) fn remote_loading(&self) -> bool {
         self.remote.is_some() && self.player.is_none()
+    }
+    /// Fixed touch actions wait for the same PlayerLoaded gate as handleKeybinds.
+    pub(super) fn remote_touch_ready(&self) -> bool {
+        self.remote.as_ref().is_none_or(|r| r.joined && r.loaded_sent)
     }
     /// `ConnectScreen`'s Cancel: a server's (single player's server isn't
     /// joined through `ConnectScreen`), until the login is done.

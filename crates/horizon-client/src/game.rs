@@ -258,6 +258,7 @@ mod transient_blocks;
 mod trial_spawner;
 mod trial_visuals;
 mod trident;
+mod touch_input;
 mod tutorial;
 mod tweaks;
 mod ui_control;
@@ -1872,6 +1873,8 @@ struct Game<'a> {
     last_input: Instant,
     /// Controllers (Horizon's own).
     pad: pad::Pads,
+    /// Owned touch input and the sources sharing its gameplay mappings.
+    touch_input: touch_input::TouchInput,
     frames: u64,
     /// The glint clock and options, read once at the start of each frame
     /// (game/item_draw.rs).
@@ -5971,6 +5974,7 @@ impl Game<'_> {
         if self.agent.hold_server {
             return Ok(());
         }
+        self.tick_touch_input()?;
         self.tick_debug_keys()?;
         self.tick_debug_charts();
         self.tick_tutorial();
@@ -6027,7 +6031,7 @@ impl Game<'_> {
         self.native_tick();
         self.tell_native_now();
         let camera_eye = self.camera_eye_height();
-        let stick = self.pad_move();
+        let stick = self.input_move();
         if self.riding.is_some() && self.player.is_some() {
             let playing = self.screen == Screen::Playing;
             let held = |k| playing && self.keys.contains(&k);
@@ -6488,7 +6492,7 @@ impl Game<'_> {
     /// Keep the held-key state of toggled sneak and sprint in step with their mapping.
     fn sync_toggle(&mut self, slot: usize) {
         let key = [KeyCode::ShiftLeft, KeyCode::ControlLeft][slot];
-        if self.toggles.is_down(slot) {
+        if self.touch_input.joined(Ok(key), self.toggles.is_down(slot)) {
             self.keys.insert(key);
         } else {
             self.keys.remove(&key);
@@ -6518,7 +6522,9 @@ impl Game<'_> {
                 return Ok(());
             }
         } else if !pressed {
-            self.keys.remove(&key);
+            if !self.touch_input.held(Ok(key), true) && !self.touch_input.direct_held(key) {
+                self.keys.remove(&key);
+            }
             return Ok(());
         } else {
             self.keys.insert(key);
@@ -6552,8 +6558,8 @@ impl Game<'_> {
         }
         self.sync_toggle(0);
         self.sync_toggle(1);
-        self.left = self.toggles.is_down(2);
-        self.right = self.toggles.is_down(3);
+        self.left = self.touch_input.joined(Err(MouseButton::Left), self.toggles.is_down(2));
+        self.right = self.touch_input.joined(Err(MouseButton::Right), self.toggles.is_down(3));
     }
     /// The options `MouseHandler.turnPlayer` reads.
     fn look_options(&self) -> LookOptions {
@@ -13748,7 +13754,28 @@ impl Game<'_> {
     }
     /// A mouse button while playing (window or control socket).
     fn play_mouse(&mut self, button: MouseButton, pressed: bool) -> Result<()> {
-        if self.sleeping.is_some() {
+        if self.sleeping.is_some() && pressed {
+            return Ok(());
+        }
+        self.set_mouse_input(button, pressed);
+        self.click_mouse(button, pressed)
+    }
+    /// Ordinary input owns the attack/use toggles; fixed touch only joins their held state.
+    fn set_mouse_input(&mut self, button: MouseButton, pressed: bool) {
+        let slot = match button {
+            MouseButton::Left => Some((2, self.settings.toggle_attack)),
+            MouseButton::Right => Some((3, self.settings.toggle_use)),
+            _ => None,
+        };
+        if let Some((slot, option)) = slot {
+            self.toggles.button(slot, pressed, false, option);
+            let down = self.touch_input.joined(Err(button), self.toggles.is_down(slot));
+            if slot == 2 { self.left = down; } else { self.right = down; }
+        }
+    }
+    /// A click whose held state was set at the edge, including queued touch clicks.
+    fn click_mouse(&mut self, button: MouseButton, pressed: bool) -> Result<()> {
+        if self.sleeping.is_some() && pressed {
             return Ok(());
         }
         // key.spectatorHotbar (the middle button) opens the spectator menu
@@ -13768,14 +13795,8 @@ impl Game<'_> {
                 if pressed {
                     self.attack_clicks += 1;
                 }
-                self.toggles
-                    .button(2, pressed, false, self.settings.toggle_attack);
-                self.left = self.toggles.is_down(2);
             }
             MouseButton::Right => {
-                self.toggles
-                    .button(3, pressed, false, self.settings.toggle_use);
-                self.right = self.toggles.is_down(3);
                 // handleKeybinds consumes use clicks without acting while an
                 // item is in use.
                 if pressed && self.using.is_none() {
@@ -14120,17 +14141,39 @@ impl ApplicationHandler for Game<'_> {
         {
             *button = MouseButton::Right;
         }
+        let mouse_source = match &event {
+            WindowEvent::MouseInput { button, .. } => {
+                #[cfg(target_os = "android")]
+                let source = self.touch_input.window_mouse
+                    .unwrap_or(touch_input::Source::Mouse(*button));
+                #[cfg(not(target_os = "android"))]
+                let source = touch_input::Source::Mouse(*button);
+                Some(source)
+            }
+            _ => None,
+        };
         if let WindowEvent::KeyboardInput { event, .. } = &event
             && let PhysicalKey::Code(key) = event.physical_key
         {
             if event.state == ElementState::Pressed {
+                #[cfg(target_os = "android")]
+                self.touch_input.keyboard_keys.insert(key);
                 self.physical_keys.insert(key);
                 horizon_client::keybinds::learn_layout(event);
             } else {
+                #[cfg(target_os = "android")]
+                {
+                    self.touch_input.keyboard_keys.remove(&key);
+                    if !self.touch_input.zalith_keys.contains(&key) {
+                        self.physical_keys.remove(&key);
+                    }
+                }
+                #[cfg(not(target_os = "android"))]
                 self.physical_keys.remove(&key);
             }
         }
-        if let WindowEvent::MouseInput { state, button, .. } = &event {
+        if let WindowEvent::MouseInput { state, button, .. } = &event
+            && mouse_source == Some(touch_input::Source::Mouse(*button)) {
             if *state == ElementState::Pressed {
                 self.physical_buttons.insert(*button);
             } else {
@@ -14138,8 +14181,44 @@ impl ApplicationHandler for Game<'_> {
             }
         }
         if let WindowEvent::Focused(false) = &event {
+            self.cancel_touch_input();
+            for source in self.touch_input.sources() {
+                if let Err(error) = self.input_from(source, Vec::new(), false, false) {
+                    log::warn!("Horizon: input release: {error}");
+                }
+            }
+            #[cfg(target_os = "android")]
+            self.touch_input.keyboard_keys.clear();
             self.physical_keys.clear();
             self.physical_buttons.clear();
+        }
+        let world_mouse_release = matches!(&event, WindowEvent::MouseInput {
+            state: ElementState::Released, ..
+        }) && mouse_source.is_some_and(|source| {
+            self.touch_input.destination(source) == Some(horizon_client::touch::TouchScreen::Playing)
+        });
+        // Releases keep their press-time binding and never click the new screen.
+        let released_source = match &event {
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Released => {
+                match event.physical_key {
+                    PhysicalKey::Code(key) => Some(touch_input::Source::Keyboard(key)),
+                    _ => None,
+                }
+            }
+            WindowEvent::MouseInput { state: ElementState::Released, .. } => mouse_source,
+            _ => None,
+        };
+        if let Some(source) = released_source
+            && let Err(error) = self.input_from(source, Vec::new(), false, false)
+        {
+            log::warn!("Horizon: input release: {error}");
+        }
+        if world_mouse_release {
+            if let WindowEvent::MouseInput { button, .. } = event
+                && mouse_source == Some(touch_input::Source::Mouse(button)) {
+                self.extras_mouse(button, false);
+            }
+            return;
         }
         if let WindowEvent::ModifiersChanged(m) = &event {
             self.modifiers = m.state();
@@ -14203,7 +14282,9 @@ impl ApplicationHandler for Game<'_> {
                 (_, false) => KeyAction::Press,
                 (_, true) => KeyAction::Repeat,
             };
-            if self.debug_key(key, action) {
+            let last_owner = key_event.state != ElementState::Released
+                || !self.physical_keys.contains(&key);
+            if last_owner && self.debug_key(key, action) {
                 return;
             }
         }
@@ -14620,18 +14701,8 @@ impl ApplicationHandler for Game<'_> {
                             {
                                 self.smooth_camera = !self.smooth_camera;
                             }
-                            for mapped in self.settings.keys.translate_mouse_all(button) {
-                                match mapped {
-                                    Err(b) => self.play_mouse(b, pressed)?,
-                                    Ok(k) if pressed => {
-                                        self.keys.insert(k);
-                                        self.key_pressed(k)?;
-                                    }
-                                    Ok(k) => {
-                                        self.keys.remove(&k);
-                                    }
-                                }
-                            }
+                            self.input_from(mouse_source.unwrap_or(touch_input::Source::Mouse(button)),
+                                self.settings.keys.translate_mouse_all(button), pressed, false)?;
                         }
                         Screen::Inventory | Screen::Creative
                             if !matches!(button, MouseButton::Left | MouseButton::Right) =>
@@ -14933,7 +15004,9 @@ impl ApplicationHandler for Game<'_> {
                     let PhysicalKey::Code(key) = event.physical_key else {
                         return Ok(());
                     };
-                    self.native_key_event(key, event.state == ElementState::Pressed, event.repeat);
+                    if event.state == ElementState::Pressed || !self.physical_keys.contains(&key) {
+                        self.native_key_event(key, event.state == ElementState::Pressed, event.repeat);
+                    }
                     // key.smoothCamera toggles the cinematic camera.
                     if self.screen == Screen::Playing
                         && event.state == ElementState::Pressed
@@ -14945,29 +15018,9 @@ impl ApplicationHandler for Game<'_> {
                     }
                     // Key binds: act as the default key of every mapping bound
                     // to it (KeyMapping.set drives them all).
-                    for mapped in self.settings.keys.translate_all(key) {
-                        match mapped {
-                            Ok(k) => {
-                                self.mapped_key(
-                                    k,
-                                    event.state == ElementState::Pressed,
-                                    event.repeat,
-                                )?;
-                            }
-                            Err(button) => {
-                                let action = match (event.state, event.repeat) {
-                                    (ElementState::Released, _) => KeyAction::Release,
-                                    (_, false) => KeyAction::Press,
-                                    (_, true) => KeyAction::Repeat,
-                                };
-                                if let Some(pressed) =
-                                    keyboard_button(self.screen == Screen::Playing, action)
-                                {
-                                    self.play_mouse(button, pressed)?;
-                                }
-                            }
-                        }
-                    }
+                    self.input_from(touch_input::Source::Keyboard(key),
+                        self.settings.keys.translate_all(key),
+                        event.state == ElementState::Pressed, event.repeat)?;
                 }
                 WindowEvent::RedrawRequested => {
                     self.observe_fullscreen();
@@ -15435,6 +15488,7 @@ impl<'a> Game<'a> {
             previous: now,
             last_input: now,
             pad: Default::default(),
+            touch_input: Default::default(),
             frames: 0,
             glint_frame: Default::default(),
             item_level_cache: Default::default(),
