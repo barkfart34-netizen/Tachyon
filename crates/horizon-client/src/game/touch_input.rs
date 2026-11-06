@@ -350,6 +350,23 @@ impl Game<'_> {
         }
     }
 
+    /// Whether a world hold uses the held item rather than mining, as
+    /// Bedrock's touch controls do: eating and drinking, drawing a bow or a
+    /// crossbow, raising a shield, a trident, a spyglass, a horn, a brush.
+    pub(super) fn touch_hold_uses(&self) -> bool {
+        let Some(stack) = self.held() else { return false };
+        let Some(info) = self.items().get(&stack.item) else { return false };
+        let id = info.id.trim_start_matches("minecraft:");
+        info.consumable.is_some()
+            || info.blocks_attacks.is_some()
+            || id.ends_with("_spear")
+            || matches!(id, "bow" | "crossbow" | "trident" | "spyglass" | "goat_horn" | "brush")
+    }
+
+    pub(super) fn set_touch_aim(&mut self, point: Option<[f32; 2]>) {
+        self.touch_aim = point;
+    }
+
     pub(super) fn input_move(&self) -> Option<[f32; 2]> {
         self.touch_input.movement.filter(|_| self.touch_playing()).or_else(|| self.pad_move())
     }

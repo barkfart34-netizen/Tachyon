@@ -256,3 +256,20 @@ fn touch_frame_owns_two_taps_and_consumes_each_aim_and_intent_once() {
     );
     assert!(frame.key_events.is_empty());
 }
+
+#[test]
+fn a_touched_point_aims_through_the_perspective() {
+    use horizon_client::touch::screen_direction;
+    let close = |a: [f64; 3], b: [f64; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-9);
+    // Facing south (+Z) with +Y up: the right of the screen is west (-X).
+    let (forward, up) = ([0.0, 0.0, 1.0], [0.0, 1.0, 0.0]);
+    assert!(close(screen_direction(forward, up, [0.5, 0.5], 16.0 / 9.0, 70.0), forward));
+    let right = screen_direction(forward, up, [1.0, 0.5], 1.0, 90.0);
+    let s = 0.5f64.sqrt();
+    assert!(close(right, [-s, 0.0, s]));
+    let top = screen_direction(forward, up, [0.5, 0.0], 2.0, 90.0);
+    assert!(close(top, [0.0, s, s]));
+    let corner = screen_direction(forward, up, [0.0, 1.0], 2.0, 60.0);
+    assert!((corner.iter().map(|v| v * v).sum::<f64>() - 1.0).abs() < 1e-9);
+    assert!(corner[0] > 0.0 && corner[1] < 0.0 && corner[2] > 0.0);
+}

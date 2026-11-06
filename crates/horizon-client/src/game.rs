@@ -2102,6 +2102,9 @@ struct Game<'a> {
     waypoints: horizon_client::locator_bar::ClientWaypoints,
     /// The camera the last frame drew from (position, yaw, pitch, fov), for the locator bar.
     locator_camera: Option<([f64; 3], f32, f32, f32)>,
+    /// The Bedrock-style controls' touched point (a share of the screen):
+    /// targeting goes through it instead of the crosshair, in first person.
+    touch_aim: Option<[f32; 2]>,
     /// `LocalPlayer.experienceDisplayStartTick`: (last progress, seen a change, tick).
     experience_display: (f32, bool, u64),
     boats: Vec<boats::Boat>,
@@ -2481,7 +2484,18 @@ impl Game<'_> {
                 view_vector(m.head_yaw, m.head_pitch),
             ));
         }
-        Some((self.eye_position()?, view_vector(self.yaw, self.pitch)))
+        let forward = view_vector(self.yaw, self.pitch);
+        if let Some(point) = self.touch_aim
+            && self.camera_type == perspective::CameraType::FirstPerson
+            && let Some(size) = self.renderer.as_ref().map(|r| [r.config.width, r.config.height])
+        {
+            let fov = self.locator_camera.map_or(70.0, |c| f64::from(c.3));
+            let up = view_vector(self.yaw, self.pitch - 90.0);
+            let aspect = f64::from(size[0]) / f64::from(size[1].max(1));
+            let dir = horizon_client::touch::screen_direction(forward, up, point, aspect, fov);
+            return Some((self.eye_position()?, dir));
+        }
+        Some((self.eye_position()?, forward))
     }
     fn reach(&self) -> f64 {
         if self.creative { 5.0 } else { 4.5 }
@@ -15627,6 +15641,7 @@ impl<'a> Game<'a> {
             waypoint_styles: prepared.waypoint_styles,
             waypoints: Default::default(),
             locator_camera: None,
+            touch_aim: None,
             experience_display: Default::default(),
             boats: Vec::new(),
             boat_models: prepared.boat_models,

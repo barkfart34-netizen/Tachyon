@@ -111,10 +111,13 @@ fn with_overlay<R>(f: impl FnOnce(&mut Overlay) -> R) -> Option<R> {
 enum Role {
     /// A control, the menu or the editor has it.
     Control,
-    /// Looking around in the world; `held` is the button a gesture's hold pressed.
+    /// Looking around in the world; `held` is the button a gesture's hold
+    /// pressed. `bedrock` is Some for the Bedrock-style gestures, true when
+    /// they aim at the finger rather than the crosshair.
     Look {
         gestures: bool,
         held: Option<MouseButton>,
+        bedrock: Option<bool>,
     },
     /// Moving the menu's pointer; `held` once a long press pressed the button.
     Pointer { move_only: bool, held: bool },
@@ -138,6 +141,8 @@ pub(crate) struct AndroidGame {
     buttons: Vec<(MouseButton, bool)>,
     /// Clicks a gesture tap made, released a moment later.
     releases: Vec<(u64, MouseButton, Instant)>,
+    /// When the touched point stops aiming, after a tap's click was taken.
+    aim_clear: Option<Instant>,
     /// A launcher scroll event held: the direction and the next wheel step.
     scrolling: Option<(f32, Instant)>,
     /// The last tap on the hotbar, for a double tap.
@@ -407,6 +412,7 @@ impl AndroidGame {
             contacts: HashMap::new(),
             buttons: Vec::new(),
             releases: Vec::new(),
+            aim_clear: None,
             scrolling: None,
             last_slot_tap: None,
             keyboard: false,
@@ -513,6 +519,7 @@ impl AndroidGame {
         self.contacts.clear();
         self.buttons.clear();
         self.releases.clear();
+        self.aim_clear = None;
         self.scrolling = None;
         self.last_slot_tap = None;
         with_overlay(|o| {
@@ -524,6 +531,7 @@ impl AndroidGame {
             if let Some(editor) = &mut o.editor { editor.cancel_input(); }
         });
         if let App::Ready(game) = &mut self.app {
+            game.set_touch_aim(None);
             game.cancel_touch_input();
             game.cancel_zalith_input();
             for key in std::mem::take(&mut game.touch_input.zalith_keys) {
@@ -864,6 +872,14 @@ impl AndroidGame {
                 let _ = game.input_from(Source::ZalithGesture(owner, button), Vec::new(), false, false);
             }
         }
+        if self.aim_clear.is_some_and(|at| now >= at) {
+            self.aim_clear = None;
+            let aiming = (self.contacts.values())
+                .any(|c| matches!(c.role, Role::Look { bedrock: Some(true), .. }));
+            if !aiming && let App::Ready(game) = &mut self.app {
+                game.set_touch_aim(None);
+            }
+        }
         self.apply_control_events(event_loop);
         if let Some((lines, next)) = self.scrolling
             && now >= next
@@ -995,6 +1011,9 @@ impl AndroidGame {
         let mut hold = false;
         let mut drop = false;
         let mut gestures = Vec::new();
+        // Bedrock's hold uses an item that is used by holding (food, a bow,
+        // a shield); otherwise it mines, as Zalith's hold attacks.
+        let hold_uses = matches!(&self.app, App::Ready(game) if game.touch_hold_uses());
         for (&owner, contact) in &mut self.contacts {
             if contact.moved || now - contact.since < LONG_PRESS {
                 continue;
@@ -1014,9 +1033,15 @@ impl AndroidGame {
                 Role::Look {
                     gestures: true,
                     held,
+                    bedrock,
                 } if held.is_none() => {
-                    *held = Some(MouseButton::Left);
-                    gestures.push(owner);
+                    let button = if bedrock.is_some() && hold_uses {
+                        MouseButton::Right
+                    } else {
+                        MouseButton::Left
+                    };
+                    *held = Some(button);
+                    gestures.push((owner, button));
                 }
                 _ => {}
             }
@@ -1032,9 +1057,9 @@ impl AndroidGame {
                 tap_key(game, KeyCode::KeyQ);
                 jni::vibrate(15);
             }
-            for owner in gestures {
-                let _ = game.input_from(Source::ZalithGesture(owner, MouseButton::Left),
-                    vec![Err(MouseButton::Left)], true, false);
+            for (owner, button) in gestures {
+                let _ = game.input_from(Source::ZalithGesture(owner, button),
+                    vec![Err(button)], true, false);
             }
         }
     }
@@ -1396,12 +1421,22 @@ impl AndroidGame {
                     }
                 })
                 .unwrap_or(Claim::None);
-                let gestures = with_overlay(|o| o.engine == Engine::Zalith && o.settings.gestures).unwrap_or(false);
+                // Bedrock's world gestures are off in crosshair mode unless
+                // asked for; outside it a tap or a hold aims at the finger.
+                let bedrock = with_overlay(|o| {
+                    let s = &o.bedrock.settings;
+                    (o.engine == Engine::Bedrock && (!s.crosshair() || s.crosshair_gestures))
+                        .then_some(!s.crosshair())
+                })
+                .flatten();
+                let gestures = bedrock.is_some()
+                    || with_overlay(|o| o.engine == Engine::Zalith && o.settings.gestures).unwrap_or(false);
                 let role = match claim {
                     Claim::Taken => Role::Control,
                     Claim::MoveOnly if in_game => Role::Look {
                         gestures: false,
                         held: None,
+                        bedrock: None,
                     },
                     Claim::MoveOnly => Role::Pointer {
                         move_only: true,
@@ -1418,6 +1453,7 @@ impl AndroidGame {
                         _ if in_game => Role::Look {
                             gestures,
                             held: None,
+                            bedrock,
                         },
                         _ => Role::Pointer {
                             move_only: false,
@@ -1425,6 +1461,12 @@ impl AndroidGame {
                         },
                     },
                 };
+                if matches!(role, Role::Look { bedrock: Some(true), .. })
+                    && let App::Ready(game) = &mut self.app
+                {
+                    game.set_touch_aim(Some(point));
+                    self.aim_clear = None;
+                }
                 self.contacts.insert(
                     finger.id,
                     Contact {
@@ -1458,18 +1500,27 @@ impl AndroidGame {
                     contact.moved = true;
                 }
                 let delta = (at.0 - last.0, at.1 - last.1);
+                let moved = contact.moved;
                 match &mut contact.role {
-                    Role::Look { .. } => {
+                    Role::Look { bedrock, held, .. } => {
                         if let App::Ready(game) = &mut self.app {
-                            game.mouse.on_move(
-                                0.0,
-                                0.0,
-                                f64::from(delta.0),
-                                f64::from(delta.1),
-                                true,
-                                true,
-                            );
-                            game.last_input = now;
+                            // Bedrock: a drag looks around and stops aiming at the
+                            // finger, unless a hold already mines or uses there.
+                            if *bedrock == Some(true) && moved {
+                                game.set_touch_aim(held.is_some().then_some(point));
+                            }
+                            // Nor does a still finger turn the view.
+                            if bedrock.is_none() || moved {
+                                game.mouse.on_move(
+                                    0.0,
+                                    0.0,
+                                    f64::from(delta.0),
+                                    f64::from(delta.1),
+                                    true,
+                                    true,
+                                );
+                                game.last_input = now;
+                            }
                         }
                     }
                     Role::Pointer { .. } => self.move_pointer(event_loop, id, delta),
@@ -1520,17 +1571,30 @@ impl AndroidGame {
                             self.menu_mouse(event_loop, id, MouseButton::Left, false);
                         }
                     }
-                    Role::Look { gestures, held } => {
+                    Role::Look { gestures, held, bedrock } => {
                         if let App::Ready(game) = &mut self.app {
                             if let Some(button) = held {
                                 let _ = game.input_from(Source::ZalithGesture(finger.id, button), Vec::new(), false, false);
                             } else if gestures && quick {
-                                // Zalith's gesture tap: the right button.
-                                let _ = game.input_from(Source::ZalithGesture(finger.id, MouseButton::Right),
-                                    vec![Err(MouseButton::Right)], true, false);
-                                self.releases
-                                    .push((finger.id, MouseButton::Right, now + Duration::from_millis(60)));
+                                // Zalith's gesture tap is the right button. Bedrock's
+                                // attacks the entity it lands on, or else uses the
+                                // item, unless the item is used by holding.
+                                let button = match bedrock {
+                                    None => Some(MouseButton::Right),
+                                    Some(_) if game.entity_targeted() => Some(MouseButton::Left),
+                                    Some(_) if game.touch_hold_uses() => None,
+                                    Some(_) => Some(MouseButton::Right),
+                                };
+                                if let Some(button) = button {
+                                    let _ = game.input_from(Source::ZalithGesture(finger.id, button),
+                                        vec![Err(button)], true, false);
+                                    self.releases.push((finger.id, button, now + Duration::from_millis(60)));
+                                }
                             }
+                        }
+                        if bedrock == Some(true) {
+                            // The click is taken at the next tick, through this point.
+                            self.aim_clear = Some(now + Duration::from_millis(150));
                         }
                     }
                     Role::Hotbar { slot, dropped } if !dropped && !cancelled => {

@@ -88,6 +88,29 @@ pub struct TouchFeedback {
     pub break_progress: f32,
 }
 
+/// A finger's ray through the perspective projection, without turning the
+/// view (horizon-android's `screen_direction`): `point` is a share of the
+/// surface, `fov` the vertical field of view in degrees.
+pub fn screen_direction(
+    forward: [f64; 3],
+    up: [f64; 3],
+    point: [f32; 2],
+    aspect: f64,
+    fov: f64,
+) -> [f64; 3] {
+    let right = [
+        forward[1] * up[2] - forward[2] * up[1],
+        forward[2] * up[0] - forward[0] * up[2],
+        forward[0] * up[1] - forward[1] * up[0],
+    ];
+    let t = (fov.to_radians() / 2.0).tan();
+    let x = (f64::from(point[0]) * 2.0 - 1.0) * aspect * t;
+    let y = (1.0 - f64::from(point[1]) * 2.0) * t;
+    let ray: [f64; 3] = std::array::from_fn(|i| forward[i] + right[i] * x + up[i] * y);
+    let length = ray.iter().map(|v| v * v).sum::<f64>().sqrt();
+    ray.map(|v| v / length)
+}
+
 #[derive(Clone, Copy)]
 enum Role {
     Move([f32; 2]),
