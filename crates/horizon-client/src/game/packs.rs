@@ -403,6 +403,7 @@ impl Game<'_> {
         self.particles
             .reload(&root, &self.gui.atlas.sprites, &self.gui.atlas.translucent);
         horizon_client::ui_theme::reset_atlas();
+        horizon_client::starling_theme::reset_atlas();
         // Villager hats come from the pack's texture metadata (shared data, swapped in place).
         *self
             .res

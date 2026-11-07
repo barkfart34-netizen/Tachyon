@@ -143,6 +143,15 @@ pub mod ticket_levels;
 pub mod title;
 pub mod toasts;
 pub mod ui_theme;
+/// Starling's (Horizon Android, MIT) touch interface, taken whole: its design
+/// widgets, on-screen keyboard and the touch menus, hub and editor drawn with them
+/// (THIRD_PARTY_NOTICES.md). Its theme stays apart from `ui_theme`, which keeps
+/// Horizon's system fonts.
+pub mod skin_head;
+pub mod starling_osk;
+pub mod starling_theme;
+pub mod touch_ui;
+pub mod ui_text;
 pub mod vanillagen;
 pub mod voxel_occlusion;
 // Keep the old path for native callers while giving the implementation a name

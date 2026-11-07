@@ -15048,6 +15048,7 @@ impl Game<'_> {
         self.map_patches.clear();
         self.kept_block_entities.get_mut().clear();
         horizon_client::ui_theme::reset_atlas();
+        horizon_client::starling_theme::reset_atlas();
         self.clear_lod();
         self.pending_uploads.clear();
         let context = self.worker_context();
@@ -22394,6 +22395,7 @@ impl Loading {
         self.early_gui = None;
         self.title_drawn = false;
         horizon_client::ui_theme::reset_atlas();
+        horizon_client::starling_theme::reset_atlas();
         self.apply_menu_settings();
         let Some(window) = self.window.clone() else {
             return;

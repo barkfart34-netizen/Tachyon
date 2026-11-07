@@ -73,6 +73,7 @@ impl Missing {
         // The frame was not shown (the first one often isn't): the glyphs it
         // rasterized never reached the atlas, so draw them again next frame.
         horizon_client::ui_theme::reset_atlas();
+        horizon_client::starling_theme::reset_atlas();
         if let Some(window) = &self.window {
             window.request_redraw();
         }

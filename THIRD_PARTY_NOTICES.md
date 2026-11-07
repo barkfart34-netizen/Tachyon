@@ -58,7 +58,9 @@ with the Classpath Exception. It runs only the preparation's exporters, as a sep
 `crates/horizon-client-render/src/touch.rs` and `touch/{custom,editor,layout}.rs` are taken
 whole from [starling-client/starling](https://github.com/starling-client/starling) (formerly
 Vasysik/horizon-android), branch `android`, commit `68a2c4dd1b9a9e511ad3758a79ab772b6f9e5b29`,
-licensed under MIT (the same notice as below).
+licensed under MIT (the same notice as below). So are, from the same commit,
+`crates/horizon-client/src/touch_ui.rs`, `ui_text.rs` and `skin_head.rs`, and its
+`ui_theme.rs` and `osk.rs` as `starling_theme.rs` and `starling_osk.rs`.
 
 ## horizon-android touch controls
 
