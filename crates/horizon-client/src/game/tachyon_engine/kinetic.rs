@@ -1003,7 +1003,7 @@ mod tests {
         let up = Part::Saw { facing: Dir::Up, along_first: true };
         assert!(up.shaft_toward(Dir::East) && up.shaft_toward(Dir::West) && !up.shaft_toward(Dir::North));
         assert_eq!(up.impact(), 4.0);
-        let line = parts(&[([0, 0, 0], Part::Shaft(Axis::X)), ([1, 0, 0], side)]);
+        let line = parts(&[([0, 0, 0], Part::Motor(Dir::East)), ([1, 0, 0], side)]);
         let s = solve1(&line, &[([0, 0, 0], 32.0)]);
         assert_eq!(s.speeds[&[1, 0, 0]][0], 32.0);
     }
