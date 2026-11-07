@@ -840,7 +840,17 @@ fn card_fingerprint() -> Option<String> {
                 .join("\n"),
         )
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    // Android: cpal's only default device ("default") follows the system's
+    // routing to headphones or Bluetooth itself, and a stream that loses its
+    // device reports it (`device_lost`). Listing the devices brute-forces
+    // every sample rate, channel mask and format through
+    // `AudioTrack.getMinBufferSize` for each one: about 520 binder calls,
+    // 1.2 s on the game's thread every second, so the game stuttered.
+    #[cfg(target_os = "android")]
+    {
+        Some(String::new())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "android")))]
     {
         None
     }
