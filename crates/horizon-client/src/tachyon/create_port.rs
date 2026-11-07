@@ -72,7 +72,112 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     // The large wheel's body round it (WaterWheelStructuralBlock), facing
     // the way to the wheel; no item, drawn by the wheel.
     ("water_wheel_structure", "minecraft:waxed_lightning_rod", 1.5, "minecraft:oak_planks"),
+    // GirderBlock keeps Create's x/z/top/bottom beside the chain's axis;
+    // the shafted one its own axis (x or z) and ends.
+    ("metal_girder", "minecraft:iron_chain", 5.0, "minecraft:netherite_block"),
+    ("metal_girder_encased_shaft", "minecraft:iron_block", 5.0, "minecraft:netherite_block"),
 ];
+
+/// The blocks a bracket goes on (BracketedBlockEntityBehaviour), and the
+/// kind of bracket model each takes.
+const BRACKETED: &[(&str, &str)] = &[("shaft", "shaft"), ("cogwheel", "cog"), ("large_cogwheel", "cog")];
+const BRACKET_MATERIALS: [&str; 2] = ["wooden", "metal"];
+/// Direction.values() order, as the bracket state's facing.
+const FACINGS: [&str; 6] = ["down", "up", "north", "south", "west", "east"];
+const FACING_OFFSETS: [[i32; 3]; 6] = [[0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1], [-1, 0, 0], [1, 0, 0]];
+
+/// The `bracket` state values: none, or material and facing.
+fn bracket_values() -> Vec<String> {
+    let mut out = vec!["none".to_owned()];
+    for m in BRACKET_MATERIALS {
+        out.extend(FACINGS.iter().map(|f| format!("{m}_{f}")));
+    }
+    out
+}
+
+/// BracketBlock's `axis_along_first` as stored for a bracket facing
+/// `facing` on a part of `axis` (0..3); none along the axis.
+fn bracket_along_first(axis: usize, facing: usize) -> Option<bool> {
+    let face_axis = (0..3).find(|&a| FACING_OFFSETS[facing][a] != 0)?;
+    if face_axis == axis {
+        return None;
+    }
+    let along = if face_axis != 2 { axis == 2 } else { axis == 1 };
+    Some(!along)
+}
+
+/// BracketGenerator's rotations (x, then y) for a bracket facing `facing`.
+fn bracket_rotation(facing: usize, along_first: bool) -> (i32, i32) {
+    let d = FACING_OFFSETS[facing];
+    let x = match facing {
+        0 => 180,
+        1 => 0,
+        _ if (d[0] != 0) == along_first => 90,
+        _ => 0,
+    };
+    // Direction.toYRot: south 0, west 90, north 180, east 270.
+    let to_y_rot = match facing {
+        3 => 0,
+        4 => 90,
+        2 => 180,
+        _ => 270,
+    };
+    let y = if d[1] != 0 {
+        if along_first { 90 } else { 0 }
+    } else {
+        (to_y_rot + 90) % 360
+    };
+    (x, y)
+}
+
+/// A bracketed block's model parts: its still model, and each bracket.
+fn bracketed_state(still: &str, kind: &str) -> Value {
+    let mut parts = vec![json!({"apply": {"model": still}})];
+    for (axis, axis_name) in ["x", "y", "z"].into_iter().enumerate() {
+        for (facing, facing_name) in FACINGS.into_iter().enumerate() {
+            let Some(along) = bracket_along_first(axis, facing) else { continue };
+            let (x, y) = bracket_rotation(facing, along);
+            let place = if FACING_OFFSETS[facing][1] != 0 { "ground" } else { "wall" };
+            for m in BRACKET_MATERIALS {
+                let mut apply = json!({"model": format!("create:block/bracket/{kind}/{place}_{m}")});
+                if x != 0 {
+                    apply["x"] = json!(x);
+                }
+                if y != 0 {
+                    apply["y"] = json!(y);
+                }
+                parts.push(json!({
+                    "when": {"axis": axis_name, "bracket": format!("{m}_{facing_name}")},
+                    "apply": apply,
+                }));
+            }
+        }
+    }
+    json!({"multipart": parts})
+}
+
+/// The bracket a bracketed block drops beside itself, one pool each.
+fn bracket_pools(block: &str) -> Vec<Value> {
+    let mut pools = Vec::new();
+    for m in BRACKET_MATERIALS {
+        for f in FACINGS {
+            pools.push(json!({
+                "rolls": 1.0,
+                "bonus_rolls": 0.0,
+                "conditions": [
+                    {"condition": "minecraft:survives_explosion"},
+                    {
+                        "condition": "minecraft:block_state_property",
+                        "block": format!("create:{block}"),
+                        "properties": {"bracket": format!("{m}_{f}")},
+                    },
+                ],
+                "entries": [{"type": "minecraft:item", "name": format!("create:{m}_bracket")}],
+            }));
+        }
+    }
+    pools
+}
 
 /// The blocks a whole block in every state, by their template's property.
 const WHOLE: &[(&str, &str, &[&str])] = &[
@@ -95,7 +200,7 @@ const TURNING: &[&str] = &[
 ];
 
 /// The version of [`fix`]: a port fixed by an older one is fixed again.
-const VERSION: &str = "2";
+const VERSION: &str = "3";
 const STAMP: &str = ".tachyon-fix";
 
 /// Fixes a Create ported into `dir` (`horizon-mods/create`) by an older
@@ -125,6 +230,17 @@ const RECIPES: &[&str] = &[
     "crafting/kinetics/encased_chain_drive_from_zinc",
     "crafting/kinetics/adjustable_chain_gearshift",
     "crafting/kinetics/large_water_wheel",
+    "crafting/kinetics/metal_girder",
+    "crafting/kinetics/metal_bracket",
+    "crafting/kinetics/wooden_bracket",
+];
+
+/// NeoForge's convention tags the restored recipes use, where the port has
+/// none of its own.
+const CONVENTION_TAGS: &[(&str, &str)] = &[
+    ("nuggets/iron", "minecraft:iron_nugget"),
+    ("ingots/iron", "minecraft:iron_ingot"),
+    ("rods/wooden", "minecraft:stick"),
 ];
 
 /// Puts [`RECIPES`] from Create's `jar` into the port at `dir`, their
@@ -149,9 +265,11 @@ pub fn restore_recipes(dir: &Path, jar: &Path) -> Result<(), String> {
         porter_ingredients(&mut json);
         write(&out, &json)?;
     }
-    let iron = dir.join("data/c/tags/item/nuggets/iron.json");
-    if !iron.is_file() {
-        write(&iron, &json!({"values": ["minecraft:iron_nugget"]}))?;
+    for (tag, item) in CONVENTION_TAGS {
+        let file = dir.join(format!("data/c/tags/item/{tag}.json"));
+        if !file.is_file() {
+            write(&file, &json!({"values": [item]}))?;
+        }
     }
     Ok(())
 }
@@ -205,6 +323,43 @@ pub fn fix(dir: &Path) -> Result<(), String> {
                 .collect();
             declaration["shapes"] = json!({"property": property, "values": values});
         }
+        if matches!(*block, "cogwheel" | "large_cogwheel") {
+            declaration["shapes"] = gear_shape(*block == "large_cogwheel");
+        }
+        if BRACKETED.iter().any(|(b, _)| b == block) {
+            declaration["state_properties"] = json!({"bracket": {"type": "enum", "values": bracket_values()}});
+            declaration["default_state"] = json!({"bracket": "none"});
+        }
+        if *block == "metal_girder" {
+            let flag = json!({"type": "boolean"});
+            declaration["state_properties"] = json!({"x": flag, "z": flag, "top": flag, "bottom": flag});
+            declaration["default_state"] = json!({"x": "false", "z": "false", "top": "false", "bottom": "false"});
+            declaration["properties"]["explosion_resistance"] = json!(6.0);
+            // AllShapes: the pole, a beam along x or z (4,2,0 to 12,14,16), both.
+            let pole = [0.25, 0.0, 0.25, 0.75, 1.0, 0.75];
+            let beam_x = [0.0, 0.125, 0.25, 1.0, 0.875, 0.75];
+            let beam_z = [0.25, 0.125, 0.0, 0.75, 0.875, 1.0];
+            let wide_pole = [0.1875, 0.0, 0.1875, 0.8125, 1.0, 0.8125];
+            declaration["shapes"] = json!({"properties": ["x", "z"], "values": {
+                "false,false": [pole],
+                "true,false": [beam_x],
+                "false,true": [beam_z],
+                "true,true": [wide_pole, beam_x, beam_z],
+            }});
+        }
+        if *block == "metal_girder_encased_shaft" {
+            let flag = json!({"type": "boolean"});
+            declaration["state_properties"] =
+                json!({"axis": {"type": "enum", "values": ["x", "z"]}, "top": flag, "bottom": flag});
+            declaration["default_state"] = json!({"axis": "x", "top": "false", "bottom": "false"});
+            declaration["properties"]["explosion_resistance"] = json!(6.0);
+            declaration["item"] = json!(false);
+            // AllShapes.GIRDER_BEAM_SHAFT: a beam across the shaft, the shaft.
+            declaration["shapes"] = json!({"property": "axis", "values": {
+                "x": [[0.25, 0.125, 0.0, 0.75, 0.875, 1.0], [0.0, 0.3125, 0.3125, 1.0, 0.6875, 0.6875]],
+                "z": [[0.0, 0.125, 0.25, 1.0, 0.875, 0.75], [0.3125, 0.3125, 0.0, 0.6875, 0.6875, 1.0]],
+            }});
+        }
         if *block == "water_wheel_structure" {
             declaration["item"] = json!(false);
         }
@@ -257,8 +412,25 @@ pub fn fix(dir: &Path) -> Result<(), String> {
             "elements": [],
         });
         write(&dir.join(format!("assets/create/models/{still}.json")), &model)?;
-        let state = json!({"variants": {"": {"model": format!("create:{still}")}}});
+        let state = match BRACKETED.iter().find(|(b, _)| b == block) {
+            Some((_, kind)) => bracketed_state(&format!("create:{still}"), kind),
+            None => json!({"variants": {"": {"model": format!("create:{still}")}}}),
+        };
         write(&blockstates.join(format!("{block}.json")), &state)?;
+    }
+    // BracketBlockItem: the brackets are items put on shafts and cogwheels
+    // (a state of theirs here), dropped with them.
+    for m in BRACKET_MATERIALS {
+        let item = dir.join(format!("data/create/horizon/item/{m}_bracket.json"));
+        write(&item, &json!({"template": "minecraft:iron_nugget"}))?;
+    }
+    for (block, _) in BRACKETED {
+        let file = dir.join(format!("data/create/loot_table/blocks/{block}.json"));
+        let Some(mut table) = read(&file) else { continue };
+        let Some(pools) = table["pools"].as_array_mut() else { continue };
+        pools.retain(|p| !p.to_string().contains("_bracket"));
+        pools.extend(bracket_pools(block));
+        write(&file, &table)?;
     }
     // The templates' properties: an axis where Create has a facing, none
     // where it has `powered` or a direction a basin points.
@@ -416,6 +588,26 @@ fn burner_loot(file: &Path) -> Result<(), String> {
 /// `ChuteShapes`' vertical bounds, with an open centre instead of a solid
 /// body, so item entities can enter. One shape property cannot carry the
 /// diagonal facing too: all states use these hollow walls for now.
+/// AllShapes.SMALL_GEAR / LARGE_GEAR: the 4 px plate and the 6 px pole
+/// through it, per axis (the chain template's rod is too thin to aim at).
+fn gear_shape(large: bool) -> Value {
+    let m = if large { 0.0 } else { 0.125 };
+    let values: serde_json::Map<String, Value> = (0..3)
+        .map(|axis| {
+            let cuboid = |along: [f64; 2], across: [f64; 2]| {
+                let mut b = [across[0], across[0], across[0], across[1], across[1], across[1]];
+                b[axis] = along[0];
+                b[axis + 3] = along[1];
+                b
+            };
+            let plate = cuboid([0.375, 0.625], [m, 1.0 - m]);
+            let pole = cuboid([0.0, 1.0], [0.3125, 0.6875]);
+            (["x", "y", "z"][axis].to_owned(), json!([plate, pole]))
+        })
+        .collect();
+    json!({"property": "axis", "values": values})
+}
+
 fn chute_shape() -> Value {
     let walls: [[f64; 6]; 8] = [
         [0.0625, 0.5, 0.0625, 0.125, 1.0, 0.9375],
@@ -601,6 +793,13 @@ mod tests {
         assert_eq!(body["item"], false);
         assert_eq!(body["shapes"]["property"], "facing");
         assert_eq!(fs::read_to_string(dir.join(STAMP)).unwrap(), VERSION);
+        let cog = read(&dir.join("data/create/horizon/block/cogwheel.json")).unwrap();
+        assert_eq!(
+            cog["shapes"]["values"]["x"],
+            json!([[0.375, 0.125, 0.125, 0.625, 0.875, 0.875], [0.0, 0.3125, 0.3125, 1.0, 0.6875, 0.6875]])
+        );
+        let big = read(&dir.join("data/create/horizon/block/large_cogwheel.json")).unwrap();
+        assert_eq!(big["shapes"]["values"]["y"][0], json!([0.0, 0.375, 0.0, 1.0, 0.625, 1.0]));
         assert_eq!(large["shapes"]["property"], "axis");
         for axis in ["x", "y", "z"] {
             assert_eq!(

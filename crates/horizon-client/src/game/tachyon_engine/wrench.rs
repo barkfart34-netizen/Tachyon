@@ -83,6 +83,11 @@ impl super::super::Game<'_> {
             || self.native_block_property(pos, "facing").is_some_and(|facing| {
                 super::create_part(name, |key| (key == "facing").then_some(facing.as_str())).is_some()
             });
+        // IWrenchableWithBracket: a bracket comes off first.
+        if kinetic && self.tachyon_take_bracket(pos) {
+            *claimed = true;
+            return;
+        }
         let sneaking = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft);
         if block == water_wheel::LARGE && !sneaking {
             return;

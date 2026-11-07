@@ -58,6 +58,7 @@ impl Game<'_> {
         fps_hud(self, batch, corners);
         keystrokes_hud(self, batch, corners);
         self.tachyon_engine_hud(batch, corners);
+        self.tachyon_assist_hud(batch);
     }
     pub(super) fn tachyon_key(&mut self, key: &str, pressed: bool) {
         zoom_key(self, key, pressed);

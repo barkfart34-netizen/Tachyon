@@ -39,6 +39,19 @@ pub(super) struct Recipes {
     pub mixing: Vec<Mixing>,
     /// A press's over a basin.
     pub compacting: Vec<Mixing>,
+    /// An item used on a block in the world (`ItemApplicationRecipe`).
+    pub application: Vec<Application>,
+}
+
+/// `create:item_application`: `held` used on a block of `on` makes it
+/// `result` (the first result; the rest go to the player).
+pub(super) struct Application {
+    pub on: Vec<String>,
+    pub held: Vec<String>,
+    pub result: String,
+    pub extra: Vec<Output>,
+    /// `keep_held_item`: the held item isn't used up.
+    pub keep: bool,
 }
 
 /// What a recipe reader asks of the game.
@@ -62,6 +75,7 @@ impl Recipes {
             "haunting",
             "mixing",
             "compacting",
+            "item_application",
         ] {
             walk(&dir.join(kind), &mut files);
         }
@@ -138,8 +152,30 @@ impl Recipes {
                     });
                 }
             }
+            "create:item_application" => {
+                let [on, held] = ingredients.as_slice() else {
+                    return;
+                };
+                let mut outputs = outputs.into_iter();
+                let Some(first) = outputs.next() else {
+                    return;
+                };
+                self.application.push(Application {
+                    on: on.clone(),
+                    held: held.clone(),
+                    result: first.item,
+                    extra: outputs.collect(),
+                    keep: recipe["keep_held_item"].as_bool().unwrap_or(false),
+                });
+            }
             _ => {}
         }
+    }
+
+    /// The application of `held` on a block whose item is `block`.
+    pub fn application(&self, block: &str, held: &str) -> Option<&Application> {
+        (self.application.iter())
+            .find(|r| r.on.iter().any(|i| i == block) && r.held.iter().any(|i| i == held))
     }
 
     pub fn milling(&self, item: &str) -> Option<&Milling> {
@@ -280,6 +316,9 @@ fn tagged(tag: &str, game: &Lookup) -> Vec<String> {
     }
 }
 
+/// The overworld's woods, as their logs are named.
+const WOODS: [&str; 9] = ["oak", "spruce", "birch", "jungle", "acacia", "dark_oak", "mangrove", "cherry", "pale_oak"];
+
 /// NeoForge's convention tags (`c:ingots/iron`) are the loader's: a port
 /// gets only those an oracle saw. Their likely members by the tag's name,
 /// vanilla's and Create's, those the game has.
@@ -301,6 +340,17 @@ fn convention(tag: &str, known: &dyn Fn(&str) -> bool) -> Vec<String> {
         ("dusts", m) => vec![m.to_owned()],
         ("cobblestones", "") => ["cobblestone", "cobbled_deepslate", "mossy_cobblestone"].map(str::to_owned).to_vec(),
         ("eggs", "") => ["egg", "blue_egg", "brown_egg"].map(str::to_owned).to_vec(),
+        ("strings", "") => vec!["string".to_owned()],
+        ("stripped_logs", "") => WOODS
+            .iter()
+            .map(|w| format!("stripped_{w}_log"))
+            .chain(["stripped_crimson_stem", "stripped_warped_stem", "stripped_bamboo_block"].map(str::to_owned))
+            .collect(),
+        ("stripped_woods", "") => WOODS
+            .iter()
+            .map(|w| format!("stripped_{w}_wood"))
+            .chain(["stripped_crimson_hyphae", "stripped_warped_hyphae"].map(str::to_owned))
+            .collect(),
         _ => Vec::new(),
     };
     (names.into_iter())

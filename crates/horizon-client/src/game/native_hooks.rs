@@ -1212,6 +1212,7 @@ impl GameLevel<'_> {
         new: BlockStateId,
     ) {
         self.tachyon_water_wheel_changed(dimension_id(dimension), [pos.x, pos.y, pos.z], old, new);
+        self.tachyon_girder_changed(dimension_id(dimension), [pos.x, pos.y, pos.z], new);
         mod_api::dispatch_block_changed(self, mod_api::mods(), dimension, pos, old, new);
     }
 
@@ -1741,6 +1742,7 @@ impl GameLevel<'_> {
         answer: &mut Option<Option<BlockStateId>>,
     ) {
         self.tachyon_water_wheel_place(state, context, answer);
+        self.tachyon_clock_place(state, context, answer);
         mod_api::dispatch_state_for_placement(
             self,
             mod_api::mods(),
@@ -2521,6 +2523,7 @@ impl Game<'_> {
     /// After a successful authoritative server level tick pass.
     pub(super) fn native_level_tick_post(&mut self, dimension: &str) {
         self.tachyon_water_wheel_settle(dimension);
+        self.tachyon_girder_settle(dimension);
         mod_api::dispatch_level_tick_post(self, mod_api::mods(), dimension);
     }
     /// A client tick of the window starts (NeoForge's `ClientTickEvent.Pre`,
@@ -6749,6 +6752,10 @@ impl Game<'_> {
         face: [i32; 3],
         claimed: &mut bool,
     ) {
+        self.tachyon_girder_use(stack, pos, face, claimed);
+        self.tachyon_bracket_use(stack, pos, face, claimed);
+        self.tachyon_apply(stack, pos, claimed);
+        self.tachyon_assist_use(stack, pos, claimed);
         self.tachyon_wrench(stack, pos, face, claimed);
         mod_api::dispatch_use_item_on(self, mod_api::mods(), stack, pos, face, claimed);
     }

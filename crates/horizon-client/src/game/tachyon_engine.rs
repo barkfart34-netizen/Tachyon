@@ -17,14 +17,19 @@
 //! block entities, [`Game::tachyon_engine_hud`] from the HUD hook.
 pub(super) mod chronicles;
 pub(crate) mod kinetic;
+mod application;
 mod arm;
+mod assist;
 mod basin;
+mod bracket;
 mod burner;
 mod belt;
 pub(in crate::game) mod chute;
+mod clock;
 mod create_recipes;
 mod crusher;
 mod fan;
+mod girder;
 pub(super) mod loading;
 mod millstone;
 mod obj_model;
@@ -162,6 +167,8 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
     let facing = || property("facing").and_then(Dir::parse);
     Some(match block {
         "shaft" | "andesite_encased_shaft" | "brass_encased_shaft" => Part::Shaft(axis()?),
+        // GirderEncasedShaftBlock: a shaft along its axis (x or z).
+        "metal_girder_encased_shaft" => Part::Shaft(axis()?),
         "cogwheel" => Part::Cog(axis()?),
         "large_cogwheel" => Part::LargeCog(axis()?),
         // EncasedCogwheelBlock's default closes both shaft ends.
@@ -208,6 +215,9 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
         // drives beside it; create_port keeps the axis.
         "encased_chain_drive" => Part::ChainDrive(axis()?),
         "flywheel" => Part::Flywheel(axis()?),
+        // CuckooClockBlock: its shaft out of the back; the face is its facing.
+        "cuckoo_clock" => Part::Clock(facing()?.opposite(), false),
+        "mysterious_cuckoo_clock" => Part::Clock(facing()?.opposite(), true),
         "adjustable_chain_gearshift" => Part::ChainGearshift(axis()?),
         // The four-way template's facing gives HorizontalAxisKineticBlock's
         // shaft across the player's facing, below the cogwheel.
@@ -947,7 +957,8 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
             .filter(|d| part.shaft_toward(*d))
             .map(|d| (HALF, d, part.side_factor(d), 0, Dir::South))
             .collect(),
-        Part::Motor(out) => vec![(HALF, out, 1.0, 0, Dir::South)],
+        // CuckooClockRenderer's shaft; the hands and doors are `clock.rs`'s.
+        Part::Motor(out) | Part::Clock(out, _) => vec![(HALF, out, 1.0, 0, Dir::South)],
         Part::Crank(out) => vec![("create:block/hand_crank/handle", out.opposite(), 1.0, 0, Dir::Up)],
         Part::Clutch(a) | Part::Gearshift(a) => {
             let [neg, pos] = a.dirs();
@@ -1039,6 +1050,7 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::ChainDrive(_)
         | Part::ChainGearshift(_)
         | Part::Flywheel(_)
+        | Part::Clock(_, _)
         | Part::SpeedController(_) => Vec::new(),
     }
 }
@@ -1133,14 +1145,15 @@ impl Game<'_> {
             };
             let r = create_recipes::Recipes::read(&dir, &lookup);
             log::info!(
-                "Tachyon: Create's recipes: {} milling, {} crushing, {} pressing, {} splashing, {} haunting, {} mixing, {} compacting",
+                "Tachyon: Create's recipes: {} milling, {} crushing, {} pressing, {} splashing, {} haunting, {} mixing, {} compacting, {} item application",
                 r.milling.len(),
                 r.crushing.len(),
                 r.pressing.len(),
                 r.splashing.len(),
                 r.haunting.len(),
                 r.mixing.len(),
-                r.compacting.len()
+                r.compacting.len(),
+                r.application.len()
             );
             r
         } else {
@@ -1272,6 +1285,7 @@ impl Game<'_> {
         self.tachyon_belts();
         self.tachyon_funnels();
         self.tachyon_crushers();
+        self.tachyon_clocks();
         // BasinBlockEntity.getHeatLevel: the block directly below each
         // basin, read before borrowing the world's random for the outputs.
         let basin_heat: HashMap<[i32; 3], burner::Heat> = OWNERS.with_borrow(|owners| {
@@ -2052,6 +2066,18 @@ impl Game<'_> {
                 let state = self.tachyon_model(model);
                 self.submit_item_world(&state, pose, light, out);
             }
+            // CuckooClockRenderer's hands, doors and figure.
+            if create && let Part::Clock(back, mysterious) = part {
+                let day = self.world.day_time as f64 + alpha;
+                let natural = clock::natural(self.dim.id());
+                let turning = speed[0] != 0.0;
+                for (model, inner) in
+                    clock::parts(pos, back.opposite(), turning, ticks, day, natural, mysterious)
+                {
+                    let state = self.tachyon_model(model);
+                    self.submit_item_world(&state, Mat4::from_translation(origin) * inner, light, out);
+                }
+            }
             // SpeedControllerRenderer's bracket is stationary, one block
             // up, whenever a horizontal large cogwheel is present.
             if create
@@ -2292,6 +2318,8 @@ impl Game<'_> {
             Part::LargeWaterWheel(_) => ("large_water_wheel", "Large Water Wheel"),
             Part::ChainDrive(_) => ("encased_chain_drive", "Encased Chain Drive"),
             Part::Flywheel(_) => ("flywheel", "Flywheel"),
+            Part::Clock(_, false) => ("cuckoo_clock", "Cuckoo Clock"),
+            Part::Clock(_, true) => ("mysterious_cuckoo_clock", "Cuckoo Clock"),
             Part::ChainGearshift(_) => ("adjustable_chain_gearshift", "Adjustable Chain Gearshift"),
             Part::Windmill(_) => ("windmill", "Windmill"),
             Part::Millstone => ("millstone", "Millstone"),

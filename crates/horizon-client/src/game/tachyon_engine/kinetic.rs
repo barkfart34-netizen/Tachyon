@@ -208,6 +208,9 @@ pub enum Part {
     /// Create's flywheel (FlywheelBlock): a wheel on a shaft along its axis,
     /// with no stress of its own.
     Flywheel(Axis),
+    /// Create's cuckoo clock: a shaft out of its back (the side given), and
+    /// whether it is the mysterious one.
+    Clock(Dir, bool),
     /// Create's adjustable chain gearshift: a chain drive whose redstone
     /// signal changes the speed it passes along the chain.
     ChainGearshift(Axis),
@@ -273,7 +276,7 @@ impl Part {
             | Part::Flywheel(a)
             | Part::CrushingWheel(a) => d.axis() == a,
             Part::Gearbox(a) => d.axis() != a,
-            Part::Motor(out) | Part::Crank(out) => d == out,
+            Part::Motor(out) | Part::Crank(out) | Part::Clock(out, _) => d == out,
             Part::Millstone | Part::Arm => d == Dir::Down,
             Part::Press(a) => d.axis() == a && d != Dir::Down,
             Part::Mixer => d == Dir::Up,
@@ -300,6 +303,8 @@ impl Part {
             Part::Arm => 2.0,
             Part::Fan(_) => 2.0,
             Part::CrushingWheel(_) => 8.0,
+            // AllBlocks: CStress.setImpact(1.0).
+            Part::Clock(_, _) => 1.0,
             // AllBlocks registers CStress.setNoImpact for the controller.
             Part::SpeedController(_) => 0.0,
             _ => 0.0,
