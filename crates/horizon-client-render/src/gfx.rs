@@ -83,6 +83,19 @@ pub fn outline_vertices(edges: &[[f64; 6]], camera: glam::DVec3) -> Vec<[f32; 6]
         .collect()
 }
 
+/// Whether solid terrain draws in two passes, its opaque quads first through a
+/// shader that never discards, then the cutout ones (`mesher::Part`,
+/// `mesher::group_parts`): where a discard costs a tiled GPU its hidden surface
+/// removal. Apple's GPUs behind Metal, and Tachyon's phones behind Vulkan (Mali,
+/// Adreno): Starling (Horizon Android, MIT) measured 25-27% less GPU time for
+/// the terrain on an Adreno 710 with the same split. GPU culling, whose
+/// records need the one-pass mesh order (`Sides::thresholds`), is then not
+/// offered.
+fn splits_solid(info: &wgpu::AdapterInfo) -> bool {
+    info.backend == wgpu::Backend::Metal
+        || (cfg!(target_os = "android") && info.backend == wgpu::Backend::Vulkan)
+}
+
 /// Whether the renderer should initialize its occlusion culling pass (`cull`).
 ///
 /// Software adapters spend more time running the culling pass than drawing
@@ -4294,9 +4307,10 @@ impl Renderer {
         let static_entity_index_quads = 1 << 14;
         let static_entity_indices = Self::quad_indices(&device, static_entity_index_quads);
         let flat_wanted = flat::wanted(&adapter, &device);
-        // Metal draws solid terrain in two passes (`split_solid`): meshes put all
-        // their opaque quads first, so each pass draws its part in a run or two.
-        crate::mesher::group_parts(adapter.get_info().backend == wgpu::Backend::Metal);
+        // Metal and Android's Vulkan draw solid terrain in two passes (`splits_solid`):
+        // meshes put all their opaque quads first, so each pass draws its part in a run
+        // or two.
+        crate::mesher::group_parts(splits_solid(&adapter.get_info()));
         // Readable as storage where flat draws run: a shader pack's terrain program reads them.
         let arena = arena::Arena::new(
             &device,
@@ -4424,6 +4438,9 @@ impl Renderer {
         // Not again after the device was lost in one of its frames, until Horizon restarts.
         let gpu_culling_offer = if crate::graphics::gpu_culling_lost() {
             crate::graphics::GpuCullingOffer::DeviceLost
+        } else if splits_solid(&adapter.get_info()) {
+            // Its records read the one-pass mesh order (`splits_solid`).
+            crate::graphics::GpuCullingOffer::Unsupported
         } else {
             gpu_culling_offer
         };
@@ -7874,11 +7891,11 @@ impl Renderer {
         self.phase2_pages.clear();
         self.solid_runs.clear();
         self.phase2_runs.clear();
-        // On Metal, phase 1 goes the opaque quads of every list, then the cutout
+        // Where solid terrain is split (`splits_solid`), phase 1 goes the opaque quads of every list, then the cutout
         // ones (`Part`), each solid pass drawing its own: `[..opaque_draws]`,
         // then the rest; phase 2 likewise. A fading list's quads all draw in the
         // cutout pass.
-        let split_solid = self.info.backend == wgpu::Backend::Metal;
+        let split_solid = splits_solid(&self.info);
         let parts = |fading: bool| -> &'static [(u8, Quads)] {
             match (split_solid, fading) {
                 (false, _) => &[(0, Quads::All)],
@@ -7889,7 +7906,7 @@ impl Renderer {
         let (mut opaque_draws, mut phase2_opaque) = (0, 0);
         debug_assert!(
             !(split_solid && gpu_frame),
-            "GPU culling is never offered on Metal"
+            "GPU culling is never offered where solid terrain is split"
         );
         // In a GPU frame the GPU draws the solid quads of the whole sections within the
         // render distance that have records (`SectionGpu::gpu_draws_solid`), and the walk
@@ -9325,9 +9342,9 @@ impl Renderer {
             .and_then(|n| Some((n.material.as_ref()?, &n.frame.group)));
         let solid_pipeline = material.map_or(&self.solid, |(m, _)| &m.solid);
         // Two solid passes only where a discard costs the GPU its hidden surface
-        // removal: Apple's tiled GPUs, behind Metal. Elsewhere the second pass
-        // would double the solid draw calls and vertex work for nothing.
-        let split_solid = self.info.backend == wgpu::Backend::Metal;
+        // removal: tiled GPUs (`splits_solid`). Elsewhere the second pass would
+        // double the solid draw calls and vertex work for nothing.
+        let split_solid = splits_solid(&self.info);
         let translucent_pipeline = material.map_or(&self.translucent, |(m, _)| &m.translucent);
         let pack_flat = material.and_then(|(m, _)| m.flat.as_ref());
         // A material stage's translucent pass reads a copy of the depth the solid terrain
