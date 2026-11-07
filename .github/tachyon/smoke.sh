@@ -60,5 +60,21 @@ alive || finish "crashed in the world"
 sleep 60
 shot world-later
 alive || finish "crashed after a minute in the world"
+
+# Bedrock's touch controls (the default): drag the joystick up for a few
+# seconds and the player walks; the status lines (every 10 s) show it.
+where=$(log | grep -o "Tachyon touch: bedrock, move at [0-9]*,[0-9]*" | tail -1 | grep -o "[0-9]*,[0-9]*$")
+[ -n "$where" ] || finish "no Bedrock touch controls in the world"
+mx=${where%,*}
+my=${where#*,}
+before=$(log | grep "Tachyon status: world" | tail -1 | grep -o "player at .*")
+echo "joystick at $mx,$my; before: $before"
+adb shell input swipe "$mx" "$my" "$mx" "$((my - 120))" 6000
+shot joystick
+sleep 22
+after=$(log | grep "Tachyon status: world" | tail -1 | grep -o "player at .*")
+echo "after: $after"
+[ -n "$before" ] && [ "$before" != "$after" ] || finish "the joystick did not move the player"
+alive || finish "crashed after the joystick"
 log | grep "Tachyon status" | tail -3
 finish ok

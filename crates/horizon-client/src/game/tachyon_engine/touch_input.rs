@@ -20,12 +20,16 @@ mod tests {
     }
 
     #[test]
-    fn engine_is_opt_in_and_actions_are_canonical() {
-        assert_eq!(Engine::default(), Engine::Zalith);
-        for value in [None, Some(""), Some("zalith"), Some("unknown"), Some("Bedrock")] {
-            assert_eq!(Engine::preference(value), Engine::Zalith);
+    fn bedrock_is_the_default_engine_and_actions_are_canonical() {
+        assert_eq!(Engine::default(), Engine::Bedrock);
+        for value in [None, Some(""), Some("unknown"), Some("Bedrock")] {
+            assert_eq!(Engine::preference(value), Engine::Bedrock);
         }
         assert_eq!(Engine::preference(Some("bedrock")), Engine::Bedrock);
+        assert_eq!(Engine::preference(Some("zalith")), Engine::Zalith);
+        for engine in [Engine::Zalith, Engine::Bedrock] {
+            assert_eq!(Engine::preference(Some(engine.name())), engine);
+        }
         // No controller bindings, deadzones, enabled flag or keyboard rebinding enter this table.
         let mappings = [
             (Button::South, Ok(KeyCode::Space)),

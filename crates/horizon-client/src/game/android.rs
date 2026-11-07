@@ -2,8 +2,8 @@
 //! touch screen, the soft keyboard, a gamepad, the gyroscope, the back
 //! gesture and the window that goes away while the app is in the background.
 //!
-//! Zalith remains the default; `touchEngine=bedrock` opts into fixed gameplay
-//! buttons and movement. Both engines use the same menu, hotbar and look fallback.
+//! Bedrock's is the default; `touchEngine=zalith` keeps Zalith's. Bedrock has fixed
+//! gameplay buttons and movement. Both engines use the same menu, hotbar and look fallback.
 //! Bedrock world gestures and custom keys are not active yet. The Zalith layout
 //! (`horizon_client::controls`) takes the fingers that land on its buttons
 //! and joysticks, and its floating ball opens the game menu and the layout
@@ -876,6 +876,26 @@ impl AndroidGame {
                     };
                     let at = game.player.as_ref().map(|p| p.position);
                     log::info!("Tachyon status: {state}, playing {in_game}, player at {at:?}");
+                    // Where Bedrock's joystick and jump button are, in the
+                    // window's pixels (the emulator test touches them).
+                    let touch = with_overlay(|o| {
+                        use horizon_client::touch::Control;
+                        (o.engine == Engine::Bedrock).then(|| {
+                            let centre = |c| o.bedrock.placement(c).center;
+                            (centre(Control::Move), centre(Control::Jump))
+                        })
+                    })
+                    .flatten();
+                    if let Some((m, j)) = touch.filter(|_| state == "world") {
+                        let (w, h) = (screen.width, screen.height);
+                        log::info!(
+                            "Tachyon touch: bedrock, move at {:.0},{:.0}, jump at {:.0},{:.0}, window {w:.0}x{h:.0}",
+                            m[0] * w,
+                            m[1] * h,
+                            j[0] * w,
+                            j[1] * h
+                        );
+                    }
                     // A hot phone slows down: a lower frame cap until it cools.
                     let heat = jni::platform("thermal", "")
                         .and_then(|s| s.trim().parse::<i32>().ok())
@@ -1339,7 +1359,7 @@ impl AndroidGame {
                     o.engine
                 })
                 .unwrap_or_default();
-                set_preference(&home, "touchEngine", (engine == Engine::Bedrock).then_some("bedrock"));
+                set_preference(&home, "touchEngine", Some(engine.name()));
                 log::info!("Tachyon: touch engine {engine:?}");
             }
             Choice::Scheme => {

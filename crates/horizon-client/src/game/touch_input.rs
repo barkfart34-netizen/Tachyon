@@ -10,17 +10,25 @@ use winit::{event::MouseButton, keyboard::KeyCode};
 #[cfg(any(target_os = "android", test))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Engine {
-    #[default]
     Zalith,
+    #[default]
     Bedrock,
 }
 #[cfg(any(target_os = "android", test))]
 impl Engine {
+    /// Bedrock's, unless the player picked Zalith's (`touchEngine:zalith`).
     pub(super) fn preference(value: Option<&str>) -> Self {
-        if value == Some("bedrock") {
-            Self::Bedrock
-        } else {
+        if value == Some("zalith") {
             Self::Zalith
+        } else {
+            Self::Bedrock
+        }
+    }
+    /// What `touchEngine` keeps for the engine.
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::Zalith => "zalith",
+            Self::Bedrock => "bedrock",
         }
     }
 }
