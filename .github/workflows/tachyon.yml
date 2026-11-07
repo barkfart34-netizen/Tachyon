@@ -105,9 +105,11 @@ jobs:
         env:
           TACHYON_RESOURCES: ${{ github.workspace }}/.tachyon/resources
           TACHYON_PROFILE: ${{ env.PROFILE }}
-          TACHYON_VERSION_CODE: ${{ github.run_number }}
           TACHYON_KEYSTORE_PASSWORD: ${{ secrets.TACHYON_KEYSTORE_PASSWORD }}
-        run: bash android/build-apk.sh
+        # The version code is the minute of the build: it grows in this
+        # repository and in the GPT worker's copy alike (Rxuser2/Tachyon-Worker),
+        # so either one's APK installs over the other's.
+        run: TACHYON_VERSION_CODE=$(( $(date +%s) / 60 )) bash android/build-apk.sh
 
       - name: Publish a release
         if: github.ref == 'refs/heads/main'
@@ -116,5 +118,5 @@ jobs:
         run: >
           gh release create "tachyon-${{ github.run_number }}" android/build/Tachyon.apk
           --repo "${{ github.repository }}" --target "${{ github.sha }}" --latest
-          --title "Tachyon #${{ github.run_number }}"
+          --title "Tachyon #${{ github.run_number }}${{ github.repository != 'Rxuser2/Tachyon' && ' (GPT worker)' || '' }}"
           --notes "Tachyon untuk Android (arm64, Android 10+, Vulkan), profil ${{ env.PROFILE }}, dari commit ${{ github.sha }}. Resource Minecraft 26.3 sudah di dalam APK: pasang, buka, tunggu bongkar resource sekali (sekitar 1 menit), lalu Play. Untuk pribadi, jangan dibagikan."
