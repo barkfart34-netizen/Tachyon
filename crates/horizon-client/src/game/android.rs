@@ -1827,6 +1827,8 @@ impl AndroidGame {
                         match o.engine {
                             Engine::Bedrock => o.bedrock.up(finger.id),
                             Engine::Zalith => o.controls.up(finger.id, screen),
+                            // Its fingers end in `starling_touch`.
+                            Engine::Starling => {}
                         }
                         choice
                     })
