@@ -268,7 +268,12 @@ impl Game<'_> {
             self.pad_cancel_inputs(event_loop);
         }
         self.pad.context = Some(context);
-        if !self.settings.controller.enabled {
+        // Starling's touch controls drive the pad on Android with controllers off too.
+        #[cfg(target_os = "android")]
+        let touch_pad = super::android::touch_pad();
+        #[cfg(not(target_os = "android"))]
+        let touch_pad = false;
+        if !self.settings.controller.enabled && !touch_pad {
             self.pad_output_off();
             self.pad_cancel_inputs(event_loop);
             self.pad.state = PadState::default();

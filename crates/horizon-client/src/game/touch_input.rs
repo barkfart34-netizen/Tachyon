@@ -11,17 +11,21 @@ use winit::{event::MouseButton, keyboard::KeyCode};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Engine {
     Zalith,
-    #[default]
+    /// Tachyon's first Bedrock-style engine (`tachyon_touch`).
     Bedrock,
+    /// Starling's (`touch`, `touch_ui`; Horizon Android, MIT): MCPE-style
+    /// buttons drawn from its own textures, the default.
+    #[default]
+    Starling,
 }
 #[cfg(any(target_os = "android", test))]
 impl Engine {
-    /// Bedrock's, unless the player picked Zalith's (`touchEngine:zalith`).
+    /// Starling's, unless the player picked another (`touchEngine`).
     pub(super) fn preference(value: Option<&str>) -> Self {
-        if value == Some("zalith") {
-            Self::Zalith
-        } else {
-            Self::Bedrock
+        match value {
+            Some("zalith") => Self::Zalith,
+            Some("bedrock") => Self::Bedrock,
+            _ => Self::Starling,
         }
     }
     /// What `touchEngine` keeps for the engine.
@@ -29,6 +33,15 @@ impl Engine {
         match self {
             Self::Zalith => "zalith",
             Self::Bedrock => "bedrock",
+            Self::Starling => "starling",
+        }
+    }
+    /// The engine the menu's switch goes to next.
+    pub(super) fn next(self) -> Self {
+        match self {
+            Self::Starling => Self::Bedrock,
+            Self::Bedrock => Self::Zalith,
+            Self::Zalith => Self::Starling,
         }
     }
 }

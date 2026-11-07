@@ -63,7 +63,7 @@ alive || finish "crashed after a minute in the world"
 
 # Bedrock's touch controls (the default): drag the joystick up for a few
 # seconds and the player walks; the status lines (every 10 s) show it.
-where=$(log | grep -o "Tachyon touch: bedrock, move at [0-9]*,[0-9]*" | tail -1 | grep -o "[0-9]*,[0-9]*$")
+where=$(log | grep -o "Tachyon touch: [a-z]*, move at [0-9]*,[0-9]*" | tail -1 | grep -o "[0-9]*,[0-9]*$")
 [ -n "$where" ] || finish "no Bedrock touch controls in the world"
 mx=${where%,*}
 my=${where#*,}

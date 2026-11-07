@@ -109,6 +109,8 @@ struct Overlay {
     engine: Engine,
     controls: Controls,
     bedrock: TouchControls,
+    /// Starling's controls (`Engine::Starling`).
+    starling: horizon_client::touch::TouchControls,
     feedback: TouchFeedback,
     menu: Menu,
     editor: Option<Editor>,
@@ -124,6 +126,8 @@ thread_local! {
     static OVERLAY: RefCell<Option<Overlay>> = const { RefCell::new(None) };
     /// The gamepad as the activity's events left it.
     static GAMEPAD: Cell<PadState> = Cell::new(PadState::default());
+    /// Starling's touch controls' pad state, from the last frame.
+    static STARLING_PAD: Cell<PadState> = Cell::new(PadState::default());
     /// Where text at the screen's edges stays clear of, physical pixels:
     /// left, top, right, bottom.
     static HUD_MARGINS: Cell<[f32; 4]> = const { Cell::new([0.0; 4]) };
@@ -134,9 +138,17 @@ pub(crate) fn hud_margins() -> [f32; 4] {
     HUD_MARGINS.with(Cell::get)
 }
 
-/// The gamepad, for the game's controller support (`game/pad.rs`).
+/// The gamepad, for the game's controller support (`game/pad.rs`): the
+/// activity's, and Starling's touch controls'.
 pub(crate) fn gamepad() -> PadState {
-    GAMEPAD.with(Cell::get)
+    GAMEPAD.with(Cell::get).merge(&STARLING_PAD.with(Cell::get))
+}
+
+/// Whether Starling's touch controls drive the pad now, which the pad reads
+/// even with controllers off in the options.
+pub(crate) fn touch_pad() -> bool {
+    STARLING_PAD.with(Cell::get) != PadState::default()
+        || with_overlay(|o| o.engine == Engine::Starling && o.in_game).unwrap_or(false)
 }
 
 /// The touch controls, the menu ball and the menu's pointer over the HUD.
@@ -156,6 +168,10 @@ pub(crate) fn draw_touch(batch: &mut HudBatch, atlas: &horizon_client::hud::HudA
             match o.engine {
                 Engine::Bedrock if o.in_game => {
                     o.bedrock.draw(batch, atlas, None, o.feedback, o.settings.opacity);
+                }
+                Engine::Starling if o.in_game => {
+                    o.starling.update_visibility(true, 1.0 / 60.0);
+                    o.starling.draw(batch, atlas);
                 }
                 Engine::Zalith => o.controls
                     .draw(batch, atlas, o.in_game, o.screen, o.settings.opacity),
@@ -340,6 +356,21 @@ fn load_bedrock(home: &Path) -> TouchControls {
     touch
 }
 
+/// Starling's settings, in their own file (`touch::Settings`, JSON).
+fn load_starling(home: &Path) -> horizon_client::touch::TouchControls {
+    let path = home.join("touch/starling.json");
+    let mut touch = horizon_client::touch::TouchControls::default();
+    match std::fs::read_to_string(&path) {
+        Ok(json) => match serde_json::from_str::<horizon_client::touch::Settings>(&json) {
+            Ok(settings) => touch.settings = settings,
+            Err(e) => log::warn!("Tachyon: touch settings {}: {e}", path.display()),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log::warn!("Tachyon: touch settings {}: {e}", path.display()),
+    }
+    touch
+}
+
 fn flag(home: &Path, key: &str, default: bool) -> bool {
     preference(home, key).map_or(default, |v| v == "true")
 }
@@ -387,6 +418,11 @@ impl AndroidGame {
             load_bedrock(&home)
         } else {
             TouchControls::default()
+        };
+        let starling = if engine == Engine::Starling {
+            load_starling(&home)
+        } else {
+            horizon_client::touch::TouchControls::default()
         };
         let dp = jni::platform("density", "")
             .and_then(|d| d.parse().ok())
@@ -462,6 +498,7 @@ impl AndroidGame {
                 engine,
                 controls,
                 bedrock,
+                starling,
                 feedback: TouchFeedback::default(),
                 menu: Menu::new(ball),
                 editor: None,
@@ -595,6 +632,7 @@ impl AndroidGame {
         self.last_slot_tap = None;
         with_overlay(|o| {
             o.bedrock.clear();
+            o.starling.clear();
             o.feedback = TouchFeedback::default();
             o.controls.cancel();
             o.controls.take_events();
@@ -647,11 +685,15 @@ impl AndroidGame {
             o.in_game = in_game;
             o.bedrock.viewport(screen.width as u32, screen.height as u32);
             o.bedrock.context = context;
+            o.starling.viewport(screen.width as u32, screen.height as u32);
+            o.starling.in_menu = !in_game;
+            o.starling.in_inventory = false;
         });
     }
 
     /// The frame is owned before borrowing Game; feedback goes back afterwards.
     fn poll_touch(&mut self) {
+        self.poll_starling();
         let frame = with_overlay(|o| {
             if o.engine == Engine::Bedrock && o.shown && o.in_game && !o.settings.controls_hidden {
                 Some(o.bedrock.poll_frame())
@@ -676,6 +718,123 @@ impl AndroidGame {
             with_overlay(|o| o.menu.open = true);
         }
         self.sync_touch_lifecycle();
+    }
+
+    /// Starling's controls each frame (its `pad.rs` `poll_pads`): their pad
+    /// state goes to the game as a controller's, the touched point aims, a tap
+    /// attacks the entity under it or uses, a hold on an item used by holding
+    /// uses it, and its buttons for chat, settings, debug and the camera act.
+    fn poll_starling(&mut self) {
+        let polled = with_overlay(|o| {
+            if o.engine != Engine::Starling || !o.shown || !o.in_game || o.settings.controls_hidden {
+                o.starling.clear();
+                return None;
+            }
+            let st = &mut o.starling;
+            let state = st.poll_state();
+            let requests = [
+                std::mem::take(&mut st.chat_requested),
+                std::mem::take(&mut st.settings_requested),
+                std::mem::take(&mut st.debug_requested),
+                std::mem::take(&mut st.perspective_requested),
+            ];
+            Some((state, st.aim, st.take_tap(), st.holding, st.holding_use, requests))
+        })
+        .flatten();
+        let Some((mut state, aim, tap, holding, holding_use, requests)) = polled else {
+            STARLING_PAD.with(|p| p.set(PadState::default()));
+            return;
+        };
+        let mut settings = false;
+        if let App::Ready(game) = &mut self.app {
+            if aim.is_some() {
+                game.set_touch_aim(aim);
+            }
+            if aim.is_some() && holding && (holding_use || game.touch_hold_uses()) {
+                state.triggers = [1.0, 0.0];
+                with_overlay(|o| o.starling.latch_use());
+            }
+            if let Some(held_use) = tap {
+                if game.entity_targeted() {
+                    state.triggers[1] = 1.0;
+                } else if !held_use {
+                    state.triggers[0] = 1.0;
+                }
+            }
+            let [chat, open, debug, perspective] = requests;
+            if chat {
+                tap_key(game, KeyCode::KeyT);
+            } else if open {
+                settings = true;
+            } else if debug {
+                tap_key(game, KeyCode::F3);
+            } else if perspective {
+                tap_key(game, KeyCode::F5);
+            }
+        }
+        STARLING_PAD.with(|p| p.set(state));
+        if settings {
+            self.cancel_touch();
+            with_overlay(|o| o.menu.open = true);
+        }
+    }
+
+    /// A finger for Starling's controls while playing: true when they took it
+    /// (Starling's `game.rs` touch handler). The menu ball and the hotbar keep
+    /// theirs; every other finger moves, presses or looks through them.
+    fn starling_touch(&mut self, finger: &Finger, at: (f32, f32), point: [f32; 2]) -> bool {
+        let started = finger.phase == TouchPhase::Started;
+        let ended = matches!(finger.phase, TouchPhase::Ended | TouchPhase::Cancelled);
+        let screen = self.screen();
+        let owned = with_overlay(|o| o.starling.owns_pointer(finger.id)).unwrap_or(false);
+        if !owned {
+            if !started {
+                return false;
+            }
+            let free = with_overlay(|o| !o.menu.down(finger.id, at, screen)).unwrap_or(false);
+            if !free {
+                // The menu ball took it: the ordinary path follows it from here.
+                self.contacts.insert(
+                    finger.id,
+                    Contact { role: Role::Control, start: at, at, since: Instant::now(), moved: false },
+                );
+                return true;
+            }
+            let on_control = with_overlay(|o| o.starling.control_at_point(point)).unwrap_or(false);
+            if !on_control && self.hotbar_slot(at).is_some() {
+                return false;
+            }
+        }
+        let projectile = match &self.app {
+            App::Ready(game) => game.touch_hold_uses(),
+            App::Loading(_) => false,
+        };
+        let raw = with_overlay(|o| {
+            if started {
+                o.starling.hold_uses_item = projectile;
+            }
+            o.starling.update(finger.id, point, started, ended)
+        })
+        .unwrap_or([0.0, 0.0]);
+        if (raw[0] != 0.0 || raw[1] != 0.0)
+            && let App::Ready(game) = &mut self.app
+        {
+            let delta = with_overlay(|o| {
+                horizon_client::touch::camera_delta_with_mouse(
+                    raw,
+                    screen.width as u32,
+                    screen.height as u32,
+                    &o.starling.settings,
+                    game.settings.sensitivity,
+                    game.settings.invert_x,
+                    game.settings.invert_y,
+                    game.zoom_turn_scale() as f32,
+                )
+            })
+            .unwrap_or([0.0, 0.0]);
+            game.turn_player(f64::from(delta[0]) / 0.15, f64::from(delta[1]) / 0.15);
+        }
+        true
     }
 
     pub fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -880,16 +1039,24 @@ impl AndroidGame {
                     // window's pixels (the emulator test touches them).
                     let touch = with_overlay(|o| {
                         use horizon_client::tachyon_touch::Control;
-                        (o.engine == Engine::Bedrock).then(|| {
-                            let centre = |c| o.bedrock.placement(c).center;
-                            (centre(Control::Move), centre(Control::Jump))
-                        })
+                        use horizon_client::touch::Control as StarlingControl;
+                        match o.engine {
+                            Engine::Bedrock => {
+                                let centre = |c| o.bedrock.placement(c).center;
+                                Some((o.engine.name(), centre(Control::Move), centre(Control::Jump)))
+                            }
+                            Engine::Starling => {
+                                let centre = |c| o.starling.placement(c).center;
+                                Some((o.engine.name(), centre(StarlingControl::Move), centre(StarlingControl::Jump)))
+                            }
+                            Engine::Zalith => None,
+                        }
                     })
                     .flatten();
-                    if let Some((m, j)) = touch.filter(|_| state == "world") {
+                    if let Some((engine, m, j)) = touch.filter(|_| state == "world") {
                         let (w, h) = (screen.width, screen.height);
                         log::info!(
-                            "Tachyon touch: bedrock, move at {:.0},{:.0}, jump at {:.0},{:.0}, window {w:.0}x{h:.0}",
+                            "Tachyon touch: {engine}, move at {:.0},{:.0}, jump at {:.0},{:.0}, window {w:.0}x{h:.0}",
                             m[0] * w,
                             m[1] * h,
                             j[0] * w,
@@ -1349,12 +1516,11 @@ impl AndroidGame {
                 // The other engine from the next frame; the fingers were
                 // released above, so nothing stays held across the switch.
                 let engine = with_overlay(|o| {
-                    o.engine = match o.engine {
-                        Engine::Zalith => Engine::Bedrock,
-                        Engine::Bedrock => Engine::Zalith,
-                    };
-                    if o.engine == Engine::Bedrock {
-                        o.bedrock = load_bedrock(&home);
+                    o.engine = o.engine.next();
+                    match o.engine {
+                        Engine::Bedrock => o.bedrock = load_bedrock(&home),
+                        Engine::Starling => o.starling = load_starling(&home),
+                        Engine::Zalith => {}
                     }
                     o.engine
                 })
@@ -1512,6 +1678,14 @@ impl AndroidGame {
             return;
         }
         let in_game = self.in_game();
+        if in_game
+            && self.enabled
+            && with_overlay(|o| o.engine == Engine::Starling && !o.settings.controls_hidden).unwrap_or(false)
+            && !self.contacts.contains_key(&finger.id)
+            && self.starling_touch(&finger, at, point)
+        {
+            return;
+        }
         let slop = SLOP * self.dp;
         match finger.phase {
             TouchPhase::Started => {

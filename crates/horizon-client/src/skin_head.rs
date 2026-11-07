@@ -69,10 +69,10 @@ pub fn head(player: &str) -> Option<HeadSkin> {
 }
 
 /// The skin this launch will actually use, already normalized to 64x64 RGBA.
+/// Tachyon has no prepared appearance (Starling's `skins::appearance`): the
+/// head comes from the skin service instead.
 fn prepared_skin() -> Option<HeadSkin> {
-    let appearance = crate::skins::appearance::current()?;
-    let (rgba, _slim) = appearance.skin.as_ref()?;
-    from_rgba(64, 64, rgba)
+    None
 }
 
 fn agent() -> ureq::Agent {
