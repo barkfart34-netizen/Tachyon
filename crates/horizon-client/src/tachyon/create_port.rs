@@ -782,7 +782,21 @@ mod tests {
         assert_eq!(shaft["template"], "minecraft:iron_chain");
         assert_eq!(shaft["properties"]["hardness"], 1.5);
         let state = read(&states.join("shaft.json")).unwrap();
-        assert_eq!(state["variants"][""]["model"], "create:block/tachyon_still/shaft");
+        // The still model always, and a bracket where one is put.
+        let parts = state["multipart"].as_array().unwrap();
+        assert_eq!(parts[0]["apply"]["model"], "create:block/tachyon_still/shaft");
+        assert!(parts.iter().any(|p| p["when"] == json!({"axis": "y", "bracket": "wooden_east"})));
+        assert!(!parts.iter().any(|p| p["when"] == json!({"axis": "y", "bracket": "wooden_up"})));
+        assert_eq!(shaft["default_state"]["bracket"], "none");
+        assert_eq!(bracket_rotation(2, false), (90, 270));
+        assert_eq!(bracket_rotation(5, false), (0, 0));
+        assert_eq!(bracket_rotation(0, false), (180, 0));
+        assert_eq!(bracket_along_first(1, 1), None);
+        let item = read(&dir.join("data/create/horizon/item/metal_bracket.json")).unwrap();
+        assert_eq!(item["template"], "minecraft:iron_nugget");
+        let girder = read(&dir.join("data/create/horizon/block/metal_girder.json")).unwrap();
+        assert_eq!(girder["state_properties"]["top"]["type"], "boolean");
+        assert_eq!(girder["shapes"]["properties"], json!(["x", "z"]));
         let still = read(&dir.join("assets/create/models/block/tachyon_still/shaft.json")).unwrap();
         assert_eq!(still["textures"]["particle"], "create:block/axis");
         let large = read(&dir.join("data/create/horizon/block/large_water_wheel.json")).unwrap();
