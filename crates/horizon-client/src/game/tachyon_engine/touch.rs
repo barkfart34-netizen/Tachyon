@@ -5,7 +5,7 @@ mod tests {
     use horizon_client::{
         gamepad::{self, Button},
         input,
-        touch::{Control, Mode, Settings, TouchContext, TouchControls, TouchFrame, TouchRequest},
+        tachyon_touch::{Control, Mode, Settings, TouchContext, TouchControls, TouchFrame, TouchRequest},
     };
     use std::time::Duration;
 

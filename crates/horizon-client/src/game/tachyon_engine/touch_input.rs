@@ -6,7 +6,7 @@ mod tests {
     use horizon_client::{
         gamepad::Button,
         keymapping::{KeyAction, ToggleKeys},
-        touch::{Control, Mode, TouchContext, TouchControls, TouchRequest, TouchScreen},
+        tachyon_touch::{Control, Mode, TouchContext, TouchControls, TouchRequest, TouchScreen},
     };
     use std::time::Duration;
     use winit::{event::MouseButton, keyboard::KeyCode};

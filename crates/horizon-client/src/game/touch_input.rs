@@ -2,9 +2,9 @@
 //! `game/android_input.rs` (MIT, THIRD_PARTY_NOTICES.md). Fixed touch actions do
 //! not use controller bindings or keyboard toggles. World gestures come later.
 use super::{Game, Screen};
-use horizon_client::{Result, gamepad::Button, touch::TouchScreen};
+use horizon_client::{Result, gamepad::Button, tachyon_touch::TouchScreen};
 #[cfg(any(target_os = "android", test))]
-use horizon_client::touch::{TouchContext, TouchFrame, TouchRequest};
+use horizon_client::tachyon_touch::{TouchContext, TouchFrame, TouchRequest};
 use winit::{event::MouseButton, keyboard::KeyCode};
 
 #[cfg(any(target_os = "android", test))]

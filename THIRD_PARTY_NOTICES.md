@@ -53,10 +53,18 @@ The Android app (`android/build.sh`) carries the OpenJDK 25 runtime for Android 
 Launcher 2 ships, built from OpenJDK, which is licensed under the GNU General Public License 2.0
 with the Classpath Exception. It runs only the preparation's exporters, as a separate program.
 
+## Starling touch controls
+
+`crates/horizon-client-render/src/touch.rs` and `touch/{custom,editor,layout}.rs` are taken
+whole from [starling-client/starling](https://github.com/starling-client/starling) (formerly
+Vasysik/horizon-android), branch `android`, commit `68a2c4dd1b9a9e511ad3758a79ab772b6f9e5b29`,
+licensed under MIT (the same notice as below).
+
 ## horizon-android touch controls
 
-Tachyon's Bedrock-style touch formats, value contracts, movement/button engine and HUD in
-`crates/horizon-client-render/src/touch.rs` and `touch/{layout,custom,hud}.rs` follow
+Tachyon's first Bedrock-style touch formats, value contracts, movement/button engine and HUD,
+now in `crates/horizon-client-render/src/tachyon_touch.rs` and `tachyon_touch/{layout,custom,hud}.rs`,
+follow
 [Vasysik/horizon-android](https://github.com/Vasysik/horizon-android), branch `android`, commit
 `7301f6fdd7f470b11317276e7a11b4dc615c137a`. The source files followed are
 `crates/horizon-client-render/src/touch.rs` (controls, `TouchControls::draw`, sprite, text and circle helpers),

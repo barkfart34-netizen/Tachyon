@@ -1,7 +1,7 @@
 //! Desktop checks for touch formats and value contracts.
 use horizon_client::{
     gamepad::PadState,
-    touch::{
+    tachyon_touch::{
         Control, CustomButton, Mode, Placement, Settings, TouchContext, TouchFeedback, TouchFrame,
         TouchRequest, TouchScreen, TouchTap,
         layout::{FORMAT_VERSION, contains},
@@ -259,7 +259,7 @@ fn touch_frame_owns_two_taps_and_consumes_each_aim_and_intent_once() {
 
 #[test]
 fn a_touched_point_aims_through_the_perspective() {
-    use horizon_client::touch::screen_direction;
+    use horizon_client::tachyon_touch::screen_direction;
     let close = |a: [f64; 3], b: [f64; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-9);
     // Facing south (+Z) with +Y up: the right of the screen is west (-X).
     let (forward, up) = ([0.0, 0.0, 1.0], [0.0, 1.0, 0.0]);

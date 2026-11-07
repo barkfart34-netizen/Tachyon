@@ -21,7 +21,7 @@ use horizon_client::controls::{
 };
 use horizon_client::gamepad::{Button as PadButton, PadState};
 use horizon_client::osk;
-use horizon_client::touch::{TouchContext, TouchControls, TouchFeedback, TouchScreen};
+use horizon_client::tachyon_touch::{TouchContext, TouchControls, TouchFeedback, TouchScreen};
 use horizon_client::ui_theme::{preference, set_preference};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -163,7 +163,7 @@ pub(crate) fn draw_touch(batch: &mut HudBatch, atlas: &horizon_client::hud::HudA
             }
         }
         let s = &o.bedrock.settings;
-        let scheme = horizon_client::touch::Mode::SCHEMES
+        let scheme = horizon_client::tachyon_touch::Mode::SCHEMES
             .iter()
             .find(|(mode, split, _)| *mode == s.mode && *split == s.split_controls)
             .map_or("Joystick & aim crosshair", |(_, _, name)| *name);
@@ -330,7 +330,7 @@ fn load_bedrock(home: &Path) -> TouchControls {
     let path = home.join("touch/bedrock.json");
     let mut touch = TouchControls::default();
     match std::fs::read_to_string(&path) {
-        Ok(json) => match horizon_client::touch::Settings::parse(&json) {
+        Ok(json) => match horizon_client::tachyon_touch::Settings::parse(&json) {
             Ok(settings) => touch.settings = settings,
             Err(e) => log::warn!("Tachyon: touch settings {}: {e}", path.display()),
         },
@@ -879,7 +879,7 @@ impl AndroidGame {
                     // Where Bedrock's joystick and jump button are, in the
                     // window's pixels (the emulator test touches them).
                     let touch = with_overlay(|o| {
-                        use horizon_client::touch::Control;
+                        use horizon_client::tachyon_touch::Control;
                         (o.engine == Engine::Bedrock).then(|| {
                             let centre = |c| o.bedrock.placement(c).center;
                             (centre(Control::Move), centre(Control::Jump))
@@ -1366,7 +1366,7 @@ impl AndroidGame {
                 // The next of Bedrock's four schemes, kept in its own file.
                 let json = with_overlay(|o| {
                     let s = &mut o.bedrock.settings;
-                    let schemes = horizon_client::touch::Mode::SCHEMES;
+                    let schemes = horizon_client::tachyon_touch::Mode::SCHEMES;
                     let at = (schemes.iter())
                         .position(|(mode, split, _)| *mode == s.mode && *split == s.split_controls)
                         .map_or(0, |i| (i + 1) % schemes.len());

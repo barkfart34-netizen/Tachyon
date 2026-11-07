@@ -3589,7 +3589,7 @@ impl Game<'_> {
             let fov = self.locator_camera.map_or(70.0, |c| f64::from(c.3));
             let up = view_vector(self.yaw, self.pitch - 90.0);
             let aspect = f64::from(size[0]) / f64::from(size[1].max(1));
-            let dir = horizon_client::touch::screen_direction(forward, up, point, aspect, fov);
+            let dir = horizon_client::tachyon_touch::screen_direction(forward, up, point, aspect, fov);
             return Some((self.eye_position()?, dir));
         }
         Some((self.eye_position()?, forward))

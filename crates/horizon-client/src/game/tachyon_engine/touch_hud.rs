@@ -3,8 +3,8 @@
 mod tests {
     use horizon_client::gamepad::{Button as PadButton, PadState};
     use horizon_client::hud::{HudAtlas, HudBatch, Rect};
-    use horizon_client::touch::hud::{self, Button, Control, Marker, State};
-    use horizon_client::touch::{Mode, TouchContext, TouchControls, TouchFeedback, TouchRequest};
+    use horizon_client::tachyon_touch::hud::{self, Button, Control, Marker, State};
+    use horizon_client::tachyon_touch::{Mode, TouchContext, TouchControls, TouchFeedback, TouchRequest};
     use std::time::Duration;
 
     fn button(control: Control) -> Button {
