@@ -208,6 +208,9 @@ pub enum Part {
     /// Create's flywheel (FlywheelBlock): a wheel on a shaft along its axis,
     /// with no stress of its own.
     Flywheel(Axis),
+    /// Create's mechanical saw: its blade's facing and, facing up or down,
+    /// whether its shaft runs along x (DirectionalAxisKineticBlock).
+    Saw { facing: Dir, along_first: bool },
     /// Create's cuckoo clock: a shaft out of its back (the side given), and
     /// whether it is the mysterious one.
     Clock(Dir, bool),
@@ -280,6 +283,13 @@ impl Part {
             Part::Millstone | Part::Arm => d == Dir::Down,
             Part::Press(a) => d.axis() == a && d != Dir::Down,
             Part::Mixer => d == Dir::Up,
+            Part::Saw { facing, along_first } => {
+                if facing.axis() == Axis::Y {
+                    d.axis() == if along_first { Axis::X } else { Axis::Z }
+                } else {
+                    d == facing.opposite()
+                }
+            }
             Part::SpeedController(a) => a != Axis::Y && d.axis() == a,
             // Its pulleys' shafts, out of its sides.
             Part::Belt(a) => d.axis() != a && d.axis() != Axis::Y,
@@ -297,7 +307,7 @@ impl Part {
     /// a machine's; nothing for what only passes the turning on.
     pub fn impact(self) -> f32 {
         match self {
-            Part::Millstone => 4.0,
+            Part::Millstone | Part::Saw { .. } => 4.0,
             Part::Press(_) => 8.0,
             Part::Mixer => 4.0,
             Part::Arm => 2.0,
@@ -984,6 +994,18 @@ mod tests {
         ]);
         let s = solve1(&p, &[([0, 0, 0], 200.0)]);
         assert!(s.jammed.contains(&[0, 1, 0]));
+    }
+
+    #[test]
+    fn a_saw_takes_its_shaft_behind_a_sideways_blade_or_across_an_upward_one() {
+        let side = Part::Saw { facing: Dir::East, along_first: false };
+        assert!(side.shaft_toward(Dir::West) && !side.shaft_toward(Dir::East) && !side.shaft_toward(Dir::Up));
+        let up = Part::Saw { facing: Dir::Up, along_first: true };
+        assert!(up.shaft_toward(Dir::East) && up.shaft_toward(Dir::West) && !up.shaft_toward(Dir::North));
+        assert_eq!(up.impact(), 4.0);
+        let line = parts(&[([0, 0, 0], Part::Shaft(Axis::X)), ([1, 0, 0], side)]);
+        let s = solve1(&line, &[([0, 0, 0], 32.0)]);
+        assert_eq!(s.speeds[&[1, 0, 0]][0], 32.0);
     }
 
     #[test]

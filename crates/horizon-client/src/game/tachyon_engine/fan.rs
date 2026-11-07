@@ -394,7 +394,7 @@ impl Game<'_> {
     }
 
     /// Stacks no bigger than their items' most.
-    fn tachyon_split(&self, made: Vec<ItemStack>) -> Vec<ItemStack> {
+    pub(super) fn tachyon_split(&self, made: Vec<ItemStack>) -> Vec<ItemStack> {
         let catalog = self.res.items();
         let mut out = Vec::new();
         for s in made {

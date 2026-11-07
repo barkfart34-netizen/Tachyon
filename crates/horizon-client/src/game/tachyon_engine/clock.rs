@@ -359,6 +359,29 @@ impl super::super::GameLevel<'_> {
     }
 }
 
+impl super::super::GameLevel<'_> {
+    /// `SawBlock`'s placement: the blade away from the look, its shaft
+    /// across the player's way (`saw::placement`).
+    pub(in crate::game) fn tachyon_saw_place(
+        &self,
+        state: horizon_world::registry::BlockStateId,
+        context: &horizon_world::level::PlacementContext,
+        answer: &mut Option<Option<horizon_world::registry::BlockStateId>>,
+    ) {
+        if answer.is_some() || self.native_state_block(state) != Some(super::saw::SAW) {
+            return;
+        }
+        let (facing, along_first, flipped) = super::saw::placement(context.yaw, context.pitch);
+        let placed = self
+            .native_state_with_property(state, "facing", facing.name())
+            .and_then(|s| self.native_state_with_property(s, "axis_along_first", if along_first { "true" } else { "false" }))
+            .and_then(|s| self.native_state_with_property(s, "flipped", if flipped { "true" } else { "false" }));
+        if let Some(placed) = placed {
+            *answer = Some(Some(placed));
+        }
+    }
+}
+
 impl super::super::Game<'_> {
     /// Each turning clock ticks, chimes and smokes; a mysterious one blows
     /// up (`CuckooClockBlockEntity.tick`). The owner's alone.

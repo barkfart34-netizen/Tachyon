@@ -32,6 +32,8 @@ pub(super) struct Recipes {
     pub milling: Vec<Milling>,
     /// The crushing wheels', before milling.
     pub crushing: Vec<Milling>,
+    /// A saw's (`create:cutting`).
+    pub cutting: Vec<Milling>,
     pub pressing: Vec<Milling>,
     pub splashing: Vec<Milling>,
     pub haunting: Vec<Milling>,
@@ -70,6 +72,7 @@ impl Recipes {
         for kind in [
             "milling",
             "crushing",
+            "cutting",
             "pressing",
             "splashing",
             "haunting",
@@ -134,6 +137,8 @@ impl Recipes {
             "create:milling" => single(&mut self.milling, MILLING_TIME),
             // Create's own default: none, crushed at once.
             "create:crushing" => single(&mut self.crushing, 0.0),
+            // ProcessingRecipeParams' duration starts at none.
+            "create:cutting" => single(&mut self.cutting, 0.0),
             "create:pressing" => single(&mut self.pressing, super::millstone::TIME),
             "create:splashing" => single(&mut self.splashing, super::fan::TIME as f32),
             "create:haunting" => single(&mut self.haunting, super::fan::TIME as f32),

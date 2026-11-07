@@ -56,6 +56,8 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("rotation_speed_controller", "minecraft:white_glazed_terracotta", 3.0, "minecraft:gold_block"),
     ("millstone", "minecraft:polished_andesite", 2.0, "minecraft:stone"),
     ("mechanical_mixer", "minecraft:polished_andesite", 2.5, "minecraft:copper_block"),
+    // SawBlock keeps Create's own states (facing, axis_along_first, flipped).
+    ("mechanical_saw", "minecraft:polished_andesite", 2.0, "minecraft:copper_block"),
     // ArmBlock's floor-mounted arm; the engine draws its moving bodies.
     ("mechanical_arm", "minecraft:polished_andesite", 2.5, "minecraft:copper_block"),
     // A hollow block with a floor.
@@ -233,6 +235,7 @@ const RECIPES: &[&str] = &[
     "crafting/kinetics/metal_girder",
     "crafting/kinetics/metal_bracket",
     "crafting/kinetics/wooden_bracket",
+    "crafting/kinetics/mechanical_saw",
 ];
 
 /// NeoForge's convention tags the restored recipes use, where the port has
@@ -345,6 +348,25 @@ pub fn fix(dir: &Path) -> Result<(), String> {
                 "true,false": [beam_x],
                 "false,true": [beam_z],
                 "true,true": [wide_pole, beam_x, beam_z],
+            }});
+        }
+        if *block == "mechanical_saw" {
+            let facings = json!(["down", "up", "north", "south", "west", "east"]);
+            declaration["state_properties"] = json!({
+                "facing": {"type": "enum", "values": facings},
+                "axis_along_first": {"type": "boolean"},
+                "flipped": {"type": "boolean"},
+            });
+            declaration["default_state"] =
+                json!({"facing": "up", "axis_along_first": "false", "flipped": "false"});
+            // AllShapes.CASING_12PX: four pixels open on the blade's side.
+            declaration["shapes"] = json!({"property": "facing", "values": {
+                "up": [[0.0, 0.0, 0.0, 1.0, 0.75, 1.0]],
+                "down": [[0.0, 0.25, 0.0, 1.0, 1.0, 1.0]],
+                "north": [[0.0, 0.0, 0.25, 1.0, 1.0, 1.0]],
+                "south": [[0.0, 0.0, 0.0, 1.0, 1.0, 0.75]],
+                "west": [[0.25, 0.0, 0.0, 1.0, 1.0, 1.0]],
+                "east": [[0.0, 0.0, 0.0, 0.75, 1.0, 1.0]],
             }});
         }
         if *block == "metal_girder_encased_shaft" {

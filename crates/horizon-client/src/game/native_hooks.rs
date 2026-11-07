@@ -1743,6 +1743,7 @@ impl GameLevel<'_> {
     ) {
         self.tachyon_water_wheel_place(state, context, answer);
         self.tachyon_clock_place(state, context, answer);
+        self.tachyon_saw_place(state, context, answer);
         mod_api::dispatch_state_for_placement(
             self,
             mod_api::mods(),
