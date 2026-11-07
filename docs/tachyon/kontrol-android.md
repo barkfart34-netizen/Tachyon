@@ -530,6 +530,32 @@ desktop, Android tanpa default features, dan server; kode UI/Android tidak boleh
   unduhan tekstur (10; tombol memakai gambar prosedural), Bedrock sebagai default instalasi baru (11),
   dan bukti emulator khusus Bedrock (12).
 
+### Port Starling (7 November 2026)
+
+Fork horizon-android kini bernama **Starling** (github.com/starling-client/starling, MIT). Atas
+permintaan pengguna, UI kontrolnya diambil dari sana, bukan ditulis ulang:
+
+- `horizon-client-render/src/touch.rs` dan `touch/{custom,editor,layout}.rs` diambil utuh dari
+  Starling (commit `68a2c4dd1`): gaya MCPE dan GoyControl, layout, tombol custom, editor. Modul
+  sentuh Tachyon yang pertama dipindah ke `tachyon_touch` dan tetap dipakai mesin `bedrock`.
+- `horizon-client/src/touch_ui.rs` (menu melayang, hub pengaturan, preset, pointer, editor HUD)
+  ikut, dengan `starling_theme.rs` dan `starling_osk.rs` (salinan `ui_theme`/`osk` Starling;
+  `ui_theme` Horizon tetap terpisah agar font sistemnya tidak hilang), `ui_text.rs`, `skin_head.rs`.
+- Mesin sentuh ketiga, **`starling`, kini bawaan** (`touchEngine:bedrock` dan `:zalith` memilih
+  yang lain; tombol mesin di menu "T" bergiliran ketiganya). Saat bermain, setiap jari kecuali
+  bola menu dan hotbar masuk `TouchControls::update`; seretan memutar kamera
+  (`camera_delta_with_mouse` -> `turn_player`), status pad-nya (`poll_state`) masuk ke game seperti
+  controller (pad tetap dibaca walau controller mati di opsi), titik sentuh membidik, tap
+  menyerang entitas atau memakai, hold memakai item yang dipakai dengan menahan; tombol chat,
+  pengaturan, debug, dan kamera bekerja. Pengaturannya di `touch/starling.json`.
+- Tekstur Bedrock asli diunduh di HP dari Mojang `bedrock-samples` (manifest
+  `packaging/android/bedrock-controls.json`: nama, ukuran, checksum saja) ke
+  `textures/gui/bedrock`, lalu dipakai mulai start berikutnya. Tanpa tekstur, tombol digambar
+  sebagai bentuk polos.
+
+Belum disambung: menu melayang dan hub `touch_ui`, editor HUD Starling, mouse virtual di menu,
+kontrol di inventori. Menu "T" Tachyon masih dipakai untuk pengaturan.
+
 ## Pengujian implementasi di emulator CI
 
 `.github/workflows/tachyon-smoke.yml` berjalan manual melalui `workflow_dispatch`. Ia membangun

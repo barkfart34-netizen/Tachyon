@@ -371,6 +371,66 @@ fn load_starling(home: &Path) -> horizon_client::touch::TouchControls {
     touch
 }
 
+/// Bedrock's own touch textures, which Starling's controls draw (`gui/bedrock/...`
+/// in the HUD atlas, packed from `textures/gui`): fetched on the phone from
+/// Mojang's bedrock-samples at the revision of `packaging/android/bedrock-controls.json`
+/// (names, sizes and checksums only), never shipped in the APK or the
+/// repository. After Starling's `android_resources::controls` (MIT). The atlas
+/// packs them from the next start.
+fn fetch_bedrock_textures(root: PathBuf) {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let run = move || -> Result<usize> {
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../packaging/android/bedrock-controls.json"))?;
+        let revision = manifest["revision"].as_str().ok_or("no revision")?;
+        let target = root.join("assets/minecraft/textures/gui/bedrock");
+        let agent = ureq::AgentBuilder::new()
+            .redirects(0)
+            .timeout_connect(Duration::from_secs(30))
+            .timeout_read(Duration::from_secs(60))
+            .build();
+        let mut fetched = 0;
+        for entry in manifest["files"].as_array().ok_or("no files")? {
+            let name = entry["path"].as_str().ok_or("no path")?;
+            let hash = entry["sha256"].as_str().ok_or("no checksum")?;
+            let size = entry["size"].as_u64().filter(|n| *n <= 1 << 20).ok_or("bad size")?;
+            let relative = Path::new(name);
+            if relative.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+                return Err("bad destination".into());
+            }
+            let file = target.join(relative);
+            let good = |data: &[u8]| data.len() as u64 == size && format!("{:x}", Sha256::digest(data)) == hash;
+            if std::fs::read(&file).is_ok_and(|d| good(&d)) {
+                continue;
+            }
+            let source = if name == "LICENSE.md" {
+                "LICENSE.md".to_owned()
+            } else {
+                format!("resource_pack/textures/{}", entry["source"].as_str().ok_or("no source")?)
+            };
+            let url = format!("https://raw.githubusercontent.com/Mojang/bedrock-samples/{revision}/{source}");
+            let mut bytes = Vec::new();
+            agent.get(&url).call()?.into_reader().take(size + 1).read_to_end(&mut bytes)?;
+            if !good(&bytes) {
+                return Err(format!("{name}: checksum mismatch").into());
+            }
+            std::fs::create_dir_all(file.parent().ok_or("no folder")?)?;
+            std::fs::write(&file, bytes)?;
+            fetched += 1;
+        }
+        Ok(fetched)
+    };
+    std::thread::Builder::new()
+        .name("Bedrock touch textures".into())
+        .spawn(move || match run() {
+            Ok(0) => {}
+            Ok(n) => log::info!("Tachyon: {n} Bedrock touch textures fetched; they show from the next start"),
+            Err(e) => log::warn!("Tachyon: Bedrock touch textures not fetched: {e}"),
+        })
+        .ok();
+}
+
 fn flag(home: &Path, key: &str, default: bool) -> bool {
     preference(home, key).map_or(default, |v| v == "true")
 }
@@ -409,6 +469,7 @@ impl AndroidGame {
         horizon_client::heartbeat::start();
         let started = Instant::now();
         let vanilla_root = options.resources.clone();
+        fetch_bedrock_textures(vanilla_root.clone());
         let home = std::env::current_dir()?;
         let settings = Settings::load(&home.join("options.txt"));
         Behaviours::set_cache_dir(home.join(".horizon-cache"));
