@@ -7,6 +7,11 @@ name: Tachyon Orbital Windows
 
 on:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish the zip as a release"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -68,6 +73,8 @@ jobs:
         continue-on-error: true
         run: |
           # the game folder as shipped (the mod and horizon-mods.txt), put back after the run
+          set +e
+          touch "$RUNNER_TEMP/started"
           cp -r dist/Tachyon-Orbital/game "$RUNNER_TEMP/game-clean"
           cd dist/Tachyon-Orbital/game
           out="$GITHUB_WORKSPACE/orbital-smoke"; mkdir -p "$out"
@@ -75,7 +82,9 @@ jobs:
           res="$PWD/../horizon/.local/horizon-client/26.3"
           $ctl launch --world Smoke --creative --seed 5 --wait --game ../horizon/horizon-client.exe \
             --resources "$res" --name Tester --render-distance 6 --width 1280 --height 720
-          echo "launched"
+          echo "launch: $?"
+          # the game's own output (horizon-ctl keeps it in a .log beside its socket) and its log
+          find "$TEMP" "$RUNNER_TEMP" "$APPDATA" "$LOCALAPPDATA" "$PWD" -name "*.log" -newer "$RUNNER_TEMP/started" 2>/dev/null             | while read -r f; do echo "== $f"; tail -60 "$f"; cp "$f" "$out/" 2>/dev/null; done
           $ctl command "time set noon"; $ctl command "orbital give"; sleep 3
           $ctl command "orbital terrain off"; $ctl command "orbital fold"; sleep 2
           $ctl chat-log 8
@@ -103,6 +112,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Pack and release
+        if: inputs.release
         run: |
           rm -f dist/Tachyon-Orbital/play.bat dist/Tachyon-Orbital/prepare.bat
           cd dist && 7z a -tzip -mx=5 Tachyon-Orbital-windows.zip Tachyon-Orbital > /dev/null && ls -la Tachyon-Orbital-windows.zip
