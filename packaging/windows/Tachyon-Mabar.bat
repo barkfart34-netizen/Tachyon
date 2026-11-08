@@ -132,13 +132,14 @@ netsh advfirewall firewall add rule name="Tachyon (Play with Friends)" dir=in ac
         $key = ([string](Ask 'Auth key:' $env:TACHYON_MABAR_KEY)).Trim()
         if ($key) {
             & $TsExe up --authkey=$key --force-reauth --reset --unattended
+            if ($LASTEXITCODE -ne 0) { Warn "tailscale up keluar dengan kode $LASTEXITCODE" }
         } elseif ($Auto) {
             Warn 'Tanpa auth key: login dilewati (mode otomatis).'
         } else {
             Info 'Browser akan terbuka untuk login Tailscale (Google/Microsoft/GitHub)...'
             & $TsExe up --unattended
+            if ($LASTEXITCODE -ne 0) { Warn "tailscale up keluar dengan kode $LASTEXITCODE" }
         }
-        if ($LASTEXITCODE -ne 0) { Warn "tailscale up keluar dengan kode $LASTEXITCODE" }
         Start-Sleep -Seconds 3
         $ip = (Ts-Ip)
     }
