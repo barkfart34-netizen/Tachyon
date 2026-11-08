@@ -738,8 +738,8 @@ pub(in crate::game) fn processing() -> [Vec<Processing>; 4] {
 
 /// Create's recipe categories for the recipe viewer, as JEI shows them (Create's
 /// `CreateJEI`): milling, crushing, pressing, mixing, compacting, fan washing, fan
-/// haunting, cutting and item application, in that order.
-pub(in crate::game) const CREATE_CATEGORIES: usize = 9;
+/// haunting, cutting, item application, filling and emptying, in that order.
+pub(in crate::game) const CREATE_CATEGORIES: usize = 11;
 
 /// A Create recipe for the viewer: its category (`CREATE_CATEGORIES`' order), each input
 /// slot's items (a tag's several) and count, its work in ticks, its outputs, and a note
@@ -753,6 +753,16 @@ impl Game<'_> {
         let r = self.tachyon_create_recipes();
         let outputs = |list: &[millstone::Output]| -> Vec<(String, u32, f32)> {
             list.iter().map(|o| (o.item.clone(), o.count, o.chance)).collect()
+        };
+        // A fluid shows as its bucket, its amount in the note (JEI draws the fluid itself).
+        let fluid = |item: &str, count: u32, note: &mut Vec<String>| -> Option<(Vec<String>, u32)> {
+            match item.strip_prefix(fluids::FLUID) {
+                Some(f) => {
+                    note.push(format!("{count} mB {}", fluids::fluid_name(f)));
+                    Some((vec![fluids::bucket_of(f)?.to_owned()], 1))
+                }
+                None => Some((vec![item.to_owned()], count)),
+            }
         };
         let mut out = Vec::new();
         let singles: [(usize, &Vec<millstone::Milling>); 6] = [
@@ -775,8 +785,17 @@ impl Game<'_> {
                     basin::HeatRequirement::Heated => "Heated",
                     basin::HeatRequirement::Superheated => "Superheated",
                 };
-                let inputs = m.inputs.iter().map(|i| (vec![i.item.clone()], i.count)).collect();
-                out.push((category, inputs, m.time, outputs(&m.outputs), heat.to_owned()));
+                let mut note: Vec<String> = Vec::new();
+                if !heat.is_empty() {
+                    note.push(heat.to_owned());
+                }
+                let inputs: Option<Vec<(Vec<String>, u32)>> =
+                    m.inputs.iter().map(|i| fluid(&i.item, i.count, &mut note)).collect();
+                let made: Option<Vec<(String, u32, f32)>> = (m.outputs.iter())
+                    .map(|o| fluid(&o.item, o.count, &mut note).map(|(i, n)| (i[0].clone(), n, o.chance)))
+                    .collect();
+                let (Some(inputs), Some(made)) = (inputs, made) else { continue };
+                out.push((category, inputs, m.time, made, note.join(", ")));
             }
         }
         for a in &r.application {
@@ -784,6 +803,20 @@ impl Game<'_> {
             made.extend(outputs(&a.extra));
             let note = if a.keep { "Held item kept" } else { "" };
             out.push((8, vec![(a.on.clone(), 1), (a.held.clone(), 1)], 0.0, made, note.to_owned()));
+        }
+        for f in &r.filling {
+            let Some(bucket) = fluids::bucket_of(&f.fluid) else { continue };
+            let note = format!("{} mB {}", f.amount, fluids::fluid_name(&f.fluid));
+            let inputs = vec![(f.input.clone(), 1), (vec![bucket.to_owned()], 1)];
+            out.push((9, inputs, 0.0, outputs(&f.outputs), note));
+        }
+        for e in &r.emptying {
+            let mut note = Vec::new();
+            let made: Option<Vec<(String, u32, f32)>> = (e.outputs.iter())
+                .map(|o| fluid(&o.item, o.count, &mut note).map(|(i, n)| (i[0].clone(), n, o.chance)))
+                .collect();
+            let Some(made) = made else { continue };
+            out.push((10, vec![(e.input.clone(), 1)], 0.0, made, note.join(", ")));
         }
         out
     }

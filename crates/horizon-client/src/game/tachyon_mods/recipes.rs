@@ -27,7 +27,7 @@ pub const MAX_STACKS: usize = 64;
 /// A right click's gift in creative mode (cut to one stack by the game).
 pub const STACK: u32 = 99;
 /// The stations, in the order of their tabs, with each one's icon.
-pub const STATIONS: [&str; 21] = [
+pub const STATIONS: [&str; 23] = [
     "minecraft:crafting_table",
     "minecraft:furnace",
     "minecraft:blast_furnace",
@@ -51,6 +51,8 @@ pub const STATIONS: [&str; 21] = [
     "minecraft:soul_campfire",
     "create:mechanical_saw",
     "create:andesite_casing",
+    "create:spout",
+    "create:item_drain",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,7 +82,7 @@ pub enum Kind {
 }
 
 /// Create's categories' names, as JEI titles them.
-const CREATE_NAMES: [&str; 9] = [
+const CREATE_NAMES: [&str; 11] = [
     "Milling",
     "Crushing",
     "Pressing",
@@ -90,6 +92,8 @@ const CREATE_NAMES: [&str; 9] = [
     "Bulk Haunting",
     "Sawing",
     "Item Application",
+    "Filling",
+    "Emptying",
 ];
 
 fn station(kind: Kind) -> usize {
@@ -106,7 +110,7 @@ fn station(kind: Kind) -> usize {
         Kind::Pressing => 9,
         Kind::Mixing => 10,
         Kind::Washing => 11,
-        Kind::Create(c) => 12 + usize::from(c).min(8),
+        Kind::Create(c) => 12 + usize::from(c).min(CREATE_NAMES.len() - 1),
     }
 }
 
@@ -399,11 +403,13 @@ impl Viewer {
             let mut note = match r.kind {
                 Kind::Washing => format!("{seconds} s in a fan's air through water"),
                 Kind::Create(c) => {
-                    let name = CREATE_NAMES[usize::from(c).min(8)];
+                    let name = CREATE_NAMES[usize::from(c).min(CREATE_NAMES.len() - 1)];
                     match c {
                         5 => format!("{name}: a fan's air through water"),
                         6 => format!("{name}: a fan's air through soul fire"),
                         8 => format!("{name}: used on it, by hand or a deployer"),
+                        9 => format!("{name}: by a spout over a depot"),
+                        10 => format!("{name}: on an item drain"),
                         _ if r.cooking_time == 0 => name.to_owned(),
                         _ => format!("{name}, {} ticks of work", r.cooking_time),
                     }
