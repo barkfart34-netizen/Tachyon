@@ -597,7 +597,7 @@ mod tests {
             &game,
         );
         assert_eq!(r.milling.len(), 2);
-        // Another mod's, a fluid, an unknown heat requirement: left out.
+        // Another mod's, a fluid Tachyon doesn't know, an unknown heat requirement: left out.
         r.add(
             &json!({"neoforge:conditions": [{"type": "neoforge:mod_loaded", "modid": "ae2"}],
                 "type": "create:milling", "ingredients": [{"item": "minecraft:stone"}],
@@ -606,7 +606,7 @@ mod tests {
         );
         r.add(
             &json!({"type": "create:mixing", "ingredients": [{"item": "minecraft:dirt"},
-                {"type": "neoforge:single", "amount": 250, "fluid": "minecraft:water"}],
+                {"type": "neoforge:single", "amount": 250, "fluid": "x:goo"}],
                 "results": [{"id": "minecraft:mud"}]}),
             &game,
         );
@@ -703,14 +703,14 @@ mod tests {
         for heat in ["none", "heated", "superheated"] {
             r.add(
                 &json!({"type": "create:mixing", "heat_requirement": heat,
-                    "ingredients": [{"item": "minecraft:dirt"}, {"fluid": "minecraft:water", "amount": 250}],
+                    "ingredients": [{"item": "minecraft:dirt"}, {"fluid": "x:goo", "amount": 250}],
                     "results": [{"id": "minecraft:mud"}]}),
                 &game,
             );
             r.add(
                 &json!({"type": "create:compacting", "heat_requirement": heat,
                     "ingredients": [{"item": "minecraft:snow_block"}],
-                    "results": [{"id": "minecraft:water", "amount": 250}]}),
+                    "results": [{"id": "x:goo", "amount": 250}]}),
                 &game,
             );
         }
@@ -728,6 +728,47 @@ mod tests {
         );
         assert!(r.mixing.is_empty());
         assert!(r.compacting.is_empty());
+        assert!(r.milling.is_empty());
+    }
+
+    #[test]
+    fn fluids_go_in_basin_spout_and_drain_recipes_counted_in_mb() {
+        let tagged = |_: &str| Vec::new();
+        let known = |item: &str| !item.starts_with("x:");
+        let game = Lookup {
+            tagged: &tagged,
+            known: &known,
+        };
+        let mut r = Recipes::default();
+        r.add(
+            &json!({"type": "create:mixing", "heat_requirement": "heated", "ingredients": [
+                {"item": "minecraft:sugar"}, {"type": "neoforge:tag", "amount": 250, "tag": "c:milk"}],
+                "results": [{"amount": 250, "id": "create:chocolate"}]}),
+            &game,
+        );
+        let m = &r.mixing[0];
+        assert_eq!(m.inputs[1].item, "fluid:minecraft:milk");
+        assert_eq!(m.inputs[1].count, 250);
+        assert_eq!((m.outputs[0].item.as_str(), m.outputs[0].count), ("fluid:create:chocolate", 250));
+        r.add(
+            &json!({"type": "create:filling", "ingredients": [{"item": "minecraft:glass_bottle"},
+                {"type": "neoforge:tag", "amount": 250, "tag": "c:honey"}],
+                "results": [{"id": "minecraft:honey_bottle"}]}),
+            &game,
+        );
+        assert_eq!((r.filling[0].fluid.as_str(), r.filling[0].amount), ("create:honey", 250));
+        r.add(
+            &json!({"type": "create:emptying", "ingredients": [{"item": "minecraft:honey_bottle"}],
+                "results": [{"id": "minecraft:glass_bottle"}, {"amount": 250, "id": "create:honey"}]}),
+            &game,
+        );
+        assert_eq!(r.emptying[0].outputs[1].item, "fluid:create:honey");
+        // A fluid in a milling isn't Tachyon's to work.
+        r.add(
+            &json!({"type": "create:milling", "ingredients": [{"item": "minecraft:stone"}],
+                "results": [{"amount": 100, "id": "minecraft:water"}]}),
+            &game,
+        );
         assert!(r.milling.is_empty());
     }
 

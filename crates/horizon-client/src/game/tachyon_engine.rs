@@ -2775,7 +2775,7 @@ mod tests {
             targets: HashMap::from([([4, 64, 2], -64), ([5, 64, 2], 0), ([6, 64, 2], 256)]),
         };
         let data = encode(&shown);
-        assert_eq!(data[0], 9);
+        assert_eq!(data[0], VERSION);
         assert_eq!(decode(&data), Some(shown.clone()));
         assert_eq!(decode(&encode(&Shown::default())), Some(Shown::default()));
         assert!(decode(&[1]).is_none());
