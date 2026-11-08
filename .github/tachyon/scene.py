@@ -590,8 +590,11 @@ def orbital(control, out):
     control.send("key escape tap")
     time.sleep(2)
     control.send("resume")
+    # The scene's inventory is full: the Designator goes into the hand, and it's day for the pictures.
+    control.send("chat /item replace entity @s weapon.mainhand with orbital:laser_designator")
+    control.send("chat /time set noon")
     control.send("look 0 35")
-    time.sleep(1)
+    time.sleep(2)
     control.send("mouse right down")
     time.sleep(1.5)
     control.send("mouse right up")
@@ -602,10 +605,13 @@ def orbital(control, out):
             shots += 1
     after = " ".join(str(line) for line in control.send("chat-log 8").get("chat", []))
     print("orbital chat after:", after)
-    control.send("chat /orbital stop")
+    stop = " ".join(str(line) for line in control.send("chat /orbital stop").get("chat", []))
     time.sleep(2)
+    stop += " ".join(str(line) for line in control.send("chat-log 2").get("chat", []))
+    print("orbital stop:", stop)
     broken = "isn't installed" in chat or "Unknown" in chat or "unknown" in chat
-    return shots == 3 and not broken
+    fired = "No strike under way" not in stop
+    return shots == 3 and not broken and fired
 
 
 def main():
