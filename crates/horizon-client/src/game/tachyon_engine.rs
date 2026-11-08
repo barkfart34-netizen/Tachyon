@@ -3025,6 +3025,26 @@ impl Game<'_> {
                 heat
             };
         }
+        // Redstone: a lever's strength, a link's mode and frequency, a diode's interval.
+        let property = |k: &str| self.native_block_property(hit.pos, k).unwrap_or_default();
+        match part {
+            Part::AnalogLever => state = property("power"),
+            Part::Link(_) => {
+                let mode = if property("receiver") == "true" { "receiver" } else { "transmitter" };
+                let frequency = OWNERS.with_borrow(|owners| {
+                    owners.get(self.dim.id()).and_then(|o| o.links.get(&hit.pos)).cloned().unwrap_or_default()
+                });
+                let name = |i: &str| if i.is_empty() { "-".to_owned() } else { self.tachyon_item_name(i) };
+                state = format!("{mode} {} | {} + {}", property("power"), name(&frequency.0), name(&frequency.1));
+            }
+            Part::Diode(_, kind) => {
+                let max = OWNERS.with_borrow(|owners| {
+                    owners.get(self.dim.id()).and_then(|o| o.diodes.get(&hit.pos)).map(|d| d.max)
+                });
+                state = format!("{} ticks", max.unwrap_or_else(|| kind.default_interval()));
+            }
+            _ => {}
+        }
         let line = format!("{what}: {state}");
         let w = self.native_text_width(&line) + 4.0;
         let (x, y) = corners.place(Corner::TopLeft, w, 12.0);
