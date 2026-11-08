@@ -1,0 +1,23 @@
+Tachyon Orbital (Windows)
+=========================
+
+Build Horizon dari fork Orbital Laser (github.com/Stink-O/horizon, MIT) dengan mod Orbital Laser 0.5.11
+(github.com/Stink-O/orbital-laser, MIT) termasuk The Fold. Resource Minecraft 26.3 sudah disiapkan, jadi
+tidak perlu Java atau prepare.bat. Tidak ada Create dan mod Tachyon lain di versi ini.
+
+Main
+  Klik dua kali Tachyon-Orbital.bat. Pertama kali ia menanyakan nama pemain (offline, tanpa akun).
+  Save world ada di folder game\ di sebelah file ini.
+
+Orbital Laser
+  /orbital give            Designator
+  R (Designator di tangan) laser wheel; The Fold ada di halaman 4
+  Tahan klik kanan         menembak
+  /orbital terrain off     efek saja, tanah tidak rusak (strike dengan terrain ON merusak world selamanya)
+
+Mabar (Tailscale)
+  Host: buka world -> Esc -> ikon Friends -> Start Sharing -> Copy Code -> kirim ke teman.
+  Teman: Multiplayer -> Join a Friend -> tempel kode -> Join.
+  Keduanya harus memakai zip versi yang sama.
+
+Log game: %APPDATA%\horizon\logs\latest.log

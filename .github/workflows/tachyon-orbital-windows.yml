@@ -1,0 +1,112 @@
+# Tachyon Orbital for Windows: the Orbital Laser fork's own Windows build (Stink-O/orbital-laser v0.5.11's
+# orbital-laser-windows-test.zip: Stink-O/horizon with render.set-warp, and Orbital Laser 0.5.11 with The Fold),
+# its resources prepared here from Minecraft 26.3 as a player's prepare.bat would, Tachyon-Orbital.bat (offline,
+# a player name) beside it, played once on this runner (a Fold strike with terrain off), then released as one zip.
+# No Create and no Tachyon mods: that is Tachyon itself.
+name: Tachyon Orbital Windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  orbital:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ZIP_SHA256: 47984ab6722ee6bae8a3f17785730ffb29c60bd348bb015a1a5aa736dd38284c
+      HORIZON_NO_HEARTBEAT: "1"
+      HORIZON_NO_DISCORD: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: The fork's Windows build (pinned)
+        run: |
+          gh release download v0.5.11 --repo Stink-O/orbital-laser -p orbital-laser-windows-test.zip -D "$RUNNER_TEMP"
+          echo "$ZIP_SHA256  $RUNNER_TEMP/orbital-laser-windows-test.zip" | sha256sum -c
+          mkdir -p dist
+          unzip -q "$RUNNER_TEMP/orbital-laser-windows-test.zip" -d dist
+          mv dist/orbital-laser-windows-test dist/Tachyon-Orbital
+          # Mojang republished 26.3's version file since the fork's build: Tachyon's pins know every copy (the
+          # fork's README says to copy upstream's research-lock.json over its own for this).
+          cp research-lock.json dist/Tachyon-Orbital/horizon/research-lock.json
+          cp packaging/windows/orbital/Tachyon-Orbital.bat packaging/windows/orbital/BACA-DULU.txt dist/Tachyon-Orbital/
+          ls dist/Tachyon-Orbital dist/Tachyon-Orbital/horizon
+
+      - name: Prepare the resources from Minecraft 26.3
+        run: |
+          mc="$RUNNER_TEMP/minecraft"
+          python -I .github/tachyon/fetch-minecraft.py "$mc"
+          export JAVA_HOME="$JAVA_HOME_25_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          cd dist/Tachyon-Orbital/horizon
+          ./horizon-prepare.exe --prepare --server-jar "$mc/server.jar" --minecraft-dir "$mc"
+          ./horizon-prepare.exe sounds --minecraft-dir "$mc"
+          res=$(dirname "$(find . -path '*horizon-client/26.3/horizon-resources.json' | head -1)")
+          echo "prepared in $res"
+          if [ "$res" != "./.local/horizon-client/26.3" ]; then
+            mkdir -p .local/horizon-client && mv "$res" .local/horizon-client/26.3
+          fi
+          # Only the prepared resources stay: Mojang's own files and the imports don't ship.
+          find .local -mindepth 1 -maxdepth 1 ! -name horizon-client -exec rm -rf {} +
+          find .local/horizon-client -mindepth 1 -maxdepth 1 ! -name 26.3 -exec rm -rf {} +
+          du -sh .local/horizon-client/26.3
+          rm -rf "$mc"
+
+      - name: Played once, a Fold strike with terrain off
+        continue-on-error: true
+        run: |
+          # the game folder as shipped (the mod and horizon-mods.txt), put back after the run
+          cp -r dist/Tachyon-Orbital/game "$RUNNER_TEMP/game-clean"
+          cd dist/Tachyon-Orbital/game
+          out="$GITHUB_WORKSPACE/orbital-smoke"; mkdir -p "$out"
+          ctl="../horizon/horizon-ctl.exe --timeout 900"
+          res="$PWD/../horizon/.local/horizon-client/26.3"
+          $ctl launch --world Smoke --creative --seed 5 --wait --game ../horizon/horizon-client.exe \
+            --resources "$res" --name Tester --render-distance 6 --width 1280 --height 720
+          echo "launched"
+          $ctl command "time set noon"; $ctl command "orbital give"; sleep 3
+          $ctl command "orbital terrain off"; $ctl command "orbital fold"; sleep 2
+          $ctl chat-log 8
+          $ctl select orbital:laser_designator || $ctl command "item replace entity @s weapon.mainhand with orbital:laser_designator"
+          $ctl look 0 30; sleep 2
+          $ctl screenshot "$out/0-before.png"
+          $ctl mouse right down; sleep 1.5; $ctl mouse right up
+          for i in 1 2 3 4 5 6; do sleep 10; $ctl screenshot "$out/$i-fold.png" || true; done
+          $ctl chat-log 8
+          $ctl command "orbital stop" || true
+          $ctl logs > "$out/game-log.txt" 2>&1 || true
+          $ctl quit || true
+          sleep 10
+          cp "$APPDATA/horizon/logs/latest.log" "$out/latest.log" 2>/dev/null || true
+          grep -a -i -E "orbital|fold|warp|error|panic" "$out/game-log.txt" "$out/latest.log" 2>/dev/null | tail -40 || true
+          # what the run left in the game folder (the world, options) is not shipped
+          cd .. && rm -rf game && cp -r "$RUNNER_TEMP/game-clean" game
+
+      - name: Smoke pictures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-smoke
+          path: orbital-smoke
+          if-no-files-found: ignore
+
+      - name: Pack and release
+        run: |
+          rm -f dist/Tachyon-Orbital/play.bat dist/Tachyon-Orbital/prepare.bat
+          cd dist && 7z a -tzip -mx=5 Tachyon-Orbital-windows.zip Tachyon-Orbital > /dev/null && ls -la Tachyon-Orbital-windows.zip
+          tag="tachyon-orbital-windows-${{ github.run_number }}"
+          gh release create "$tag" Tachyon-Orbital-windows.zip --repo "${{ github.repository }}" \
+            --title "Tachyon Orbital for Windows #${{ github.run_number }}" \
+            --notes "Horizon's Orbital Laser fork (Stink-O/horizon, MIT) with Orbital Laser 0.5.11 and The Fold (Stink-O/orbital-laser, MIT), resources prepared from Minecraft 26.3. Offline: Tachyon-Orbital.bat asks for a player name. No Create. Read BACA-DULU.txt."
