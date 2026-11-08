@@ -81,6 +81,9 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("analog_lever", "minecraft:polished_andesite", 0.5, "minecraft:oak_planks"),
     ("powered_latch", "minecraft:polished_andesite", 0.0, "minecraft:oak_planks"),
     ("powered_toggle_latch", "minecraft:polished_andesite", 0.0, "minecraft:oak_planks"),
+    ("pulse_repeater", "minecraft:polished_andesite", 0.0, "minecraft:oak_planks"),
+    ("pulse_extender", "minecraft:polished_andesite", 0.0, "minecraft:oak_planks"),
+    ("pulse_timer", "minecraft:polished_andesite", 0.0, "minecraft:oak_planks"),
     // SteamEngineBlock's face and facing, a grindstone's; the shaft it powers (PoweredShaftBlock,
     // no item of its own), drawn turning as a shaft.
     ("steam_engine", "minecraft:grindstone", 3.0, "minecraft:copper_block"),
@@ -141,6 +144,9 @@ const NOT_OCCLUDING: &[&str] = &[
     "analog_lever",
     "powered_latch",
     "powered_toggle_latch",
+    "pulse_repeater",
+    "pulse_extender",
+    "pulse_timer",
     "steam_engine",
     "belt",
     "mechanical_arm",
@@ -385,7 +391,7 @@ const TURNING: &[&str] = &[
 ];
 
 /// The version of [`fix`]: a port fixed by an older one is fixed again.
-const VERSION: &str = "11";
+const VERSION: &str = "12";
 const STAMP: &str = ".tachyon-fix";
 
 /// Fixes a Create ported into `dir` (`horizon-mods/create`) by an older
@@ -435,6 +441,9 @@ const RECIPES: &[&str] = &[
     "crafting/kinetics/mechanical_arm",
     "crafting/logistics/powered_latch",
     "crafting/logistics/powered_toggle_latch",
+    "crafting/logistics/pulse_repeater",
+    "crafting/logistics/pulse_extender",
+    "crafting/logistics/pulse_timer",
     "crafting/kinetics/analog_lever",
 ];
 
@@ -638,7 +647,7 @@ pub fn fix(dir: &Path) -> Result<(), String> {
             declaration["default_state"] = json!({"face": "wall", "facing": "north", "power": "0"});
             declaration["shapes"] = lever_shape();
         }
-        if matches!(*block, "powered_latch" | "powered_toggle_latch") {
+        if matches!(*block, "powered_latch" | "powered_toggle_latch" | "pulse_repeater" | "pulse_extender" | "pulse_timer") {
             let flag = json!({"type": "boolean"});
             let mut properties = json!({
                 "facing": {"type": "enum", "values": ["north", "south", "west", "east"]},
@@ -649,6 +658,10 @@ pub fn fix(dir: &Path) -> Result<(), String> {
             if *block == "powered_latch" {
                 properties["powered_side"] = flag.clone();
                 default["powered_side"] = json!("false");
+            }
+            if block.starts_with("pulse_") {
+                properties["inverted"] = flag.clone();
+                default["inverted"] = json!("false");
             }
             declaration["state_properties"] = properties;
             declaration["default_state"] = default;

@@ -7,6 +7,13 @@
 //! - The powered latch, a diode, gives 15 out of its front once its back is powered, and stops
 //!   once a side is (the last of them to change wins, as `PoweredLatchBlock.tick`).
 //! - The toggle latch gives 15 or nothing, swapped each time its back is powered and by a use.
+//! - The brass diodes (BrassDiodeBlock, Pulse*BlockEntity) count ticks to their interval (2, the
+//!   timer's 20): the pulse repeater gives a short pulse once its back is powered (counting to the
+//!   interval and one more),
+//!   the pulse extender keeps giving for the interval after its back goes off, the pulse timer
+//!   gives a pulse each interval while its back is off. A use inverts what one gives; a sneaking
+//!   use steps its interval through 2, 5, 10, 20, 40, 100, 200, 600 and 1200 ticks (Create's
+//!   scroll box, not here).
 //!
 //! Both latches read their back as vanilla's diodes do (`DiodeBlock.getInputSignal`): the signal
 //! from the block behind them, toward them. Their strength is kept in their states (`power`,
@@ -22,6 +29,91 @@ use horizon_world::registry::BlockStateId;
 pub(super) const ANALOG_LEVER: &str = "create:analog_lever";
 pub(super) const LATCH: &str = "create:powered_latch";
 pub(super) const TOGGLE_LATCH: &str = "create:powered_toggle_latch";
+pub(super) const PULSE_REPEATER: &str = "create:pulse_repeater";
+pub(super) const PULSE_EXTENDER: &str = "create:pulse_extender";
+pub(super) const PULSE_TIMER: &str = "create:pulse_timer";
+/// The intervals a sneaking use steps through.
+pub(super) const INTERVALS: [u32; 9] = [2, 5, 10, 20, 40, 100, 200, 600, 1200];
+
+/// A brass diode's kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Pulse {
+    Repeater,
+    Extender,
+    Timer,
+}
+
+/// A brass diode's interval (`maxState`) and count (`state`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct Diode {
+    pub max: u32,
+    pub state: u32,
+}
+
+impl Pulse {
+    /// `BrassDiodeBlockEntity.defaultValue`.
+    pub fn default_interval(self) -> u32 {
+        if self == Pulse::Timer { 20 } else { 2 }
+    }
+
+    /// `updateState` of each: a tick of the count, and whether it powers after it.
+    pub fn tick(self, d: &mut Diode, powered: bool, powering: bool) -> bool {
+        let max = d.max.max(2);
+        let at_min = d.state == 0;
+        match self {
+            Pulse::Repeater => {
+                if at_min && !powered {
+                    return powering;
+                }
+                if d.state > max + 1 {
+                    if !powered && !powering {
+                        d.state = 0;
+                    }
+                    return powering;
+                }
+                d.state += 1;
+                let mut out = powering;
+                if d.state == max - 1 && !powering {
+                    out = true;
+                }
+                if d.state == max + 1 && powering {
+                    out = false;
+                }
+                out
+            }
+            Pulse::Extender => {
+                if at_min && !powered {
+                    return powering;
+                }
+                if at_min || powered {
+                    d.state = max;
+                    return true;
+                }
+                if d.state == 1 {
+                    if !powered {
+                        d.state = 0;
+                    }
+                    return false;
+                }
+                d.state -= 1;
+                powering
+            }
+            Pulse::Timer => {
+                if powered || d.state >= max - 1 {
+                    d.state = 0;
+                } else {
+                    d.state += 1;
+                }
+                !powered && if max == 2 { d.state == 0 } else { d.state <= 1 }
+            }
+        }
+    }
+}
+
+/// The interval after `max` a sneaking use steps to.
+pub(super) fn next_interval(max: u32) -> u32 {
+    INTERVALS.into_iter().find(|i| *i > max).unwrap_or(INTERVALS[0])
+}
 
 /// `FaceAttachedHorizontalDirectionalBlock.getConnectedDirection`: the way from the block a
 /// lever is on to the lever.
@@ -69,8 +161,9 @@ pub(super) fn signal(name: &str, property: impl Fn(&str) -> Option<String>, dire
             let toward = connected(&property("face").unwrap_or_default(), facing?);
             Some(if !direct || direction == toward { power } else { 0 })
         }
-        LATCH | TOGGLE_LATCH => {
-            let on = property("powering").as_deref() == Some("true");
+        LATCH | TOGGLE_LATCH | PULSE_REPEATER | PULSE_EXTENDER | PULSE_TIMER => {
+            // BrassDiodeBlock.getOutputSignal: powering, unless inverted.
+            let on = (property("powering").as_deref() == Some("true")) ^ (property("inverted").as_deref() == Some("true"));
             Some(if on && Some(direction) == facing { 15 } else { 0 })
         }
         _ => None,
@@ -102,7 +195,10 @@ fn of(d: Direction) -> Dir {
 impl super::super::GameLevel<'_> {
     /// `isSignalSource` for these blocks.
     pub(in crate::game) fn tachyon_signal_source(&self, state: BlockStateId, source: &mut bool) {
-        if matches!(self.native_state_block(state), Some(ANALOG_LEVER | LATCH | TOGGLE_LATCH)) {
+        if matches!(
+            self.native_state_block(state),
+            Some(ANALOG_LEVER | LATCH | TOGGLE_LATCH | PULSE_REPEATER | PULSE_EXTENDER | PULSE_TIMER)
+        ) {
             *source = true;
         }
     }
@@ -138,7 +234,9 @@ impl super::super::GameLevel<'_> {
                     .and_then(|s| self.native_state_with_property(s, "facing", facing.name()))
                     .and_then(|s| self.native_state_with_property(s, "power", "0"))
             }
-            Some(LATCH | TOGGLE_LATCH) => self.native_state_with_property(state, "facing", horizontal.opposite().name()),
+            Some(LATCH | TOGGLE_LATCH | PULSE_REPEATER | PULSE_EXTENDER | PULSE_TIMER) => {
+                self.native_state_with_property(state, "facing", horizontal.opposite().name())
+            }
             _ => return,
         };
         if let Some(placed) = placed {
@@ -188,6 +286,29 @@ impl super::super::Game<'_> {
                 self.tachyon_redstone_set(pos, &[("powering", (!on).to_string())]);
                 true
             }
+            PULSE_REPEATER | PULSE_EXTENDER | PULSE_TIMER if !sneaking => {
+                let on = self.native_block_property(pos, "inverted").as_deref() == Some("true");
+                self.tachyon_redstone_set(pos, &[("inverted", (!on).to_string())]);
+                true
+            }
+            name @ (PULSE_REPEATER | PULSE_EXTENDER | PULSE_TIMER) => {
+                let kind = match name {
+                    PULSE_REPEATER => Pulse::Repeater,
+                    PULSE_EXTENDER => Pulse::Extender,
+                    _ => Pulse::Timer,
+                };
+                let dimension = self.native_dimension();
+                let max = super::OWNERS.with_borrow_mut(|owners| {
+                    let o = owners.entry(dimension).or_default();
+                    let d = o.diodes.entry(pos).or_insert(Diode { max: kind.default_interval(), state: 0 });
+                    d.max = next_interval(d.max);
+                    d.state = d.state.min(d.max);
+                    o.mills_changed = true;
+                    d.max
+                });
+                self.native_chat(&format!("Interval: {max} ticks"));
+                true
+            }
             _ => false,
         }
     }
@@ -209,6 +330,36 @@ impl super::super::Game<'_> {
                 })
                 .collect()
         });
+        let diodes: Vec<([i32; 3], Dir, Pulse)> = super::OWNERS.with_borrow_mut(|owners| {
+            let Some(o) = owners.get_mut(dimension) else { return Vec::new() };
+            let parts = &o.index.parts;
+            o.diodes.retain(|p, _| matches!(parts.get(p), Some(Part::Diode(_, _))));
+            (parts.iter())
+                .filter_map(|(p, part)| match *part {
+                    Part::Diode(facing, kind) => Some((*p, facing, kind)),
+                    _ => None,
+                })
+                .collect()
+        });
+        for (p, facing, kind) in diodes {
+            let at = BlockPos::new(p[0], p[1], p[2]);
+            let o = facing.offset();
+            let powered = self.with_level(|b, level, ticks| b.signal(level, ticks, at.offset(o[0], o[1], o[2]), core(facing)) > 0);
+            let powering = self.native_block_property(p, "powering").as_deref() == Some("true");
+            let was = self.native_block_property(p, "powered").as_deref() == Some("true");
+            let next = super::OWNERS.with_borrow_mut(|owners| {
+                let o = owners.get_mut(dimension)?;
+                let d = o.diodes.entry(p).or_insert(Diode { max: kind.default_interval(), state: 0 });
+                let before = *d;
+                let next = kind.tick(d, powered, powering);
+                o.mills_changed |= *d != before && d.state == 0;
+                Some(next)
+            });
+            let Some(next) = next else { continue };
+            if next != powering || powered != was {
+                self.tachyon_redstone_set(p, &[("powered", powered.to_string()), ("powering", next.to_string())]);
+            }
+        }
         for (p, facing, toggle) in latches {
             let at = BlockPos::new(p[0], p[1], p[2]);
             let input = |d: Dir| {
@@ -263,6 +414,42 @@ mod tests {
         assert_eq!(signal(ANALOG_LEVER, lever, Dir::East, true), Some(0));
         assert_eq!(connected("wall", Dir::West), Dir::West);
         assert_eq!(signal("minecraft:stone", lever, Dir::Up, false), None);
+    }
+
+    #[test]
+    fn brass_diodes_pulse_extend_and_time_as_creates() {
+        // A repeater at 2: powered, it gives a pulse two ticks long, then nothing while powered.
+        let mut d = Diode { max: 2, state: 0 };
+        let mut on = false;
+        let mut seen = Vec::new();
+        for _ in 0..6 {
+            on = Pulse::Repeater.tick(&mut d, true, on);
+            seen.push(on);
+        }
+        assert_eq!(seen, [true, true, false, false, false, false]);
+        // An extender at 5: on while powered, then five ticks more.
+        let mut d = Diode { max: 5, state: 0 };
+        let mut on = Pulse::Extender.tick(&mut d, true, false);
+        assert!(on);
+        let mut count = 0;
+        while on {
+            on = Pulse::Extender.tick(&mut d, false, on);
+            count += 1;
+        }
+        assert_eq!(count, 5);
+        // A timer at 20: a pulse two ticks long every 20, none while powered.
+        let mut d = Diode { max: 20, state: 0 };
+        let pulses = (0..40).filter(|_| Pulse::Timer.tick(&mut d, false, false)).count();
+        assert_eq!(pulses, 4);
+        assert!(!Pulse::Timer.tick(&mut d, true, true));
+        assert_eq!(next_interval(2), 5);
+        assert_eq!(next_interval(1200), 2);
+        let inverted = |k: &str| match k {
+            "facing" => Some("east".to_owned()),
+            "inverted" => Some("true".to_owned()),
+            _ => None,
+        };
+        assert_eq!(signal(PULSE_TIMER, inverted, Dir::East, false), Some(15));
     }
 
     #[test]

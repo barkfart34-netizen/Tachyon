@@ -235,6 +235,8 @@ pub enum Part {
     AnalogLever,
     Latch(Dir),
     ToggleLatch(Dir),
+    /// Create's brass diodes, facing (`redstone.rs`).
+    Diode(Dir, super::redstone::Pulse),
     /// Create's steam engine, pointing away from its boiler's tank (`steam.rs`).
     SteamEngine(Dir),
     /// Create's powered shaft: a shaft a steam engine turns, a source.
@@ -349,6 +351,7 @@ impl Part {
             | Part::AnalogLever
             | Part::Latch(_)
             | Part::ToggleLatch(_)
+            | Part::Diode(_, _)
             | Part::SteamEngine(_) => false,
         }
     }
