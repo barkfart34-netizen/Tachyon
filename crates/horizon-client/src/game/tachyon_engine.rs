@@ -36,6 +36,7 @@ mod obj_model;
 mod press;
 mod deployer;
 mod drill;
+mod fluids;
 mod saw;
 mod speed_controller;
 mod water_wheel;
@@ -197,6 +198,17 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
         },
         // DrillBlock: its head's facing.
         "mechanical_drill" => Part::Drill(facing()?),
+        // FluidPipeBlock's six sides.
+        "fluid_pipe" => Part::Pipe(
+            Dir::ALL
+                .into_iter()
+                .filter(|d| property(d.name()) == Some("true"))
+                .fold(0, |m, d| m | fluids::bit(d)),
+        ),
+        "mechanical_pump" => Part::Pump(facing()?),
+        "fluid_tank" => Part::Tank,
+        "spout" => Part::Spout,
+        "item_drain" => Part::Drain,
         // DeployerBlock: its hand's facing; `axis_along_first` its shaft's way.
         "deployer" => Part::Deployer {
             facing: facing()?,
@@ -400,6 +412,12 @@ struct Owner {
     mills_changed: bool,
     /// What each deployer holds and how far its stroke is (`deployer.rs`).
     deployers: HashMap<[i32; 3], deployer::Deployer>,
+    /// The fluid each tank, spout and item drain holds (`fluids.rs`).
+    tanks: HashMap<[i32; 3], fluids::Tank>,
+    /// What open pipe ends hold on the way in or out of the world.
+    open_ends: HashMap<[i32; 3], fluids::Tank>,
+    /// The ticks each spout and item drain has worked on its item.
+    spouting: HashMap<[i32; 3], u32>,
     /// What each fan turning does, for the goggles ("washing", "pull:air").
     fan_work: HashMap<[i32; 3], String>,
     /// The dropped items and the depots where a fan's air works them: how,
@@ -502,6 +520,8 @@ impl Owner {
         let deployers: Vec<([i32; 3], deployer::Deployer)> =
             serde_json::from_value(value["deployers"].clone()).unwrap_or_default();
         self.deployers = deployers.into_iter().collect();
+        let tanks: Vec<([i32; 3], fluids::Tank)> = serde_json::from_value(value["tanks"].clone()).unwrap_or_default();
+        self.tanks = tanks.into_iter().collect();
         self.dirty = true;
     }
     fn save(&self, root: &std::path::Path, dimension: &str) {
@@ -541,7 +561,10 @@ impl Owner {
             self.deployers.iter().filter(|(_, d)| d.held.is_some()).collect();
         deployers.sort_by_key(|(p, _)| **p);
         let file = Self::file(root, dimension);
+        let mut tanks: Vec<(&[i32; 3], &fluids::Tank)> = self.tanks.iter().filter(|(_, t)| t.amount > 0).collect();
+        tanks.sort_by_key(|(p, _)| **p);
         let text = serde_json::json!({
+            "tanks": tanks,
             "deployers": deployers,
             "motors": rows,
             "controllers": controllers,
@@ -1071,6 +1094,9 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         }
         // DrillRenderer's head, by partialFacing: modelled facing south.
         Part::Drill(facing) => vec![("create:block/mechanical_drill/head", facing, 1.0, 0, Dir::South)],
+        // PumpRenderer's cog, by partialFacing: modelled facing south.
+        Part::Pump(facing) => vec![("create:block/mechanical_pump/cog", facing, 1.0, 0, Dir::South)],
+        Part::Pipe(_) | Part::Tank | Part::Spout | Part::Drain => Vec::new(),
         // DeployerRenderer's shaft through it; the pole and hand are drawn with its stroke.
         Part::Deployer { facing, along_first } => {
             vec![(SHAFT, positive(deployer::shaft_axis(facing, along_first)), 1.0, 0, Dir::Up)]
@@ -1167,6 +1193,11 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::Saw { .. }
         | Part::Drill(_)
         | Part::Deployer { .. }
+        | Part::Pipe(_)
+        | Part::Pump(_)
+        | Part::Tank
+        | Part::Spout
+        | Part::Drain
         | Part::SpeedController(_) => Vec::new(),
     }
 }
@@ -1185,6 +1216,9 @@ fn takes_use(part: Part) -> bool {
             | Part::Millstone
             | Part::Depot
             | Part::Deployer { .. }
+            | Part::Tank
+            | Part::Spout
+            | Part::Drain
             | Part::Basin
             | Part::Burner
             | Part::LitBurner
@@ -1405,6 +1439,7 @@ impl Game<'_> {
         self.tachyon_clocks();
         self.tachyon_saws();
         self.tachyon_deployers();
+        self.tachyon_fluids();
         // BasinBlockEntity.getHeatLevel: the block directly below each
         // basin, read before borrowing the world's random for the outputs.
         let basin_heat: HashMap<[i32; 3], burner::Heat> = OWNERS.with_borrow(|owners| {
@@ -1508,7 +1543,7 @@ impl Game<'_> {
             let mut chutes = HashMap::new();
             for (p, mill) in &mut owner.mills {
                 let part = owner.index.parts.get(p).copied();
-                if part == Some(Part::Depot)
+                if matches!(part, Some(Part::Depot | Part::Drain))
                     && let Some(h) = mill.outputs.first().or(mill.input.as_ref())
                 {
                     held.insert(*p, vec![(h.item.clone(), h.count)]);
@@ -1599,6 +1634,11 @@ impl Game<'_> {
                 if let Some(into) = made {
                     owner.mills_changed = true;
                     work.insert(at, into);
+                }
+            }
+            for (p, t) in &owner.tanks {
+                if t.amount > 0 {
+                    held.insert(*p, vec![(fluids::stack_name(&t.fluid), t.amount)]);
                 }
             }
             for (p, d) in &owner.deployers {
@@ -1783,6 +1823,12 @@ impl Game<'_> {
             self.tachyon_use_burner(pos, part == Some(Part::LitBurner));
             return true;
         }
+        if let Some(p @ (Part::Tank | Part::Spout)) = part {
+            let (dimension, root) = (self.dim.id(), self.save.root.clone());
+            OWNERS.with_borrow_mut(|owners| owners.entry(dimension).or_default().load(&root, dimension));
+            self.tachyon_use_tank(pos, p);
+            return true;
+        }
         if matches!(part, Some(Part::Deployer { .. })) {
             let (dimension, root) = (self.dim.id(), self.save.root.clone());
             OWNERS.with_borrow_mut(|owners| owners.entry(dimension).or_default().load(&root, dimension));
@@ -1820,7 +1866,7 @@ impl Game<'_> {
                 owner.load(&root, dimension);
                 owner.basins.remove(&pos).unwrap_or_default()
             });
-            let moved = self.tachyon_use_basin(&mut b);
+            let moved = self.tachyon_use_basin_fluid(&mut b) || self.tachyon_use_basin(&mut b);
             OWNERS.with_borrow_mut(|owners| {
                 let owner = owners.entry(dimension).or_default();
                 if !b.is_empty() {
@@ -1832,13 +1878,13 @@ impl Game<'_> {
             });
             return true;
         }
-        if matches!(part, Some(Part::Millstone | Part::Depot)) {
+        if matches!(part, Some(Part::Millstone | Part::Depot | Part::Drain)) {
             let mut mill = OWNERS.with_borrow_mut(|owners| {
                 let owner = owners.entry(dimension).or_default();
                 owner.load(&root, dimension);
                 owner.mills.remove(&pos).unwrap_or_default()
             });
-            let moved = if part == Some(Part::Depot) {
+            let moved = if matches!(part, Some(Part::Depot | Part::Drain)) {
                 self.tachyon_use_depot(&mut mill)
             } else {
                 self.tachyon_use_millstone(&mut mill)
@@ -1893,7 +1939,7 @@ impl Game<'_> {
         let state = self.world.block(pos[0], pos[1], pos[2]).0;
         matches!(
             kinds.part(state),
-            Some(Part::Millstone | Part::Depot | Part::Basin)
+            Some(Part::Millstone | Part::Depot | Part::Basin | Part::Drain)
         )
     }
 
@@ -1941,7 +1987,7 @@ impl Game<'_> {
                 Some(Part::Millstone) => {
                     millstone::recipe(&one.item).is_some() || create.milling(&one.item).is_some()
                 }
-                Some(Part::Depot) => mill.outputs.is_empty(),
+                Some(Part::Depot | Part::Drain) => mill.outputs.is_empty(),
                 _ => false,
             };
             let took = fits && mill.put(&one.item, 1) == 1;
@@ -1975,7 +2021,7 @@ impl Game<'_> {
                 Some(Part::Millstone) => {
                     millstone::recipe(&stack.item).is_some() || create.milling(&stack.item).is_some()
                 }
-                Some(Part::Depot) => mill.outputs.is_empty(),
+                Some(Part::Depot | Part::Drain) => mill.outputs.is_empty(),
                 _ => false,
             };
             if fits { mill.put(&stack.item, stack.count) } else { 0 }
@@ -2019,7 +2065,9 @@ impl Game<'_> {
                 && (owner.deployers.get(&above).and_then(|d| d.held.as_ref()))
                     .zip(mill.input.as_ref())
                     .is_some_and(|(held, input)| create.deploying(&input.item, &held.item).is_some());
-            let input_too = part == Some(Part::Depot) && !(pressed && worked().is_some()) && !deployed;
+            // A spout two blocks up holds the depot's item too (SpoutBlockEntity's BeltProcessingBehaviour).
+            let spouted = owner.index.parts.get(&above) == Some(&Part::Spout);
+            let input_too = part == Some(Part::Depot) && !(pressed && worked().is_some()) && !deployed && !spouted;
             let (one, input) = mill.take_one(input_too)?;
             if mill.is_empty() {
                 owner.mills.remove(&pos);
@@ -2176,10 +2224,12 @@ impl Game<'_> {
                         _ => {}
                     }
                 }
-                if matches!(part, Part::Depot | Part::Basin)
+                if matches!(part, Part::Depot | Part::Basin | Part::Drain)
                     && let Some(stacks) = shown.held.get(pos)
                 {
-                    let stacks = stacks.iter().map(|(item, n)| ItemStack::new(item, *n));
+                    let stacks = (stacks.iter())
+                        .filter(|(item, _)| !fluids::is_fluid(item))
+                        .map(|(item, n)| ItemStack::new(item, *n));
                     trays.push((*pos, *part, stacks.collect(), create));
                 }
                 draws.push((*pos, *part, speed, create));
@@ -2500,6 +2550,11 @@ impl Game<'_> {
             Part::Saw { .. } => ("mechanical_saw", "Mechanical Saw"),
             Part::Drill(_) => ("mechanical_drill", "Mechanical Drill"),
             Part::Deployer { .. } => ("deployer", "Deployer"),
+            Part::Pipe(_) => ("fluid_pipe", "Fluid Pipe"),
+            Part::Pump(_) => ("mechanical_pump", "Mechanical Pump"),
+            Part::Tank => ("fluid_tank", "Fluid Tank"),
+            Part::Spout => ("spout", "Spout"),
+            Part::Drain => ("item_drain", "Item Drain"),
             Part::Press(_) => ("mechanical_press", "Mechanical Press"),
             Part::Depot => ("depot", "Depot"),
             Part::Mixer => ("mechanical_mixer", "Mechanical Mixer"),
@@ -2568,9 +2623,18 @@ impl Game<'_> {
             state = format!("{state} | {what}");
         }
         // A depot, a basin, a chute: what it holds.
-        if matches!(part, Part::Depot | Part::Basin | Part::Chute(_, _)) {
+        if matches!(
+            part,
+            Part::Depot | Part::Basin | Part::Chute(_, _) | Part::Tank | Part::Spout | Part::Drain | Part::Deployer { .. }
+        ) {
             let names: Vec<String> = (held.unwrap_or_default().iter())
-                .map(|(item, n)| format!("{} x{n}", self.tachyon_item_name(item)))
+                .map(|(item, n)| {
+                    if fluids::is_fluid(item) {
+                        format!("{} {n} mB", fluids::fluid_name(item))
+                    } else {
+                        format!("{} x{n}", self.tachyon_item_name(item))
+                    }
+                })
                 .collect();
             state = if names.is_empty() {
                 "-".to_owned()

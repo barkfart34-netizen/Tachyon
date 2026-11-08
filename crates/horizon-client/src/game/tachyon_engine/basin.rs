@@ -23,6 +23,13 @@ use std::sync::OnceLock;
 /// How many stacks of items to mix a basin holds, and of what was mixed:
 /// full, it takes no more, and mixes no more.
 const STACKS: usize = 9;
+/// BasinBlockEntity's fluid tanks: two kinds in, each up to a bucket (mB).
+const FLUID_KINDS: usize = 2;
+const FLUID_TANK: u32 = 1000;
+
+fn is_fluid(item: &str) -> bool {
+    super::fluids::is_fluid(item)
+}
 
 /// What a basin holds: the items to mix, how far the mixing at hand is
 /// (ticks, [`mixing_ticks`]), and what was mixed.
@@ -122,9 +129,50 @@ impl Basin {
                 && r.inputs.iter().all(|i| self.has(&i.item) >= i.count)
         })
     }
+    /// How much of a fluid (`fluid:` stack name) its tanks still take, in mB.
+    pub fn fluid_room(&self, item: &str) -> u32 {
+        if let Some(h) = self.inputs.iter().find(|h| h.item == item) {
+            return FLUID_TANK.saturating_sub(h.count);
+        }
+        let kinds = self.inputs.iter().filter(|h| is_fluid(&h.item)).count();
+        if kinds < FLUID_KINDS { FLUID_TANK } else { 0 }
+    }
+    /// Takes up to `amount` mB of the fluid it made (a pump's draw): how much it gave.
+    pub fn take_fluid(&mut self, amount: u32) -> u32 {
+        let Some(h) = self.outputs.iter_mut().find(|h| is_fluid(&h.item)) else {
+            return 0;
+        };
+        let n = amount.min(h.count);
+        h.count -= n;
+        self.outputs.retain(|h| h.count > 0);
+        n
+    }
+    /// A bucket of the fluid it made, else of a fluid it holds to mix: the fluid's id.
+    pub fn bucket_out(&mut self) -> Option<String> {
+        for list in [&mut self.outputs, &mut self.inputs] {
+            if let Some(h) = list.iter_mut().find(|h| is_fluid(&h.item) && h.count >= FLUID_TANK) {
+                h.count -= FLUID_TANK;
+                let fluid = h.item[super::fluids::FLUID.len()..].to_owned();
+                list.retain(|h| h.count > 0);
+                return Some(fluid);
+            }
+        }
+        None
+    }
     /// Puts in up to `count` of `item`: onto its stacks up to 64, the rest
-    /// as new stacks while there is room. How many it took.
+    /// as new stacks while there is room; a fluid (mB) into its tanks. How many it took.
     pub fn put(&mut self, item: &str, count: u32) -> u32 {
+        if is_fluid(item) {
+            let n = count.min(self.fluid_room(item));
+            if n == 0 {
+                return 0;
+            }
+            match self.inputs.iter_mut().find(|h| h.item == item) {
+                Some(h) => h.count += n,
+                None => self.inputs.push(Held { item: item.to_owned(), count: n }),
+            }
+            return n;
+        }
         let mut left = count;
         for s in self.inputs.iter_mut().filter(|s| s.item == item) {
             let n = left.min(64u32.saturating_sub(s.count));
@@ -143,29 +191,38 @@ impl Basin {
     }
     /// What was mixed, or else the items to mix.
     pub fn take(&mut self) -> Vec<Held> {
-        if self.outputs.is_empty() {
+        // Fluids stay in its tanks (a bucket or a pump takes them).
+        let items = |list: &mut Vec<Held>| {
+            let (fluids, items): (Vec<Held>, Vec<Held>) = std::mem::take(list).into_iter().partition(|h| is_fluid(&h.item));
+            *list = fluids;
+            items
+        };
+        if !self.outputs.iter().any(|h| !is_fluid(&h.item)) {
             self.progress = 0.0;
-            return std::mem::take(&mut self.inputs);
+            return items(&mut self.inputs);
         }
-        std::mem::take(&mut self.outputs)
+        items(&mut self.outputs)
     }
     /// Everything it holds (dropped when it is broken).
     pub fn take_all(&mut self) -> Vec<Held> {
         let mut out = std::mem::take(&mut self.outputs);
         out.append(&mut self.inputs);
         self.progress = 0.0;
+        // Its fluids spill.
+        out.retain(|h| !is_fluid(&h.item));
         out
     }
     /// One item of what was mixed: a hopper's take.
     pub fn take_one(&mut self) -> Option<Held> {
-        let h = self.outputs.first_mut()?;
+        let i = self.outputs.iter().position(|h| !is_fluid(&h.item))?;
+        let h = &mut self.outputs[i];
         h.count -= 1;
         let one = Held {
             item: h.item.clone(),
             count: 1,
         };
         if h.count == 0 {
-            self.outputs.remove(0);
+            self.outputs.remove(i);
         }
         Some(one)
     }

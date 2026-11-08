@@ -63,6 +63,13 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("mechanical_drill", "minecraft:waxed_lightning_rod", 1.5, "minecraft:stone"),
     // DeployerBlock keeps Create's own states (facing, axis_along_first), as the saw.
     ("deployer", "minecraft:polished_andesite", 1.5, "minecraft:stone"),
+    // Create's fluids (copperMetal: copper's 3.0): FluidPipeBlock's six sides, PumpBlock's
+    // six facings, FluidTankBlock's ends and windows, the spout and the item drain.
+    ("fluid_pipe", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
+    ("mechanical_pump", "minecraft:waxed_lightning_rod", 3.0, "minecraft:copper_block"),
+    ("fluid_tank", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
+    ("spout", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
+    ("item_drain", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
     // ArmBlock's floor-mounted arm; the engine draws its moving bodies.
     ("mechanical_arm", "minecraft:polished_andesite", 2.5, "minecraft:copper_block"),
     // A hollow block with a floor.
@@ -106,6 +113,11 @@ const NOT_OCCLUDING: &[&str] = &[
     "mechanical_saw",
     "mechanical_drill",
     "deployer",
+    "fluid_pipe",
+    "mechanical_pump",
+    "fluid_tank",
+    "spout",
+    "item_drain",
     "mechanical_arm",
     "millstone",
     "rotation_speed_controller",
@@ -217,6 +229,28 @@ fn bracket_pools(block: &str) -> Vec<Value> {
     pools
 }
 
+/// FluidPipeBlock's shape: the four-voxel pole's core and an arm out of each open side, for
+/// every set of the six sides.
+fn pipe_shape() -> Value {
+    let sides = ["down", "up", "north", "south", "west", "east"];
+    let arms = [
+        [0.25, 0.0, 0.25, 0.75, 0.25, 0.75],
+        [0.25, 0.75, 0.25, 0.75, 1.0, 0.75],
+        [0.25, 0.25, 0.0, 0.75, 0.75, 0.25],
+        [0.25, 0.25, 0.75, 0.75, 0.75, 1.0],
+        [0.0, 0.25, 0.25, 0.25, 0.75, 0.75],
+        [0.75, 0.25, 0.25, 1.0, 0.75, 0.75],
+    ];
+    let mut values = serde_json::Map::new();
+    for mask in 0..64u32 {
+        let key: Vec<&str> = (0..6).map(|i| if mask & (1 << i) != 0 { "true" } else { "false" }).collect();
+        let mut boxes = vec![json!([0.25, 0.25, 0.25, 0.75, 0.75, 0.75])];
+        boxes.extend((0..6).filter(|i| mask & (1 << i) != 0).map(|i| json!(arms[i])));
+        values.insert(key.join(","), json!(boxes));
+    }
+    json!({"properties": sides, "values": values})
+}
+
 /// AllShapes.CASING_12PX by facing: four pixels open on the facing side.
 fn casing_12px() -> Value {
     json!({"property": "facing", "values": {
@@ -250,7 +284,7 @@ const TURNING: &[&str] = &[
 ];
 
 /// The version of [`fix`]: a port fixed by an older one is fixed again.
-const VERSION: &str = "6";
+const VERSION: &str = "7";
 const STAMP: &str = ".tachyon-fix";
 
 /// Fixes a Create ported into `dir` (`horizon-mods/create`) by an older
@@ -404,6 +438,35 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         // AllShapes.CASING_12PX, as the saw's: four pixels open on the head's side.
         if *block == "mechanical_drill" {
             declaration["shapes"] = casing_12px();
+        }
+        if *block == "fluid_pipe" {
+            let flag = json!({"type": "boolean"});
+            let sides = ["down", "up", "north", "south", "west", "east"];
+            declaration["state_properties"] = sides.iter().map(|d| ((*d).to_owned(), flag.clone())).collect();
+            declaration["default_state"] = sides.iter().map(|d| ((*d).to_owned(), json!("false"))).collect();
+            declaration["shapes"] = pipe_shape();
+        }
+        if *block == "mechanical_pump" {
+            let body = json!([[0.125, 0.125, 0.125, 0.875, 0.875, 0.875]]);
+            let values: serde_json::Map<String, Value> = ["down", "up", "north", "south", "west", "east"]
+                .into_iter()
+                .map(|f| (f.to_owned(), body.clone()))
+                .collect();
+            declaration["shapes"] = json!({"property": "facing", "values": values});
+        }
+        if *block == "fluid_tank" {
+            let flag = json!({"type": "boolean"});
+            let windows = json!(["plain", "window", "window_nw", "window_sw", "window_ne", "window_se"]);
+            declaration["state_properties"] =
+                json!({"top": flag, "bottom": flag, "shape": {"type": "enum", "values": windows}});
+            declaration["default_state"] = json!({"top": "true", "bottom": "true", "shape": "window"});
+        }
+        // AllShapes.SPOUT and the drain's 13-pixel tray.
+        if *block == "spout" {
+            declaration["shapes"] = json!({"default": [[0.0625, 0.0, 0.0625, 0.9375, 1.0, 0.9375]]});
+        }
+        if *block == "item_drain" {
+            declaration["shapes"] = json!({"default": [[0.0, 0.0, 0.0, 1.0, 0.8125, 1.0]]});
         }
         // DirectionalAxisKineticBlock's states, as directionalAxisBlockProvider writes them.
         if *block == "deployer" {

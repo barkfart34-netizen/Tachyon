@@ -1626,6 +1626,7 @@ impl GameLevel<'_> {
         neighbour: BlockStateId,
         new: &mut Option<BlockStateId>,
     ) {
+        self.tachyon_fluid_update_shape(pos, state, direction, neighbour, new);
         mod_api::dispatch_update_shape(
             &mut super::mod_api_host::LevelTicks { level: self, ticks },
             mod_api::mods(),
@@ -1746,6 +1747,7 @@ impl GameLevel<'_> {
         self.tachyon_saw_place(state, context, answer);
         self.tachyon_drill_place(state, context, answer);
         self.tachyon_deployer_place(state, context, answer);
+        self.tachyon_fluid_place(state, context, answer);
         mod_api::dispatch_state_for_placement(
             self,
             mod_api::mods(),

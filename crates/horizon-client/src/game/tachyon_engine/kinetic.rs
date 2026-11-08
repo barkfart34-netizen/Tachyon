@@ -217,6 +217,14 @@ pub enum Part {
     /// Create's deployer (DeployerBlock, a DirectionalAxisKineticBlock): its hand's facing
     /// and whether its shaft runs along the first other axis (`deployer::shaft_axis`).
     Deployer { facing: Dir, along_first: bool },
+    /// Create's fluid pipe: the sides it is open to (`fluids::bit`).
+    Pipe(u8),
+    /// Create's mechanical pump: pushing out of its facing, turned as a small cogwheel along it.
+    Pump(Dir),
+    /// Create's fluid tank, spout and item drain (`fluids.rs`).
+    Tank,
+    Spout,
+    Drain,
     /// Create's cuckoo clock: a shaft out of its back (the side given), and
     /// whether it is the mysterious one.
     Clock(Dir, bool),
@@ -310,7 +318,12 @@ impl Part {
             | Part::Funnel(_)
             | Part::Burner
             | Part::LitBurner
-            | Part::Chute(_, _) => false,
+            | Part::Chute(_, _)
+            | Part::Pipe(_)
+            | Part::Pump(_)
+            | Part::Tank
+            | Part::Spout
+            | Part::Drain => false,
         }
     }
     /// The stress the part takes for each RPM it turns at (stress units):
@@ -319,6 +332,8 @@ impl Part {
         match self {
             // AllBlocks: CStress.setImpact(4.0) for both.
             Part::Millstone | Part::Saw { .. } | Part::Drill(_) | Part::Deployer { .. } => 4.0,
+            // AllBlocks: CStress.setImpact(4.0) for the pump.
+            Part::Pump(_) => 4.0,
             Part::Press(_) => 8.0,
             Part::Mixer => 4.0,
             Part::Arm => 2.0,
@@ -354,6 +369,8 @@ impl Part {
             Part::LargeCog(a) | Part::EncasedLargeCog(a) => Some((a, true)),
             // A mixer meshes as one too (Create's).
             Part::Millstone | Part::Mixer | Part::Arm => Some((Axis::Y, false)),
+            // PumpBlock is an ICogWheel along its facing.
+            Part::Pump(facing) => Some((facing.axis(), false)),
             _ => None,
         }
     }

@@ -136,6 +136,20 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - Partikelnya memakai soul fire flame dan sesekali asap; nama proses tampil di kacamata dalam bahasa
     Inggris dan Indonesia.
   - Hasil cuci dan haunting dikocok per barang, seperti `RecipeApplier` Create.
+- **Fluida** (`tachyon_engine/fluids.rs`, 8 November 2026):
+  - fluida disimpan sebagai tumpukan `fluid:<id>` dalam mB, jadi basin dan resep Create ikut membawanya
+    (mixing/compacting berfluida seperti cokelat dan madu kini terbaca);
+  - fluid pipe tersambung seperti `FluidPipeBlock.canConnectTo` (pipa, pompa sepanjang porosnya, tank,
+    basin, spout, drain), satu sambungan membuka ujung seberangnya;
+  - mechanical pump: roda gigi kecil di sumbu hadapnya, beban 4 per RPM, menarik dari belakang dan
+    mendorong keluar depan `max(1, |RPM|/2)` mB per tick, jangkauan 16 pipa;
+  - ujung pipa terbuka menyedot sumber (air tak habis, lava diambil) dan menuang sumber per ember;
+  - fluid tank 8 ember per blok, fluida turun ke tank di bawahnya; spout (1 ember) mengisi item di depot
+    dua blok di bawahnya dalam 20 tick (resep `create:filling`, lalu ember); item drain (1,5 ember)
+    mengosongkan item di atasnya (resep `create:emptying`, lalu ember);
+  - ember dipakai pada tank, spout dan basin untuk menuang atau mengambil;
+  - belum: fluida tidak digambar (kacamata membacanya), tank tidak menyatu melebar, valve, smart pipe,
+    hose pulley, potion, pembagian tekanan Create.
 - **Deployer** (`tachyon_engine/deployer.rs`, 8 November 2026), mode use:
   - klik kanan menukar item di tangan pemain dengan item deployer;
   - timer Create: `clamp(|RPM| * 2, 8, 512)` dari 1000 per langkah, tunggu 10 langkah bila tak ada kerja;

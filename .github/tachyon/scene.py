@@ -529,7 +529,7 @@ def create(control, out):
     time.sleep(1)
     visit((1, 0, -1), (1, 0, -4))
     control.send("screenshot " + os.path.join(out, "create-looks.png"))
-    visit((-4, 0, -2), (-4, 1, -4))
+    visit((-4, 2, 0), (-4, 1, -4))
     control.send("screenshot " + os.path.join(out, "create-cranks.png"))
     # What they made, by now: the millstone's taken with an empty hand, the
     # depot's and the basin's out of the hoppers under them.
@@ -539,12 +539,60 @@ def create(control, out):
     sheets = until(taken((5, -1, 7), "create:iron_sheet"), 3)
     alloy = until(taken((-4, -1, 8), "create:andesite_alloy"), 1)
     crushed = until(taken((-1, 0, 11), "create:crushed_raw_iron"), 4)
+    fluids = [
+        ("fill", (-26, -1, -13), (-14, -1, -3), "minecraft:smooth_stone"),
+        ("fill", (-26, 0, -13), (-14, 6, -3), "minecraft:air"),
+        ("setblock", (-20, 0, -8), "create:fluid_tank"),
+        ("setblock", (-19, 0, -8), "create:fluid_pipe[west=true,east=true]"),
+        ("setblock", (-18, 0, -8), "create:mechanical_pump[facing=east]"),
+        ("setblock", (-18, 1, -8), "create:cogwheel[axis=x]"),
+        ("setblock", (-19, 1, -8), "create:creative_motor[facing=east]"),
+        ("setblock", (-17, 0, -8), "create:fluid_pipe[west=true,east=true]"),
+        ("setblock", (-22, -1, -11), "minecraft:hopper[facing=down]"),
+        ("setblock", (-22, 0, -11), "create:item_drain"),
+        ("setblock", (-22, 1, -11), "minecraft:hopper[facing=down]"),
+        ("setblock", (-24, -1, -6), "minecraft:hopper[facing=down]"),
+        ("setblock", (-24, 0, -6), "create:depot"),
+        ("setblock", (-24, 2, -6), "create:spout"),
+    ]
+    for c in fluids:
+        if "error" in control.send(f"chat /{c[0]} {at(c[1])} {c[2]}" if len(c) == 3 else
+                                   f"chat /{c[0]} {at(c[1])} {at(c[2])} {c[3]}"):
+            good = False
+    time.sleep(2)
+    control.send(f"chat /item replace block {at((-22, 1, -11))} container.0 with minecraft:lava_bucket")
+    control.send("chat /item replace entity @s weapon.mainhand with minecraft:water_bucket")
+    visit((-20, 0, -6), (-20, 0, -8))
+    control.send("mouse right click")
+    time.sleep(1)
+    control.send("chat /item replace entity @s weapon.mainhand with minecraft:water_bucket")
+    visit((-24, 2, -4), (-24, 2, -6))
+    control.send("mouse right click")
+    time.sleep(1)
+    control.send("chat /item replace entity @s weapon.mainhand with minecraft:bucket")
+    visit((-24, 0, -4), (-24, 0, -6))
+    control.send("mouse right click")
+    time.sleep(1)
+    visit((-18, 0, -5), (-18, 0, -8))
+    control.send("screenshot " + os.path.join(out, "create-fluids.png"))
+
+    def poured():
+        control.send(f"chat /execute if block {at((-16, 0, -8))} minecraft:water")
+        time.sleep(1)
+        lines = " ".join(str(line) for line in control.send("chat-log 2").get("chat", []))
+        print("poured:", lines)
+        return 1 if "passed" in lines.lower() else 0
+
+    drained = until(taken((-22, -1, -11), "minecraft:bucket"), 1)
+    filled = until(taken((-24, -1, -6), "minecraft:water_bucket"), 1)
+    flowed = until(poured, 1)
+    print("create fluids: drained", drained, "filled", filled, "poured", flowed)
     drilled = until(taken((-7, -1, -4), "minecraft:cobblestone"), 1)
     cased = until(taken((9, -1, -4), "create:andesite_casing"), 2)
     print("create made: flour", flour, "sheets", sheets, "alloy", alloy, "crushed", crushed,
           "drilled", drilled, "cased", cased)
     return (good and flour >= 4 and sheets >= 3 and alloy >= 1 and crushed >= 4 and drilled >= 1
-            and cased >= 2)
+            and cased >= 2 and drained >= 1 and filled >= 1 and flowed >= 1)
 
 
 def lost_realms(control, out):

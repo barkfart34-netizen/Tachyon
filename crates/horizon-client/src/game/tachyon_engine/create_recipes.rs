@@ -45,6 +45,34 @@ pub(super) struct Recipes {
     pub application: Vec<Application>,
     /// A deployer's (`DeployerApplicationRecipe`): its held item used on an item.
     pub deploying: Vec<Application>,
+    /// A spout's (`FillingRecipe`): an item and a fluid.
+    pub filling: Vec<Filling>,
+    /// An item drain's (`EmptyingRecipe`): an item into an item and a fluid.
+    pub emptying: Vec<Emptying>,
+}
+
+/// `create:filling`: one of `input` filled with `amount` mB of `fluid`.
+pub(super) struct Filling {
+    pub input: Vec<String>,
+    pub fluid: String,
+    pub amount: u32,
+    pub outputs: Vec<Output>,
+}
+
+/// `create:emptying`: one of `input` emptied into its outputs, one of them a fluid
+/// (`fluid:` stack name, its count in mB).
+pub(super) struct Emptying {
+    pub input: Vec<String>,
+    pub outputs: Vec<Output>,
+}
+
+/// A fluid ingredient as an alternative: `fluid:<id>#<mB>`.
+const AMOUNT: char = '#';
+
+/// An ingredient's fluid and amount, from an alternative `alternatives` gave.
+fn fluid_part(item: &str) -> Option<(&str, u32)> {
+    let (fluid, amount) = item.strip_prefix(super::fluids::FLUID)?.split_once(AMOUNT)?;
+    Some((fluid, amount.parse().ok()?))
 }
 
 /// `create:item_application`: `held` used on a block of `on` makes it
@@ -84,6 +112,8 @@ impl Recipes {
             "compacting",
             "item_application",
             "deploying",
+            "filling",
+            "emptying",
         ] {
             walk(&dir.join(kind), &mut files);
         }
@@ -133,6 +163,12 @@ impl Recipes {
         let Some(ingredients) = ingredients(recipe, game) else {
             return;
         };
+        // Fluids only where Tachyon's fluids go: a basin's, a spout's and a drain's.
+        let fluid = ingredients.iter().flatten().any(|i| super::fluids::is_fluid(i))
+            || outputs.iter().any(|o| super::fluids::is_fluid(&o.item));
+        if fluid && !matches!(kind, "create:mixing" | "create:compacting" | "create:filling" | "create:emptying") {
+            return;
+        }
         let time = recipe["processing_time"].as_f64().map(|t| t as f32);
         let single = |list: &mut Vec<Milling>, default: f32| {
             let [items] = ingredients.as_slice() else {
@@ -162,6 +198,17 @@ impl Recipes {
                     &mut self.compacting
                 };
                 for set in sets(&ingredients) {
+                    // A fluid's alternative names its amount: the set counts it in mB.
+                    let set = set
+                        .into_iter()
+                        .map(|i| match fluid_part(&i.item) {
+                            Some((fluid, amount)) => Ingredient {
+                                item: super::fluids::stack_name(fluid),
+                                count: amount * i.count,
+                            },
+                            None => i,
+                        })
+                        .collect();
                     list.push(Mixing {
                         inputs: set,
                         heat_requirement,
@@ -169,6 +216,29 @@ impl Recipes {
                         outputs: copy(&outputs),
                     });
                 }
+            }
+            "create:filling" => {
+                let [items, fluids] = ingredients.as_slice() else {
+                    return;
+                };
+                for f in fluids {
+                    let Some((fluid, amount)) = fluid_part(f) else { continue };
+                    self.filling.push(Filling {
+                        input: items.clone(),
+                        fluid: fluid.to_owned(),
+                        amount,
+                        outputs: copy(&outputs),
+                    });
+                }
+            }
+            "create:emptying" => {
+                let [items] = ingredients.as_slice() else {
+                    return;
+                };
+                self.emptying.push(Emptying {
+                    input: items.clone(),
+                    outputs: copy(&outputs),
+                });
             }
             "create:item_application" | "create:deploying" => {
                 let [on, held] = ingredients.as_slice() else {
@@ -271,13 +341,22 @@ fn holds(condition: &Value, game: &Lookup) -> bool {
     }
 }
 
-/// A recipe's item results; None when one is a fluid or an item the game
-/// doesn't have.
+/// A recipe's results; a fluid as its `fluid:` stack name counted in mB. None when one is
+/// a fluid Tachyon doesn't know or an item the game doesn't have.
 fn outputs(recipe: &Value, game: &Lookup) -> Option<Vec<Output>> {
     let mut outputs = Vec::new();
     for result in recipe["results"].as_array()? {
         if result.get("amount").is_some() || result.get("fluid").is_some() {
-            return None;
+            let fluid = result["id"].as_str().or_else(|| result["fluid"].as_str())?;
+            if !super::fluids::FLUIDS.contains(&fluid) {
+                return None;
+            }
+            outputs.push(Output {
+                item: super::fluids::stack_name(fluid),
+                count: result["amount"].as_u64().unwrap_or(1000).max(1) as u32,
+                chance: 1.0,
+            });
+            continue;
         }
         let item = result["id"].as_str().or_else(|| result["item"].as_str())?;
         if !(game.known)(item) {
@@ -320,8 +399,17 @@ fn alternatives(ingredient: &Value, game: &Lookup) -> Option<Vec<String>> {
         }
         return Some(items);
     }
+    // A fluid: each fluid it takes, with its amount (`fluid_part`).
     if ingredient.get("fluid").is_some() || ingredient.get("amount").is_some() {
-        return None;
+        let amount = ingredient["amount"].as_u64().unwrap_or(1000);
+        let fluids: Vec<&str> = if let Some(f) = ingredient["fluid"].as_str() {
+            super::fluids::FLUIDS.into_iter().filter(|k| *k == f).collect()
+        } else if let Some(tag) = ingredient["tag"].as_str() {
+            super::fluids::tagged(tag)
+        } else {
+            Vec::new()
+        };
+        return Some(fluids.into_iter().map(|f| format!("{}{f}{AMOUNT}{amount}", super::fluids::FLUID)).collect());
     }
     if ingredient.get("type").is_some() {
         return None;
