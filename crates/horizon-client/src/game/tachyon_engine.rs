@@ -37,6 +37,7 @@ mod press;
 mod deployer;
 mod drill;
 mod fluids;
+mod steam;
 mod saw;
 mod speed_controller;
 mod water_wheel;
@@ -206,6 +207,14 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
                 .fold(0, |m, d| m | fluids::bit(d)),
         ),
         "mechanical_pump" => Part::Pump(facing()?),
+        // FaceAttachedHorizontalDirectionalBlock's connected way: up from a floor, down from a
+        // ceiling, else its facing (the grindstone template keeps `face` and `facing`).
+        "steam_engine" => Part::SteamEngine(match property("face")? {
+            "floor" => Dir::Up,
+            "ceiling" => Dir::Down,
+            _ => facing()?,
+        }),
+        "powered_shaft" => Part::PoweredShaft(axis()?),
         "fluid_tank" => Part::Tank,
         "spout" => Part::Spout,
         "item_drain" => Part::Drain,
@@ -418,6 +427,12 @@ struct Owner {
     open_ends: HashMap<[i32; 3], fluids::Tank>,
     /// The ticks each spout and item drain has worked on its item.
     spouting: HashMap<[i32; 3], u32>,
+    /// The speed each steam engine turns its powered shaft at.
+    steam: HashMap<[i32; 3], f32>,
+    /// The tanks of running boilers, with their column's bottom, and the water each boiler
+    /// took since it was last measured (mB).
+    boiling: HashMap<[i32; 3], [i32; 3]>,
+    boiled: HashMap<[i32; 3], u32>,
     /// What each fan turning does, for the goggles ("washing", "pull:air").
     fan_work: HashMap<[i32; 3], String>,
     /// The dropped items and the depots where a fan's air works them: how,
@@ -1092,6 +1107,7 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
     match part {
         // ChainDriveBlock's and ChainGearshiftBlock's ShaftRenderer.
         Part::Shaft(a)
+        | Part::PoweredShaft(a)
         | Part::Press(a)
         | Part::SpeedGauge(a)
         | Part::StressGauge(a)
@@ -1129,7 +1145,7 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         Part::Drill(facing) => vec![("create:block/mechanical_drill/head", facing, 1.0, 0, Dir::South)],
         // PumpRenderer's cog, by partialFacing: modelled facing south.
         Part::Pump(facing) => vec![("create:block/mechanical_pump/cog", facing, 1.0, 0, Dir::South)],
-        Part::Pipe(_) | Part::Tank | Part::Spout | Part::Drain => Vec::new(),
+        Part::Pipe(_) | Part::Tank | Part::Spout | Part::Drain | Part::SteamEngine(_) => Vec::new(),
         // DeployerRenderer's shaft through it; the pole and hand are drawn with its stroke.
         Part::Deployer { facing, along_first } => {
             vec![(SHAFT, positive(deployer::shaft_axis(facing, along_first)), 1.0, 0, Dir::Up)]
@@ -1169,7 +1185,7 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
     // Out of a casing's face a hair, not in it.
     const CASED: &str = "kinetica:block/shaft_half_cased";
     match part {
-        Part::Shaft(a) => vec![("kinetica:block/shaft", positive(a), 1.0, 0)],
+        Part::Shaft(a) | Part::PoweredShaft(a) => vec![("kinetica:block/shaft", positive(a), 1.0, 0)],
         Part::Cog(a) => vec![("kinetica:block/cogwheel", positive(a), 1.0, 0)],
         Part::LargeCog(a) => vec![("kinetica:block/large_cogwheel", positive(a), 1.0, 0)],
         Part::WaterWheel(a) => vec![("kinetica:block/water_wheel", positive(a), 1.0, 0)],
@@ -1231,6 +1247,7 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::Tank
         | Part::Spout
         | Part::Drain
+        | Part::SteamEngine(_)
         | Part::SpeedController(_) => Vec::new(),
     }
 }
@@ -1473,6 +1490,7 @@ impl Game<'_> {
         self.tachyon_saws();
         self.tachyon_deployers();
         self.tachyon_fluids();
+        self.tachyon_steam();
         // BasinBlockEntity.getHeatLevel: the block directly below each
         // basin, read before borrowing the world's random for the outputs.
         let basin_heat: HashMap<[i32; 3], burner::Heat> = OWNERS.with_borrow(|owners| {
@@ -1529,6 +1547,8 @@ impl Game<'_> {
                             Part::WaterWheel(_) | Part::LargeWaterWheel(_) | Part::Windmill(_) => {
                                 return owner.natural.get(p).map(|s| (*p, *s));
                             }
+                            // A steam engine's shaft, at its boiler's speed (`steam.rs`).
+                            Part::PoweredShaft(_) => return owner.steam.get(p).map(|s| (*p, *s)),
                             _ => return None,
                         };
                         Some((*p, if out.positive() { set } else { -set }))
@@ -2588,6 +2608,8 @@ impl Game<'_> {
             Part::Tank => ("fluid_tank", "Fluid Tank"),
             Part::Spout => ("spout", "Spout"),
             Part::Drain => ("item_drain", "Item Drain"),
+            Part::SteamEngine(_) => ("steam_engine", "Steam Engine"),
+            Part::PoweredShaft(_) => ("shaft", "Shaft"),
             Part::Press(_) => ("mechanical_press", "Mechanical Press"),
             Part::Depot => ("depot", "Depot"),
             Part::Mixer => ("mechanical_mixer", "Mechanical Mixer"),

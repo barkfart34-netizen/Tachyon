@@ -221,6 +221,10 @@ pub enum Part {
     Pipe(u8),
     /// Create's mechanical pump: pushing out of its facing, turned as a small cogwheel along it.
     Pump(Dir),
+    /// Create's steam engine, pointing away from its boiler's tank (`steam.rs`).
+    SteamEngine(Dir),
+    /// Create's powered shaft: a shaft a steam engine turns, a source.
+    PoweredShaft(Axis),
     /// Create's fluid tank, spout and item drain (`fluids.rs`).
     Tank,
     Spout,
@@ -278,6 +282,7 @@ impl Part {
     pub fn shaft_toward(self, d: Dir) -> bool {
         match self {
             Part::Shaft(a)
+            | Part::PoweredShaft(a)
             | Part::SpeedGauge(a)
             | Part::StressGauge(a)
             | Part::Cog(a)
@@ -323,7 +328,8 @@ impl Part {
             | Part::Pump(_)
             | Part::Tank
             | Part::Spout
-            | Part::Drain => false,
+            | Part::Drain
+            | Part::SteamEngine(_) => false,
         }
     }
     /// The stress the part takes for each RPM it turns at (stress units):
@@ -500,6 +506,7 @@ pub fn capacity(part: Part, speed: f32) -> f32 {
         Part::WaterWheel(_) => 32.0 * speed.abs(),
         Part::LargeWaterWheel(_) => 128.0 * speed.abs(),
         Part::Windmill(_) => 32.0 * speed.abs(),
+        Part::PoweredShaft(_) => super::steam::capacity_per_rpm(speed) * speed.abs(),
         _ => 0.0,
     }
 }

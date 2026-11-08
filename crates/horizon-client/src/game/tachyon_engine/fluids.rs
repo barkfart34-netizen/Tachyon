@@ -397,6 +397,13 @@ impl super::super::Game<'_> {
             End::Holder(p) => super::OWNERS.with_borrow_mut(|owners| {
                 let Some(o) = owners.get_mut(dimension) else { return 0 };
                 let part = parts.get(&p).copied();
+                // A running boiler uses up the water it takes (`steam.rs`).
+                if fluid == "minecraft:water"
+                    && let Some(bottom) = o.boiling.get(&p).copied()
+                {
+                    *o.boiled.entry(bottom).or_insert(0) += amount;
+                    return amount;
+                }
                 let n = if part == Some(Part::Basin) {
                     o.basins.entry(p).or_default().put(&stack_name(fluid), amount)
                 } else {

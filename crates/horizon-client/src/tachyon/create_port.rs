@@ -70,6 +70,10 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("fluid_tank", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
     ("spout", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
     ("item_drain", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
+    // SteamEngineBlock's face and facing, a grindstone's; the shaft it powers (PoweredShaftBlock,
+    // no item of its own), drawn turning as a shaft.
+    ("steam_engine", "minecraft:grindstone", 3.0, "minecraft:copper_block"),
+    ("powered_shaft", "minecraft:iron_chain", 1.5, "minecraft:iron_block"),
     // ArmBlock's floor-mounted arm; the engine draws its moving bodies.
     ("mechanical_arm", "minecraft:polished_andesite", 2.5, "minecraft:copper_block"),
     // A hollow block with a floor.
@@ -118,6 +122,7 @@ const NOT_OCCLUDING: &[&str] = &[
     "fluid_tank",
     "spout",
     "item_drain",
+    "steam_engine",
     "mechanical_arm",
     "millstone",
     "rotation_speed_controller",
@@ -276,6 +281,7 @@ const WHOLE: &[(&str, &str, &[&str])] = &[
 /// The blocks drawn by the engine alone, turning whole.
 const TURNING: &[&str] = &[
     "shaft",
+    "powered_shaft",
     "cogwheel",
     "large_cogwheel",
     "crushing_wheel",
@@ -284,7 +290,7 @@ const TURNING: &[&str] = &[
 ];
 
 /// The version of [`fix`]: a port fixed by an older one is fixed again.
-const VERSION: &str = "7";
+const VERSION: &str = "8";
 const STAMP: &str = ".tachyon-fix";
 
 /// Fixes a Create ported into `dir` (`horizon-mods/create`) by an older
@@ -464,6 +470,12 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         // AllShapes.SPOUT and the drain's 13-pixel tray.
         if *block == "spout" {
             declaration["shapes"] = json!({"default": [[0.0625, 0.0, 0.0625, 0.9375, 1.0, 0.9375]]});
+        }
+        if *block == "steam_engine" {
+            declaration["shapes"] = json!({"default": [[0.125, 0.0, 0.125, 0.875, 1.0, 0.875]]});
+        }
+        if *block == "powered_shaft" {
+            declaration["item"] = json!(false);
         }
         if *block == "item_drain" {
             declaration["shapes"] = json!({"default": [[0.0, 0.0, 0.0, 1.0, 0.8125, 1.0]]});

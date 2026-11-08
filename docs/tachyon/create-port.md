@@ -136,6 +136,15 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - Partikelnya memakai soul fire flame dan sesekali asap; nama proses tampil di kacamata dalam bahasa
     Inggris dan Indonesia.
   - Hasil cuci dan haunting dikocok per barang, seperti `RecipeApplier` Create.
+- **Steam engine dan boiler** (`tachyon_engine/steam.rs`, 8 November 2026):
+  - mesin uap di sisi tank menjadikan kolom tank itu boiler, dan memutar shaft dua blok di depannya
+    (menjadi `powered_shaft`, sumber putaran) bila shaft itu melintang dari arah mesin;
+  - level boiler = terkecil dari panas (burner di bawah kolom: kindled/fading 1, seething 2), ukuran
+    (blok / 4) dan air (mB per tick yang dipompa masuk / 10), masing-masing maksimal 18; panas pasif
+    (burner smouldering, campfire, magma, api, lava) memberi 1/8;
+  - kecepatan `16 * (1 + min(3, floor(4 * efisiensi)))` RPM (64 pada efisiensi penuh), kapasitas 1024
+    per RPM pada efisiensi itu; air yang masuk ke boiler yang menyala terpakai habis;
+  - belum: boiler lebih lebar dari satu kolom, whistle, piston mesin yang bergerak.
 - **Fluida** (`tachyon_engine/fluids.rs`, 8 November 2026):
   - fluida disimpan sebagai tumpukan `fluid:<id>` dalam mB, jadi basin dan resep Create ikut membawanya
     (mixing/compacting berfluida seperti cokelat dan madu kini terbaca);

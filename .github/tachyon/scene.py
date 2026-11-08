@@ -554,6 +554,25 @@ def create(control, out):
         ("setblock", (-24, -1, -6), "minecraft:hopper[facing=down]"),
         ("setblock", (-24, 0, -6), "create:depot"),
         ("setblock", (-24, 2, -6), "create:spout"),
+        # A boiler: water drawn from a walled source by a pump at 32 RPM into four tanks over a
+        # blaze burner; its engine turns a shaft into a drill over cobblestone and a hopper.
+        ("setblock", (-24, 0, -12), "minecraft:stone"),
+        ("setblock", (-25, 1, -12), "minecraft:stone"),
+        ("setblock", (-24, 1, -11), "minecraft:stone"),
+        ("setblock", (-24, 1, -13), "minecraft:stone"),
+        ("setblock", (-24, 1, -12), "minecraft:water"),
+        ("setblock", (-23, 1, -12), "create:fluid_pipe[west=true,east=true]"),
+        ("setblock", (-22, 1, -12), "create:mechanical_pump[facing=east]"),
+        ("setblock", (-22, 2, -12), "create:cogwheel[axis=x]"),
+        ("setblock", (-23, 2, -12), "create:creative_motor[facing=east]"),
+        ("setblock", (-21, 1, -12), "create:fluid_pipe[west=true,east=true]"),
+        ("setblock", (-20, 0, -12), "create:blaze_burner"),
+        ("fill", (-20, 1, -12), (-20, 4, -12), "create:fluid_tank"),
+        ("setblock", (-19, 3, -12), "create:steam_engine[face=wall,facing=east]"),
+        ("setblock", (-17, 3, -12), "create:shaft[axis=y]"),
+        ("setblock", (-17, 2, -12), "create:mechanical_drill[facing=down]"),
+        ("setblock", (-17, 1, -12), "minecraft:cobblestone"),
+        ("setblock", (-17, 0, -12), "minecraft:hopper[facing=down]"),
     ]
     for c in fluids:
         if "error" in control.send(f"chat /{c[0]} {at(c[1])} {c[2]}" if len(c) == 3 else
@@ -573,6 +592,15 @@ def create(control, out):
     visit((-24, 0, -4), (-24, 0, -6))
     control.send("mouse right click")
     time.sleep(1)
+    # The boiler's burner fed coal, its pump's motor up to 32 RPM.
+    control.send("chat /item replace entity @s weapon.mainhand with minecraft:coal 4")
+    visit((-20, 0, -10), (-20, 0, -12))
+    control.send("mouse right click")
+    time.sleep(1)
+    control.send("chat /item replace entity @s weapon.mainhand with minecraft:air")
+    visit((-23, 0, -10), (-23, 2, -12))
+    control.send("mouse right click")
+    time.sleep(1)
     visit((-18, 0, -5), (-18, 0, -8))
     control.send("screenshot " + os.path.join(out, "create-fluids.png"))
 
@@ -586,13 +614,16 @@ def create(control, out):
     drained = until(taken((-22, -1, -11), "minecraft:bucket"), 1)
     filled = until(taken((-24, -1, -6), "minecraft:water_bucket"), 1)
     flowed = until(poured, 1)
-    print("create fluids: drained", drained, "filled", filled, "poured", flowed)
+    steamed = until(taken((-17, 0, -12), "minecraft:cobblestone"), 1, 60)
+    visit((-17, 0, -7), (-19, 3, -12))
+    control.send("screenshot " + os.path.join(out, "create-steam.png"))
+    print("create fluids: drained", drained, "filled", filled, "poured", flowed, "steam drilled", steamed)
     drilled = until(taken((-7, -1, -4), "minecraft:cobblestone"), 1)
     cased = until(taken((9, -1, -4), "create:andesite_casing"), 2)
     print("create made: flour", flour, "sheets", sheets, "alloy", alloy, "crushed", crushed,
           "drilled", drilled, "cased", cased)
     return (good and flour >= 4 and sheets >= 3 and alloy >= 1 and crushed >= 4 and drilled >= 1
-            and cased >= 2 and drained >= 1 and filled >= 1 and flowed >= 1)
+            and cased >= 2 and drained >= 1 and filled >= 1 and flowed >= 1 and steamed >= 1)
 
 
 def lost_realms(control, out):
