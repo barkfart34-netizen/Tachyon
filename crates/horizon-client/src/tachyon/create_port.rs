@@ -70,6 +70,12 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("fluid_tank", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
     ("spout", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
     ("item_drain", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
+    // FluidValveBlock's facing, axis_along_first and enabled, as the deployer's; the smart pipe's
+    // face and facing, a grindstone's; the hose pulley's four ways; the vault's level axis.
+    ("fluid_valve", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
+    ("smart_fluid_pipe", "minecraft:grindstone", 3.0, "minecraft:copper_block"),
+    ("hose_pulley", "minecraft:white_glazed_terracotta", 3.0, "minecraft:copper_block"),
+    ("item_vault", "minecraft:polished_andesite", 3.0, "minecraft:netherite_block"),
     // SteamEngineBlock's face and facing, a grindstone's; the shaft it powers (PoweredShaftBlock,
     // no item of its own), drawn turning as a shaft.
     ("steam_engine", "minecraft:grindstone", 3.0, "minecraft:copper_block"),
@@ -124,6 +130,9 @@ const NOT_OCCLUDING: &[&str] = &[
     "fluid_tank",
     "spout",
     "item_drain",
+    "fluid_valve",
+    "smart_fluid_pipe",
+    "hose_pulley",
     "steam_engine",
     "belt",
     "mechanical_arm",
@@ -259,6 +268,57 @@ fn pipe_shape() -> Value {
     json!({"properties": sides, "values": values})
 }
 
+/// A pipe's box along an axis (0 x, 1 y, 2 z), `r` from its middle across.
+fn pipe_box(axis: usize, r: f64) -> Value {
+    let mut b = [0.5 - r, 0.5 - r, 0.5 - r, 0.5 + r, 0.5 + r, 0.5 + r];
+    b[axis] = 0.0;
+    b[axis + 3] = 1.0;
+    json!(b)
+}
+
+/// FluidValveBlock.getPipeAxis by facing and axis_along_first: the axis neither is.
+fn valve_axis(facing: usize, along_first: bool) -> usize {
+    let facing_axis = (0..3).find(|&a| FACING_OFFSETS[facing][a] != 0).unwrap_or(1);
+    let mut skip = along_first;
+    for axis in 0..3 {
+        if axis == facing_axis {
+            continue;
+        }
+        if skip {
+            skip = false;
+            continue;
+        }
+        return axis;
+    }
+    1
+}
+
+/// AllShapes.FLUID_VALVE: the pipe and the valve's body round it, by its pipe's axis.
+fn valve_shape() -> Value {
+    let mut values = serde_json::Map::new();
+    for (facing, name) in FACINGS.iter().enumerate() {
+        for along in [false, true] {
+            let axis = valve_axis(facing, along);
+            let boxes = json!([pipe_box(axis, 0.25), [0.1875, 0.1875, 0.1875, 0.8125, 0.8125, 0.8125]]);
+            values.insert(format!("{name},{along}"), boxes);
+        }
+    }
+    json!({"properties": ["facing", "axis_along_first"], "values": values})
+}
+
+/// AllShapes.SMART_FLUID_PIPE: the pipe and its filter's flange, up on a wall, else along its facing.
+fn smart_pipe_shape() -> Value {
+    let mut values = serde_json::Map::new();
+    for face in ["floor", "wall", "ceiling"] {
+        for facing in ["north", "south", "west", "east"] {
+            let axis = if face == "wall" { 1 } else if matches!(facing, "west" | "east") { 0 } else { 2 };
+            let boxes = json!([pipe_box(axis, 0.25), [0.25, 0.25, 0.25, 0.75, 0.75, 0.75]]);
+            values.insert(format!("{face},{facing}"), boxes);
+        }
+    }
+    json!({"properties": ["face", "facing"], "values": values})
+}
+
 /// AllShapes.CASING_12PX by facing: four pixels open on the facing side.
 fn casing_12px() -> Value {
     json!({"property": "facing", "values": {
@@ -293,7 +353,7 @@ const TURNING: &[&str] = &[
 ];
 
 /// The version of [`fix`]: a port fixed by an older one is fixed again.
-const VERSION: &str = "9";
+const VERSION: &str = "10";
 const STAMP: &str = ".tachyon-fix";
 
 /// Fixes a Create ported into `dir` (`horizon-mods/create`) by an older
@@ -327,6 +387,20 @@ const RECIPES: &[&str] = &[
     "crafting/kinetics/metal_bracket",
     "crafting/kinetics/wooden_bracket",
     "crafting/kinetics/mechanical_saw",
+    // Engine blocks whose items the porter didn't know when it ported them.
+    "crafting/kinetics/speedometer",
+    "crafting/kinetics/clutch",
+    "crafting/kinetics/gearshift",
+    "crafting/logistics/andesite_funnel",
+    "crafting/logistics/brass_funnel",
+    "crafting/kinetics/deployer",
+    "crafting/kinetics/fluid_pipe",
+    "crafting/kinetics/fluid_tank",
+    "crafting/kinetics/fluid_valve",
+    "crafting/kinetics/smart_fluid_pipe",
+    "crafting/kinetics/item_vault",
+    "crafting/kinetics/steam_engine",
+    "crafting/kinetics/mechanical_arm",
 ];
 
 /// NeoForge's convention tags the restored recipes use, where the port has
@@ -335,6 +409,10 @@ const CONVENTION_TAGS: &[(&str, &str)] = &[
     ("nuggets/iron", "minecraft:iron_nugget"),
     ("ingots/iron", "minecraft:iron_ingot"),
     ("rods/wooden", "minecraft:stick"),
+    ("barrels/wooden", "minecraft:barrel"),
+    ("dusts/redstone", "minecraft:redstone"),
+    ("ingots/copper", "minecraft:copper_ingot"),
+    ("storage_blocks/copper", "minecraft:copper_block"),
 ];
 
 /// Puts [`RECIPES`] from Create's `jar` into the port at `dir`, their
@@ -497,6 +575,30 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         }
         if *block == "powered_shaft" {
             declaration["item"] = json!(false);
+        }
+        if *block == "fluid_valve" {
+            let facings = json!(["down", "up", "north", "south", "west", "east"]);
+            declaration["state_properties"] = json!({
+                "facing": {"type": "enum", "values": facings},
+                "axis_along_first": {"type": "boolean"},
+                "enabled": {"type": "boolean"},
+            });
+            declaration["default_state"] = json!({"facing": "up", "axis_along_first": "false", "enabled": "false"});
+            declaration["shapes"] = valve_shape();
+        }
+        if *block == "smart_fluid_pipe" {
+            declaration["shapes"] = smart_pipe_shape();
+        }
+        if *block == "hose_pulley" {
+            declaration["shapes"] = json!({"default": [[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]]});
+        }
+        if *block == "item_vault" {
+            declaration["state_properties"] = json!({
+                "axis": {"type": "enum", "values": ["x", "z"]},
+                "large": {"type": "boolean"},
+            });
+            declaration["default_state"] = json!({"axis": "x", "large": "false"});
+            declaration["properties"]["explosion_resistance"] = json!(1200.0);
         }
         if *block == "item_drain" {
             declaration["shapes"] = json!({"default": [[0.0, 0.0, 0.0, 1.0, 0.8125, 1.0]]});
@@ -687,6 +789,15 @@ pub fn fix(dir: &Path) -> Result<(), String> {
     if let Some(mut goggles) = read(&file) {
         goggles["template"] = json!("minecraft:leather_helmet");
         write(&file, &goggles)?;
+    }
+    for block in ["fluid_valve", "smart_fluid_pipe", "steam_engine"] {
+        rekey(&blockstates.join(format!("{block}.json")), |k| {
+            if k.contains("waterlogged=true") {
+                return None;
+            }
+            let dry: Vec<&str> = k.split(',').filter(|p| !p.starts_with("waterlogged=")).collect();
+            Some(dry.join(","))
+        })?;
     }
     chute_models(&blockstates.join("chute.json"))?;
     burner_flames(&blockstates.join("lit_blaze_burner.json"))?;

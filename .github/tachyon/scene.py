@@ -578,6 +578,24 @@ def create(control, out):
         ("setblock", (-16, 0, -4), "create:creative_motor[facing=east]"),
         ("setblock", (-15, 0, -10), "minecraft:hopper[facing=down]"),
         ("setblock", (-15, 0, -3), "minecraft:hopper[facing=down]"),
+        ("fill", (-26, -1, -17), (-14, -1, -14), "minecraft:smooth_stone"),
+        ("fill", (-26, 0, -17), (-14, 6, -14), "minecraft:air"),
+        ("fill", (-25, 0, -17), (-23, 2, -15), "minecraft:glass"),
+        ("fill", (-24, 1, -16), (-24, 2, -16), "minecraft:water"),
+        ("setblock", (-24, 4, -16), "create:hose_pulley[facing=south]"),
+        ("setblock", (-25, 4, -16), "create:creative_motor[facing=east]"),
+        ("setblock", (-23, 4, -16), "create:mechanical_pump[facing=east]"),
+        ("setblock", (-23, 5, -16), "create:cogwheel[axis=x]"),
+        ("setblock", (-24, 5, -16), "create:creative_motor[facing=east]"),
+        ("setblock", (-22, 4, -16), "create:fluid_pipe[west=true,east=true]"),
+        ("setblock", (-21, 4, -16), "create:fluid_valve[facing=up,axis_along_first=false,enabled=false]"),
+        ("setblock", (-21, 4, -17), "create:creative_motor[facing=south]"),
+        ("setblock", (-20, 4, -16), "create:fluid_pipe[west=true,east=true]"),
+        ("setblock", (-19, 4, -16), "create:fluid_tank"),
+        ("setblock", (-17, 0, -16), "create:item_vault[axis=x,large=false]"),
+        ("setblock", (-16, 0, -16), "create:item_vault[axis=x,large=false]"),
+        ("setblock", (-17, 1, -16), "minecraft:hopper[facing=down]"),
+        ("setblock", (-16, -1, -16), "minecraft:hopper[facing=down]"),
     ]
     for c in fluids:
         if "error" in control.send(f"chat /{c[0]} {at(c[1])} {c[2]}" if len(c) == 3 else
@@ -585,6 +603,7 @@ def create(control, out):
             good = False
     time.sleep(2)
     control.send(f"chat /item replace block {at((-22, 1, -11))} container.0 with minecraft:lava_bucket")
+    control.send(f"chat /item replace block {at((-17, 1, -16))} container.0 with minecraft:iron_ingot 4")
     control.send("chat /item replace entity @s weapon.mainhand with minecraft:water_bucket")
     visit((-20, 0, -6), (-20, 0, -8))
     control.send("mouse right click")
@@ -618,12 +637,17 @@ def create(control, out):
     visit((-18, 0, -5), (-18, 0, -8))
     control.send("screenshot " + os.path.join(out, "create-fluids.png"))
 
-    def poured():
-        control.send(f"chat /execute if block {at((-16, 0, -8))} minecraft:water")
-        time.sleep(1)
-        lines = " ".join(str(line) for line in control.send("chat-log 2").get("chat", []))
-        print("poured:", lines)
-        return 1 if "passed" in lines.lower() else 0
+    def block_is(where, block):
+        """Whether the block at `where` is `block` (1) or not (0)."""
+        def made():
+            control.send(f"chat /execute if block {at(where)} {block}")
+            time.sleep(1)
+            lines = " ".join(str(line) for line in control.send("chat-log 2").get("chat", []))
+            print(block, "at", where, ":", lines)
+            return 1 if "passed" in lines.lower() else 0
+        return made
+
+    poured = block_is((-16, 0, -8), "minecraft:water")
 
     drained = until(taken((-22, -1, -11), "minecraft:bucket"), 1)
     filled = until(taken((-24, -1, -6), "minecraft:water_bucket"), 1)
@@ -633,16 +657,22 @@ def create(control, out):
     belted = until(lambda: max(end() for end in ends), 1)
     visit((-12, 1, -6), (-15, 0, -6))
     control.send("screenshot " + os.path.join(out, "create-belt.png"))
+    corners = [block_is(c, "minecraft:air") for c in [(-24, 2, -16), (-24, 1, -16)]]
+    hosed = until(lambda: min(c() for c in corners), 1, 60)
+    vaulted = until(taken((-16, -1, -16), "minecraft:iron_ingot"), 1)
+    visit((-21, 6, -11), (-23, 3, -16))
+    control.send("screenshot " + os.path.join(out, "create-hose.png"))
     visit((-17, 0, -7), (-19, 3, -12))
     control.send("screenshot " + os.path.join(out, "create-steam.png"))
     print("create fluids: drained", drained, "filled", filled, "poured", flowed, "steam drilled", steamed,
-          "belted", belted)
+          "belted", belted, "hose drained", hosed, "vaulted", vaulted)
     drilled = until(taken((-7, -1, -4), "minecraft:cobblestone"), 1)
     cased = until(taken((9, -1, -4), "create:andesite_casing"), 2)
     print("create made: flour", flour, "sheets", sheets, "alloy", alloy, "crushed", crushed,
           "drilled", drilled, "cased", cased)
     return (good and flour >= 4 and sheets >= 3 and alloy >= 1 and crushed >= 4 and drilled >= 1
-            and cased >= 2 and drained >= 1 and filled >= 1 and flowed >= 1 and steamed >= 1 and belted >= 1)
+            and cased >= 2 and drained >= 1 and filled >= 1 and flowed >= 1 and steamed >= 1 and belted >= 1
+            and hosed >= 1 and vaulted >= 1)
 
 
 def lost_realms(control, out):

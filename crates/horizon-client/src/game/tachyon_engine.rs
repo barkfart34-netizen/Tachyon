@@ -38,6 +38,8 @@ mod deployer;
 mod drill;
 mod create_belt;
 mod fluids;
+mod hose;
+mod vault;
 mod steam;
 mod saw;
 mod speed_controller;
@@ -208,6 +210,18 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
                 .fold(0, |m, d| m | fluids::bit(d)),
         ),
         "mechanical_pump" => Part::Pump(facing()?),
+        // FluidValveBlock: a DirectionalAxisKineticBlock, its pipe across both.
+        "fluid_valve" => Part::Valve {
+            facing: facing()?,
+            along_first: property("axis_along_first")? == "true",
+        },
+        // SmartFluidPipeBlock.getPipeAxis: up and down on a wall, else along its facing.
+        "smart_fluid_pipe" => Part::SmartPipe(match property("face")? {
+            "wall" => Axis::Y,
+            _ => facing()?.axis(),
+        }),
+        "hose_pulley" => Part::HosePulley(facing()?),
+        "item_vault" => Part::Vault(axis()?),
         // BeltBlock, level ones: run as Kinetica's belt along its facing (`create_belt.rs`).
         "belt" if property("slope") == Some("horizontal") => Part::Belt(facing()?.axis()),
         // FaceAttachedHorizontalDirectionalBlock's connected way: up from a floor, down from a
@@ -438,6 +452,10 @@ struct Owner {
     boiled: HashMap<[i32; 3], u32>,
     /// Parts gone since the belts last looked (a belt broken in part breaks whole).
     belt_removed: Vec<[i32; 3]>,
+    /// Each hose pulley's hose (`hose.rs`).
+    hoses: HashMap<[i32; 3], hose::Hose>,
+    /// What each item vault block holds (`vault.rs`).
+    vaults: HashMap<[i32; 3], vault::Vault>,
     /// What each fan turning does, for the goggles ("washing", "pull:air").
     fan_work: HashMap<[i32; 3], String>,
     /// The dropped items and the depots where a fan's air works them: how,
@@ -542,6 +560,11 @@ impl Owner {
         self.deployers = deployers.into_iter().collect();
         let tanks: Vec<([i32; 3], fluids::Tank)> = serde_json::from_value(value["tanks"].clone()).unwrap_or_default();
         self.tanks = tanks.into_iter().collect();
+        let hoses: Vec<([i32; 3], hose::Hose)> = serde_json::from_value(value["hoses"].clone()).unwrap_or_default();
+        self.hoses = hoses.into_iter().collect();
+        let vaults: Vec<([i32; 3], vault::Vault)> =
+            serde_json::from_value(value["vaults"].clone()).unwrap_or_default();
+        self.vaults = vaults.into_iter().collect();
         self.dirty = true;
     }
     fn save(&self, root: &std::path::Path, dimension: &str) {
@@ -583,7 +606,13 @@ impl Owner {
         let file = Self::file(root, dimension);
         let mut tanks: Vec<(&[i32; 3], &fluids::Tank)> = self.tanks.iter().filter(|(_, t)| t.amount > 0).collect();
         tanks.sort_by_key(|(p, _)| **p);
+        let mut hoses: Vec<(&[i32; 3], &hose::Hose)> = self.hoses.iter().filter(|(_, h)| h.offset > 0.0).collect();
+        hoses.sort_by_key(|(p, _)| **p);
+        let mut vaults: Vec<(&[i32; 3], &vault::Vault)> = self.vaults.iter().filter(|(_, v)| !v.is_empty()).collect();
+        vaults.sort_by_key(|(p, _)| **p);
         let text = serde_json::json!({
+            "hoses": hoses,
+            "vaults": vaults,
             "tanks": tanks,
             "deployers": deployers,
             "motors": rows,
@@ -861,6 +890,8 @@ struct Shown {
     arms: HashMap<[i32; 3], arm::Snapshot>,
     /// The deployers' strokes: their state (0 waiting, 1 out, 2 back) and timer.
     deployers: HashMap<[i32; 3], [i32; 2]>,
+    /// How far each hose pulley's hose is down, in thousandths of a block.
+    hoses: HashMap<[i32; 3], i32>,
 }
 
 /// What the parts show as a payload: the turning parts (each half's
@@ -878,6 +909,7 @@ fn encode(shown: &Shown) -> Vec<u8> {
         targets,
         arms,
         deployers,
+        hoses,
     } = shown;
     let mut out = Vec::with_capacity(
         37 + speeds.len() * 20 + jammed.len() * 12 + stress.len() * 20 + targets.len() * 16,
@@ -956,11 +988,16 @@ fn encode(shown: &Shown) -> Vec<u8> {
         out.extend_from_slice(&state.to_le_bytes());
         out.extend_from_slice(&timer.to_le_bytes());
     }
+    out.extend_from_slice(&(hoses.len() as u32).to_le_bytes());
+    for (p, offset) in hoses {
+        pos(&mut out, p);
+        out.extend_from_slice(&offset.to_le_bytes());
+    }
     out
 }
 
 /// The payload's form.
-const VERSION: u8 = 10;
+const VERSION: u8 = 11;
 
 fn decode(data: &[u8]) -> Option<Shown> {
     let mut at = 0usize;
@@ -1073,6 +1110,12 @@ fn decode(data: &[u8]) -> Option<Shown> {
         let stroke = [i32::from_le_bytes(word(&b[12..16])), i32::from_le_bytes(word(&b[16..20]))];
         deployers.insert(pos(b), stroke);
     }
+    let count = u32::from_le_bytes(word(next(4)?)) as usize;
+    let mut hoses = HashMap::with_capacity(count.min(1 << 10));
+    for _ in 0..count {
+        let b = next(16)?;
+        hoses.insert(pos(b), i32::from_le_bytes(word(&b[12..16])));
+    }
     Some(Shown {
         speeds,
         jammed,
@@ -1084,6 +1127,7 @@ fn decode(data: &[u8]) -> Option<Shown> {
         targets,
         arms,
         deployers,
+        hoses,
     })
 }
 
@@ -1150,7 +1194,18 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         Part::Drill(facing) => vec![("create:block/mechanical_drill/head", facing, 1.0, 0, Dir::South)],
         // PumpRenderer's cog, by partialFacing: modelled facing south.
         Part::Pump(facing) => vec![("create:block/mechanical_pump/cog", facing, 1.0, 0, Dir::South)],
-        Part::Pipe(_) | Part::Tank | Part::Spout | Part::Drain | Part::SteamEngine(_) => Vec::new(),
+        Part::Pipe(_)
+        | Part::Tank
+        | Part::Spout
+        | Part::Drain
+        | Part::SteamEngine(_)
+        | Part::SmartPipe(_)
+        | Part::Vault(_) => Vec::new(),
+        // FluidValveRenderer's and HosePulleyRenderer's shaft through them.
+        Part::Valve { facing, along_first } => {
+            vec![(SHAFT, positive(deployer::shaft_axis(facing, along_first)), 1.0, 0, Dir::Up)]
+        }
+        Part::HosePulley(facing) => vec![(SHAFT, positive(hose::clockwise(facing).axis()), 1.0, 0, Dir::Up)],
         // DeployerRenderer's shaft through it; the pole and hand are drawn with its stroke.
         Part::Deployer { facing, along_first } => {
             vec![(SHAFT, positive(deployer::shaft_axis(facing, along_first)), 1.0, 0, Dir::Up)]
@@ -1253,6 +1308,10 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::Spout
         | Part::Drain
         | Part::SteamEngine(_)
+        | Part::Valve { .. }
+        | Part::SmartPipe(_)
+        | Part::HosePulley(_)
+        | Part::Vault(_)
         | Part::SpeedController(_) => Vec::new(),
     }
 }
@@ -1410,7 +1469,8 @@ impl Game<'_> {
             let mut drops: Vec<([i32; 3], ItemStack)> = Vec::new();
             for p in &removed {
                 let held = (owner.mills.remove(p).map(|mut m| m.take_all()))
-                    .or_else(|| owner.basins.remove(p).map(|mut b| b.take_all()));
+                    .or_else(|| owner.basins.remove(p).map(|mut b| b.take_all()))
+                    .or_else(|| owner.vaults.remove(p).map(|v| v.slots));
                 if let Some(held) = held {
                     drops.extend(held.into_iter().map(|h| (*p, ItemStack::new(&h.item, h.count))));
                     owner.save(&root, dimension);
@@ -1495,6 +1555,7 @@ impl Game<'_> {
         self.tachyon_clocks();
         self.tachyon_saws();
         self.tachyon_deployers();
+        self.tachyon_hoses();
         self.tachyon_fluids();
         self.tachyon_steam();
         let removed = OWNERS.with_borrow_mut(|owners| {
@@ -1711,6 +1772,11 @@ impl Game<'_> {
                     held.insert(*p, vec![(h.item.clone(), h.count)]);
                 }
             }
+            for (p, v) in &owner.vaults {
+                if !v.is_empty() {
+                    held.insert(*p, v.slots.iter().map(|h| (h.item.clone(), h.count)).collect());
+                }
+            }
             for (p, chute) in &owner.chutes {
                 if !matches!(owner.index.parts.get(p), Some(Part::Chute(_, _))) {
                     continue;
@@ -1759,6 +1825,12 @@ impl Game<'_> {
                 .collect();
             if strokes != owner.shown.deployers {
                 owner.shown.deployers = strokes;
+                send = true;
+            }
+            let hoses: HashMap<[i32; 3], i32> =
+                owner.hoses.iter().map(|(p, h)| (*p, (h.offset * 1000.0).round() as i32)).collect();
+            if hoses != owner.shown.hoses {
+                owner.shown.hoses = hoses;
                 send = true;
             }
             if owner.mills_changed && owner.ticks % RESEND == 0 {
@@ -2004,7 +2076,7 @@ impl Game<'_> {
         let state = self.world.block(pos[0], pos[1], pos[2]).0;
         matches!(
             kinds.part(state),
-            Some(Part::Millstone | Part::Depot | Part::Basin | Part::Drain)
+            Some(Part::Millstone | Part::Depot | Part::Basin | Part::Drain | Part::Vault(_))
         )
     }
 
@@ -2038,6 +2110,15 @@ impl Game<'_> {
         OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
             owner.load(&root, dimension);
+            if let Some(Part::Vault(_)) = part {
+                let into = vault::joined(&owner.index.parts, pos)
+                    .into_iter()
+                    .find(|p| owner.vaults.get(p).is_none_or(|v| v.room(&one.item, 1) == 1));
+                let Some(into) = into else { return false };
+                let took = owner.vaults.entry(into).or_default().put(&one.item, 1) == 1;
+                owner.mills_changed |= took;
+                return took;
+            }
             if part == Some(Part::Basin) {
                 let b = owner.basins.entry(pos).or_default();
                 let took = b.put(&one.item, 1) == 1;
@@ -2077,6 +2158,13 @@ impl Game<'_> {
         let create = self.tachyon_create_recipes();
         let count = OWNERS.with_borrow(|owners| {
             let owner = owners.get(self.dim.id());
+            if let (Some(Part::Vault(_)), Some(o)) = (part, owner) {
+                let blocks = vault::joined(&o.index.parts, pos);
+                let room: u32 = (blocks.iter())
+                    .map(|p| o.vaults.get(p).cloned().unwrap_or_default().room(&stack.item, stack.count))
+                    .sum();
+                return room.min(stack.count);
+            }
             if part == Some(Part::Basin) {
                 let mut basin = owner.and_then(|o| o.basins.get(&pos)).cloned().unwrap_or_default();
                 return basin.put(&stack.item, stack.count);
@@ -2106,6 +2194,18 @@ impl Game<'_> {
         OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
             owner.load(&root, dimension);
+            if let Some(Part::Vault(_)) = part {
+                let from = vault::joined(&owner.index.parts, pos)
+                    .into_iter()
+                    .find(|p| owner.vaults.get(p).is_some_and(|v| !v.is_empty()))?;
+                let v = owner.vaults.get_mut(&from)?;
+                let one = v.take_one()?;
+                if v.is_empty() {
+                    owner.vaults.remove(&from);
+                }
+                owner.mills_changed = true;
+                return Some((ItemStack::new(&one.item, one.count), false));
+            }
             // A basin: what was mixed only.
             if part == Some(Part::Basin) {
                 let b = owner.basins.get_mut(&pos)?;
@@ -2146,7 +2246,8 @@ impl Game<'_> {
     /// the items to work, `input`).
     pub(super) fn tachyon_machine_return(&mut self, pos: [i32; 3], rest: ItemStack, input: bool) {
         let state = self.world.block(pos[0], pos[1], pos[2]).0;
-        let basin = (self.tachyon_kinds()).is_some_and(|k| k.part(state) == Some(Part::Basin));
+        let part = self.tachyon_kinds().and_then(|k| k.part(state));
+        let basin = part == Some(Part::Basin);
         let dimension = self.dim.id();
         OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
@@ -2154,7 +2255,10 @@ impl Game<'_> {
                 item: rest.item.to_string(),
                 count: rest.count,
             };
-            if basin {
+            if let Some(Part::Vault(_)) = part {
+                let v = owner.vaults.entry(pos).or_default();
+                v.slots.insert(0, held);
+            } else if basin {
                 owner.basins.entry(pos).or_default().give_back(held);
             } else {
                 owner.mills.entry(pos).or_default().give_back(held, input);
@@ -2242,6 +2346,7 @@ impl Game<'_> {
         let mut trays: Vec<([i32; 3], Part, Vec<ItemStack>, bool)> = Vec::new();
         let mut arms: Vec<([i32; 3], f32, arm::Snapshot)> = Vec::new();
         let mut strokes: HashMap<[i32; 3], ([i32; 2], bool)> = HashMap::new();
+        let mut hoses: HashMap<[i32; 3], f32> = HashMap::new();
         self.tachyon_view(|index, shown| {
             for (pos, part) in &index.parts {
                 let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
@@ -2258,6 +2363,9 @@ impl Game<'_> {
                 }
                 let speed = shown.speeds.get(pos).copied().unwrap_or([0.0; 2]);
                 let create = kinds.create(self.world.block(pos[0], pos[1], pos[2]).0);
+                if matches!(part, Part::HosePulley(_)) {
+                    hoses.insert(*pos, shown.hoses.get(pos).map_or(0.0, |o| *o as f32 / 1000.0));
+                }
                 if matches!(part, Part::Deployer { .. }) {
                     let stroke = shown.deployers.get(pos).copied().unwrap_or([0, 0]);
                     strokes.insert(*pos, (stroke, shown.held.contains_key(pos)));
@@ -2358,6 +2466,64 @@ impl Game<'_> {
                         * Mat4::from_translation(Vec3::splat(-0.5));
                     let state = self.tachyon_model("create:block/belt_pulley");
                     self.submit_item_world(&state, pose, light, out);
+                }
+            }
+            // FluidValveRenderer's pointer, a quarter turn round while open.
+            if create && let Part::Valve { facing, along_first } = part {
+                use std::f32::consts::{FRAC_PI_2, PI};
+                let pipe = fluids::valve_axis(facing, along_first);
+                let shaft = deployer::shaft_axis(facing, along_first);
+                let open = self.native_block_property(pos, "enabled").as_deref() == Some("true");
+                let offset = if (pipe != Axis::Y && shaft == Axis::X) || pipe == Axis::Y { 90.0 } else { 0.0 };
+                let turn = offset + if open { -90.0f32 } else { 0.0 };
+                // AngleHelper.horizontalAngle, then up 0, down 180, else 90 about x.
+                let yaw = match facing {
+                    Dir::North => PI,
+                    Dir::East => FRAC_PI_2,
+                    Dir::West => -FRAC_PI_2,
+                    _ => 0.0,
+                };
+                let pitch = match facing {
+                    Dir::Up => 0.0,
+                    Dir::Down => PI,
+                    _ => FRAC_PI_2,
+                };
+                let pose = Mat4::from_translation(origin + Vec3::splat(0.5))
+                    * Mat4::from_rotation_y(yaw)
+                    * Mat4::from_rotation_x(pitch)
+                    * Mat4::from_rotation_y(turn.to_radians())
+                    * Mat4::from_translation(Vec3::splat(-0.5));
+                let state = self.tachyon_model("create:block/fluid_valve/pointer");
+                self.submit_item_world(&state, pose, light, out);
+            }
+            // HosePulleyRenderer (AbstractPulleyRenderer): the coil, the hose down to its magnet.
+            if create && let Part::HosePulley(facing) = part {
+                let axis = hose::clockwise(facing).axis();
+                let coil = Mat4::from_translation(origin + Vec3::splat(0.5))
+                    * point(positive(axis))
+                    * point(Dir::South).inverse()
+                    * Mat4::from_translation(Vec3::splat(-0.5));
+                let state = self.tachyon_model("create:block/hose_pulley/hose_coil");
+                self.submit_item_world(&state, coil, light, out);
+                let offset = hoses.get(&pos).copied().unwrap_or(0.0);
+                let at = |down: f32| Mat4::from_translation(origin - Vec3::new(0.0, down, 0.0));
+                let magnet = if offset > 0.25 {
+                    "create:block/hose_pulley/pulley_magnet"
+                } else {
+                    "create:block/hose_pulley/rope_half_magnet"
+                };
+                let state = self.tachyon_model(magnet);
+                self.submit_item_world(&state, at(offset), light, out);
+                let f = offset % 1.0;
+                if offset > 0.75 && !(0.25..=0.75).contains(&f) {
+                    let state = self.tachyon_model("create:block/hose_pulley/rope_half");
+                    self.submit_item_world(&state, at(if f > 0.75 { f - 1.0 } else { f }), light, out);
+                }
+                let rope = self.tachyon_model("create:block/hose_pulley/rope");
+                let mut i = 0.0;
+                while i < offset - 1.25 {
+                    self.submit_item_world(&rope, at(offset - i - 1.0), light, out);
+                    i += 1.0;
                 }
             }
             // DeployerRenderer's pole and hand, out by its stroke.
@@ -2652,6 +2818,10 @@ impl Game<'_> {
             Part::Drain => ("item_drain", "Item Drain"),
             Part::SteamEngine(_) => ("steam_engine", "Steam Engine"),
             Part::PoweredShaft(_) => ("shaft", "Shaft"),
+            Part::Valve { .. } => ("fluid_valve", "Fluid Valve"),
+            Part::SmartPipe(_) => ("smart_fluid_pipe", "Smart Fluid Pipe"),
+            Part::HosePulley(_) => ("hose_pulley", "Hose Pulley"),
+            Part::Vault(_) => ("item_vault", "Item Vault"),
             Part::Press(_) => ("mechanical_press", "Mechanical Press"),
             Part::Depot => ("depot", "Depot"),
             Part::Mixer => ("mechanical_mixer", "Mechanical Mixer"),
@@ -2722,7 +2892,15 @@ impl Game<'_> {
         // A depot, a basin, a chute: what it holds.
         if matches!(
             part,
-            Part::Depot | Part::Basin | Part::Chute(_, _) | Part::Tank | Part::Spout | Part::Drain | Part::Deployer { .. }
+            Part::Depot
+                | Part::Basin
+                | Part::Chute(_, _)
+                | Part::Tank
+                | Part::Spout
+                | Part::Drain
+                | Part::Deployer { .. }
+                | Part::Vault(_)
+                | Part::HosePulley(_)
         ) {
             let names: Vec<String> = (held.unwrap_or_default().iter())
                 .map(|(item, n)| {
@@ -2810,6 +2988,7 @@ mod tests {
             ]),
             arms: HashMap::from([([8, 64, 2], arm.snapshot([8, 64, 2]))]),
             deployers: HashMap::from([([9, 64, 2], [1, 500])]),
+            hoses: HashMap::from([([10, 64, 2], 3500)]),
             chutes: HashMap::from([
                 ([3, 64, 2], [0.8, 0.6, 0.0]),
                 ([-3, 65, 2], [-0.5, -0.3, 3.0]),

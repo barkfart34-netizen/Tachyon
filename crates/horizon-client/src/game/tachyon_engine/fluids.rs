@@ -19,7 +19,7 @@
 //! fluids aren't drawn in pipes, tanks or basins (the goggles read them), no valves, smart
 //! pipes, hose pulleys or potions, and branching pipes fill their ends in turn, not by
 //! Create's pressure split.
-use super::kinetic::{Dir, Part};
+use super::kinetic::{Axis, Dir, Part};
 use super::millstone::Held;
 use horizon_client::items::ItemStack;
 use serde::{Deserialize, Serialize};
@@ -148,8 +148,27 @@ pub(super) fn connects(neighbour: Option<Part>, d: Dir) -> bool {
     match neighbour {
         Some(Part::Pipe(_) | Part::Tank | Part::Spout | Part::Drain | Part::Basin) => true,
         Some(Part::Pump(facing)) => facing.axis() == d.axis(),
+        Some(Part::Valve { facing, along_first }) => valve_axis(facing, along_first) == d.axis(),
+        Some(Part::SmartPipe(a)) => a == d.axis(),
+        // HosePulleyBlock.hasPipeTowards: its counter-clockwise side.
+        Some(Part::HosePulley(facing)) => super::hose::counter_clockwise(facing) == d.opposite(),
         _ => false,
     }
+}
+
+/// FluidValveBlock.getPipeAxis: the axis that is neither its facing's nor its shaft's.
+pub(super) fn valve_axis(facing: Dir, along_first: bool) -> Axis {
+    let shaft = super::deployer::shaft_axis(facing, along_first);
+    [Axis::X, Axis::Y, Axis::Z]
+        .into_iter()
+        .find(|a| *a != facing.axis() && *a != shaft)
+        .unwrap_or(Axis::Y)
+}
+
+/// A straight pipe's sides along `axis`.
+pub(super) fn straight(axis: Axis) -> u8 {
+    let [a, b] = axis.dirs();
+    bit(a) | bit(b)
 }
 
 /// `FluidPipeBlock.updateBlockState`: the sides a pipe opens, by which of its neighbours it
@@ -177,6 +196,8 @@ pub(super) enum End {
     Holder([i32; 3]),
     /// The open end of a pipe, into the space at this position.
     Open([i32; 3]),
+    /// A hose pulley: what its hose reaches (`hose.rs`).
+    Hose([i32; 3]),
 }
 
 fn add(a: [i32; 3], d: Dir) -> [i32; 3] {
@@ -190,6 +211,9 @@ pub(super) fn ends(parts: &HashMap<[i32; 3], Part>, pump: [i32; 3], side: Dir) -
     let first = add(pump, side);
     match parts.get(&first) {
         Some(Part::Tank | Part::Spout | Part::Drain | Part::Basin) => return vec![End::Holder(first)],
+        Some(Part::HosePulley(f)) if super::hose::counter_clockwise(*f) == side.opposite() => {
+            return vec![End::Hose(first)];
+        }
         Some(Part::Pipe(mask)) if mask & bit(side.opposite()) != 0 => {}
         _ => return Vec::new(),
     }
@@ -213,8 +237,11 @@ pub(super) fn ends(parts: &HashMap<[i32; 3], Part>, pump: [i32; 3], side: Dir) -
                     }
                 }
                 Some(Part::Tank | Part::Spout | Part::Drain | Part::Basin) => out.push(End::Holder(q)),
-                // Another pump, or a pipe turned away: no way on.
-                Some(Part::Pump(_) | Part::Pipe(_)) => {}
+                Some(Part::HosePulley(f)) if super::hose::counter_clockwise(*f) == d.opposite() => {
+                    out.push(End::Hose(q));
+                }
+                // Another pump, a pipe turned away, a closed valve or a pulley's side: no way on.
+                Some(Part::Pump(_) | Part::Pipe(_) | Part::Valve { .. } | Part::HosePulley(_)) => {}
                 _ => out.push(End::Open(q)),
             }
         }
@@ -269,10 +296,26 @@ impl super::super::Game<'_> {
                 return (HashMap::new(), Vec::new());
             };
             let parts: HashMap<[i32; 3], Part> = (o.index.parts.iter())
-                .filter(|(_, p)| {
-                    matches!(p, Part::Pipe(_) | Part::Pump(_) | Part::Tank | Part::Spout | Part::Drain | Part::Basin)
+                .filter_map(|(p, part)| {
+                    let turning = o.shown.speeds.get(p).is_some_and(|s| s[0] != 0.0);
+                    let part = match *part {
+                        Part::Pipe(_)
+                        | Part::Pump(_)
+                        | Part::Tank
+                        | Part::Spout
+                        | Part::Drain
+                        | Part::Basin
+                        | Part::HosePulley(_) => *part,
+                        Part::SmartPipe(a) => Part::Pipe(straight(a)),
+                        // FluidValveBlockEntity: open while its shaft turns.
+                        Part::Valve { facing, along_first } if turning => {
+                            Part::Pipe(straight(valve_axis(facing, along_first)))
+                        }
+                        Part::Valve { .. } => *part,
+                        _ => return None,
+                    };
+                    Some((*p, part))
                 })
-                .map(|(p, part)| (*p, *part))
                 .collect();
             let mut pumps: Vec<([i32; 3], Dir, f32)> = (parts.iter())
                 .filter_map(|(p, part)| match part {
@@ -286,6 +329,7 @@ impl super::super::Game<'_> {
             pumps.sort_by_key(|p| p.0);
             (parts, pumps)
         });
+        self.tachyon_valves();
         if parts.is_empty() {
             return;
         }
@@ -359,6 +403,7 @@ impl super::super::Game<'_> {
                     Some((fluid.to_owned(), BUCKET))
                 })
             }
+            End::Hose(p) => self.tachyon_hose_peek(p),
         }
     }
 
@@ -378,7 +423,7 @@ impl super::super::Game<'_> {
                         t.drain(amount);
                     }
                 }
-                End::Open(p) => {
+                End::Open(p) | End::Hose(p) => {
                     if let Some(t) = o.open_ends.get_mut(&p) {
                         t.drain(amount);
                     }
@@ -436,6 +481,32 @@ impl super::super::Game<'_> {
                     });
                 }
                 n
+            }
+            End::Hose(p) => self.tachyon_hose_offer(p, fluid, amount),
+        }
+    }
+
+    /// FluidValveBlockEntity: a valve's `enabled` follows its shaft, open while it turns.
+    fn tachyon_valves(&mut self) {
+        let dimension = self.native_dimension();
+        let valves: Vec<([i32; 3], bool)> = super::OWNERS.with_borrow(|owners| {
+            let Some(o) = owners.get(dimension) else { return Vec::new() };
+            (o.index.parts.iter())
+                .filter(|(_, part)| matches!(part, Part::Valve { .. }))
+                .map(|(p, _)| (*p, o.shown.speeds.get(p).is_some_and(|s| s[0] != 0.0)))
+                .collect()
+        });
+        let registry = self.pack.assets.registry;
+        for (p, open) in valves {
+            let value = if open { "true" } else { "false" };
+            if self.native_block_property(p, "enabled").as_deref() == Some(value) {
+                continue;
+            }
+            let state = self.world.block(p[0], p[1], p[2]);
+            let Some(mut s) = registry.state(state).cloned() else { continue };
+            s.properties.insert("enabled".into(), value.into());
+            if let Ok(id) = registry.resolve(&s) {
+                self.native_set_block(dimension, p, id, 2);
             }
         }
     }
@@ -732,6 +803,14 @@ impl super::super::GameLevel<'_> {
         Some(out)
     }
 
+    /// The axis a straight pipe placed at `pos` lies along: toward a pipe beside it, else the look.
+    fn tachyon_pipe_axis(&self, pos: [i32; 3], looking: Dir) -> Axis {
+        Dir::ALL
+            .into_iter()
+            .find(|d| connects(self.tachyon_part_beside(pos, *d, None), *d))
+            .map_or(looking.axis(), Dir::axis)
+    }
+
     /// A tank's `top` and `bottom` (FluidTankBlock): whether it ends its column there.
     fn tachyon_tank_state(
         &self,
@@ -777,6 +856,45 @@ impl super::super::GameLevel<'_> {
                     _ => target,
                 };
                 self.native_state_with_property(state, "facing", facing.name())
+            }
+            // DirectionalAxisKineticBlock with FluidValveBlock.prefersConnectionTo: its pipe along
+            // a pipe beside it, else along the look; its facing up, or the player's way.
+            Some("create:fluid_valve") => {
+                let pipe = self.tachyon_pipe_axis(pos, looking);
+                let facing = if pipe == Axis::Y { super::hose::horizontal(context.yaw).opposite() } else { Dir::Up };
+                let along = [false, true].into_iter().find(|a| valve_axis(facing, *a) == pipe).unwrap_or(false);
+                self.native_state_with_property(state, "facing", facing.name())
+                    .and_then(|s| self.native_state_with_property(s, "axis_along_first", if along { "true" } else { "false" }))
+                    .and_then(|s| self.native_state_with_property(s, "enabled", "false"))
+            }
+            // SmartFluidPipeBlock.getStateForPlacement: on a wall for an upright pipe.
+            Some("create:smart_fluid_pipe") => {
+                let pipe = self.tachyon_pipe_axis(pos, looking);
+                let (face, facing) = if pipe == Axis::Y {
+                    ("wall", super::hose::horizontal(context.yaw).opposite())
+                } else if looking.axis() == pipe {
+                    ("floor", looking)
+                } else {
+                    ("floor", pipe.dirs()[1])
+                };
+                self.native_state_with_property(state, "face", face)
+                    .and_then(|s| self.native_state_with_property(s, "facing", facing.name()))
+            }
+            Some("create:hose_pulley") => {
+                let facing = super::hose::horizontal(context.yaw).opposite();
+                self.native_state_with_property(state, "facing", facing.name())
+            }
+            // ItemVaultBlock.getStateForPlacement: along a vault beside it, else the player's way.
+            Some("create:item_vault") => {
+                let beside = [Dir::North, Dir::South, Dir::West, Dir::East].into_iter().find_map(|d| {
+                    match self.tachyon_part_beside(pos, d, None) {
+                        Some(Part::Vault(a)) => Some(a),
+                        _ => None,
+                    }
+                });
+                let axis = beside.unwrap_or_else(|| super::hose::horizontal(context.yaw).axis());
+                self.native_state_with_property(state, "axis", if axis == Axis::X { "x" } else { "z" })
+                    .and_then(|s| self.native_state_with_property(s, "large", "false"))
             }
             _ => return,
         };

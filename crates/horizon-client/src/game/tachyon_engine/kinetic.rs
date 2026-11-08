@@ -221,6 +221,16 @@ pub enum Part {
     Pipe(u8),
     /// Create's mechanical pump: pushing out of its facing, turned as a small cogwheel along it.
     Pump(Dir),
+    /// Create's fluid valve (DirectionalAxisKineticBlock): a pipe along the axis neither its
+    /// facing nor its shaft's, open while its shaft turns (`fluids.rs`).
+    Valve { facing: Dir, along_first: bool },
+    /// Create's smart fluid pipe: a straight pipe along its axis (`fluids.rs`).
+    SmartPipe(Axis),
+    /// Create's hose pulley, facing: its shaft out of its clockwise side, its pipe out of the
+    /// other, its hose down (`hose.rs`).
+    HosePulley(Dir),
+    /// Create's item vault, along its axis (`vault.rs`).
+    Vault(Axis),
     /// Create's steam engine, pointing away from its boiler's tank (`steam.rs`).
     SteamEngine(Dir),
     /// Create's powered shaft: a shaft a steam engine turns, a source.
@@ -311,9 +321,10 @@ impl Part {
             }
             Part::SpeedController(a) => a != Axis::Y && d.axis() == a,
             Part::Drill(facing) => d == facing.opposite(),
-            Part::Deployer { facing, along_first } => {
+            Part::Deployer { facing, along_first } | Part::Valve { facing, along_first } => {
                 d.axis() == super::deployer::shaft_axis(facing, along_first)
             }
+            Part::HosePulley(facing) => d == super::hose::clockwise(facing),
             // Its pulleys' shafts, out of its sides.
             Part::Belt(a) => d.axis() != a && d.axis() != Axis::Y,
             Part::EncasedCog(_)
@@ -329,6 +340,8 @@ impl Part {
             | Part::Tank
             | Part::Spout
             | Part::Drain
+            | Part::SmartPipe(_)
+            | Part::Vault(_)
             | Part::SteamEngine(_) => false,
         }
     }
@@ -340,6 +353,8 @@ impl Part {
             Part::Millstone | Part::Saw { .. } | Part::Drill(_) | Part::Deployer { .. } => 4.0,
             // AllBlocks: CStress.setImpact(4.0) for the pump.
             Part::Pump(_) => 4.0,
+            // AllBlocks: CStress.setImpact(4.0) for the hose pulley.
+            Part::HosePulley(_) => 4.0,
             Part::Press(_) => 8.0,
             Part::Mixer => 4.0,
             Part::Arm => 2.0,

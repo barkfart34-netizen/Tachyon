@@ -136,6 +136,23 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - Partikelnya memakai soul fire flame dan sesekali asap; nama proses tampil di kacamata dalam bahasa
     Inggris dan Indonesia.
   - Hasil cuci dan haunting dikocok per barang, seperti `RecipeApplier` Create.
+- **Fluid valve, smart fluid pipe, hose pulley, item vault** (8 November 2026):
+  - fluid valve (`fluids.rs`): pipa di sumbu yang bukan arah hadap dan bukan sumbu shaft-nya
+    (`FluidValveBlock.getPipeAxis`); terbuka (`enabled`, model terbuka, jarum berputar seperempat)
+    hanya selama shaft-nya berputar, tertutup menghalangi aliran;
+  - smart fluid pipe: pipa lurus (tegak bila `face=wall`, selain itu sepanjang hadapnya); filternya belum;
+  - hose pulley (`hose.rs`): beban 4 per RPM, selang turun `RPM / 512` blok per tick (naik bila
+    berputar terbalik) sampai di atas blok yang tidak bisa dilewati fluida; saat berhenti, pompa
+    lewat sisi pipanya (sisi berlawanan dari shaft) mengambil sumber tertinggi lalu terjauh dari
+    badan fluida tempat selang berada (jangkauan 128), air tak habis bila badannya 10.000 blok;
+    didorong, ia menuang satu sumber per ember di tempat bebas terendah lalu terdekat; selang,
+    gulungan dan magnet digambar, panjangnya dikirim ke pemain LAN (payload 11);
+  - item vault (`vault.rs`): 20 slot per blok, tanpa jendela; hopper, funnel dan chute mengisi dan
+    mengambil; blok vault sejajar yang bersebelahan menjadi satu vault (maks. 81 blok); isi blok
+    yang dihancurkan jatuh; kacamata menampilkan isinya;
+  - porter versi 10: varian `waterlogged` Create dibuang (valve, smart pipe, steam engine);
+  - belum: filter smart pipe, copper valve handle, tekstur tersambung vault, tumpukan maks. per item
+    (selalu 64), hose pulley hanya menuang air/lava, aturan lava tak habis.
 - **Sabuk (belt)** (`tachyon_engine/create_belt.rs`, 8 November 2026):
   - belt connector dipakai pada shaft, lalu pada shaft kedua yang sejajar sumbunya, setinggi, dan
     segaris melintang (`canConnect`, kurang dari 20 blok, tidak ada yang menghalangi): sabuk `start`,
