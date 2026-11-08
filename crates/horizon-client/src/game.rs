@@ -21511,7 +21511,10 @@ fn load_resources(
                     "Horizon: rest-ready after {} ms",
                     started.elapsed().as_millis()
                 );
-                write_prepared_files(vanilla_root);
+                // Tachyon: the root read (a mirror of the game's resources with
+                // its content mods, always so in Tachyon) gets its own file
+                // first; the game's own resources' file serves none of its reads.
+                write_prepared_files(vec![root, vanilla_root]);
                 Ok(())
             })?;
         Some(WorldRestLoader {
@@ -21582,24 +21585,36 @@ fn load_resources(
 /// Write the prepared folder's `horizon-data.bin` when it has none the game
 /// can use: on a thread of its own, at idle priority, once the start is done.
 /// This start has just read the folder's files (they are in the disk cache);
-/// the next starts read them from one file (#1961).
-fn write_prepared_files(root: PathBuf) {
+/// the next starts read them from one file (#1961). Tachyon: for each of
+/// `roots` in turn (the root read, then the game's own), one at a time.
+fn write_prepared_files(mut roots: Vec<PathBuf>) {
     use horizon_core::prepared_files;
-    if prepared_files::open(&root).is_some() || !root.join("horizon-resources.json").is_file() {
+    roots.dedup();
+    roots.retain(|root| {
+        prepared_files::open(root).is_none() && root.join("horizon-resources.json").is_file()
+    });
+    if roots.is_empty() {
         return;
     }
     let spawned = std::thread::Builder::new()
         .name("Prepared data file".into())
         .spawn(move || {
             horizon_threads::idle_current();
-            let started = Instant::now();
-            match prepared_files::write(&root) {
-                Ok(()) => log::info!(
-                    "Horizon: wrote {} in {} ms",
-                    prepared_files::FILE_NAME,
-                    started.elapsed().as_millis()
-                ),
-                Err(e) => log::info!("Horizon: {} not written: {e}", prepared_files::FILE_NAME),
+            for root in roots {
+                let started = Instant::now();
+                match prepared_files::write(&root) {
+                    Ok(()) => log::info!(
+                        "Horizon: wrote {} in {} ms ({})",
+                        prepared_files::FILE_NAME,
+                        started.elapsed().as_millis(),
+                        root.display()
+                    ),
+                    Err(e) => log::info!(
+                        "Horizon: {} not written in {}: {e}",
+                        prepared_files::FILE_NAME,
+                        root.display()
+                    ),
+                }
             }
         });
     if let Err(e) = spawned {
