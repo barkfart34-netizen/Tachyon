@@ -1,0 +1,36 @@
+# packaging/windows/Tachyon-Mabar.bat run on a clean Windows machine with no questions (TACHYON_MABAR_AUTO=1):
+# it must download and unpack the newest Tachyon for Windows, install Tailscale, add the firewall rules and the
+# desktop shortcut. Tailscale's login is the one step left out (it needs a person or an auth key).
+name: Tachyon Mabar
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  mabar:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: packaging/windows
+      - name: The bat, as a player runs it
+        shell: cmd
+        env:
+          TACHYON_MABAR_AUTO: "1"
+        run: call packaging\windows\Tachyon-Mabar.bat < NUL
+      - name: What it left
+        shell: pwsh
+        run: |
+          $ok = $true
+          function Check($what, $good) { if ($good) { "ok: $what" } else { "MISSING: $what"; $script:ok = $false } }
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\Tachyon\app" -Filter Tachyon.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          Check "Tachyon.exe ($($exe.FullName))" $exe
+          Check "version stamp $(Get-Content "$env:LOCALAPPDATA\Tachyon\versi.txt" -ErrorAction SilentlyContinue)" (Test-Path "$env:LOCALAPPDATA\Tachyon\versi.txt")
+          Check 'Tailscale installed' (Test-Path "$env:ProgramFiles\Tailscale\tailscale.exe")
+          Check 'Tailscale service' (Get-Service Tailscale -ErrorAction SilentlyContinue)
+          Check 'firewall rule Tachyon' (Get-NetFirewallRule -DisplayName 'Tachyon' -ErrorAction SilentlyContinue)
+          Check 'firewall rule port 25580' (Get-NetFirewallRule -DisplayName 'Tachyon (Play with Friends)' -ErrorAction SilentlyContinue)
+          Check 'desktop shortcut' (Test-Path (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Tachyon.lnk'))
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" version
+          if (-not $ok) { exit 1 }
