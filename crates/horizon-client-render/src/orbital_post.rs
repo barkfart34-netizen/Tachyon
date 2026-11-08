@@ -1116,12 +1116,15 @@ pub fn draw(world: &mut crate::gfx::native_render::WorldDrawn<'_>) {
         return;
     }
     let size = world.size;
-    if world.depth_size != size {
-        // (the pass reads the depth at the picture's pixels: a world drawn smaller than the window isn't handled yet)
-        static WARNED: std::sync::Once = std::sync::Once::new();
-        WARNED.call_once(|| log::warn!("[mod orbital] the world draws smaller than the window: no post pass"));
-        return;
-    }
+    // Tachyon: a world drawn smaller than the window (a phone's resolution scale) has its depth brought up to the
+    // picture's size first, since the passes read it at the picture's pixels.
+    let mut depth_up = DEPTH_UP.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let depth: &wgpu::TextureView = if world.depth_size != size {
+        let up = depth_up.get_or_insert_with(|| DepthUp::new(world.device));
+        up.run(world.device, world.encoder, world.depth, size)
+    } else {
+        world.depth
+    };
     if drawer.input.as_ref().is_none_or(|(s, _, _)| *s != size) {
         let texture = world.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Orbital Laser pass input"),
@@ -1210,9 +1213,167 @@ pub fn draw(world: &mut crate::gfx::native_render::WorldDrawn<'_>) {
         world.queue,
         world.encoder,
         input_view,
-        world.depth,
+        depth,
         size,
         uniform,
         world.color_view,
     );
 }
+
+static DEPTH_UP: Mutex<Option<DepthUp>> = Mutex::new(None);
+
+/// Tachyon: the world's depth copied up to the picture's size, for a world drawn at a lower resolution: one
+/// full-screen triangle writing each pixel's depth from the nearest one of the smaller depth.
+struct DepthUp {
+    pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    target: Option<([u32; 2], wgpu::TextureView)>,
+}
+
+const DEPTH_UP_SHADER: &str = r"
+@group(0) @binding(0) var source: texture_depth_2d;
+@group(0) @binding(1) var nearest: sampler;
+struct Out {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+@vertex fn vs(@builtin(vertex_index) i: u32) -> Out {
+    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+    var out: Out;
+    out.position = vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+    out.uv = vec2<f32>(p.x, 1.0 - p.y);
+    return out;
+}
+@fragment fn fs(in: Out) -> @builtin(frag_depth) f32 {
+    return textureSampleLevel(source, nearest, in.uv, 0);
+}
+";
+
+impl DepthUp {
+    fn new(device: &wgpu::Device) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Orbital Laser depth up"),
+            source: wgpu::ShaderSource::Wgsl(DEPTH_UP_SHADER.into()),
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Orbital Laser depth up"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Orbital Laser depth up"),
+            bind_group_layouts: &[Some(&layout)],
+            ..Default::default()
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Orbital Laser depth up"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: Default::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Orbital Laser depth up"),
+            ..Default::default()
+        });
+        Self { pipeline, layout, sampler, target: None }
+    }
+
+    /// `depth` drawn up to `size`, into a texture kept while the size stays.
+    fn run(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        depth: &wgpu::TextureView,
+        size: [u32; 2],
+    ) -> &wgpu::TextureView {
+        if self.target.as_ref().is_none_or(|(s, _)| *s != size) {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Orbital Laser depth up"),
+                size: wgpu::Extent3d {
+                    width: size[0].max(1),
+                    height: size[1].max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            self.target = Some((size, texture.create_view(&Default::default())));
+        }
+        let (_, target) = self.target.as_ref().expect("made above");
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Orbital Laser depth up"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(depth),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Orbital Laser depth up"),
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: target,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        target
+    }
+}
+
