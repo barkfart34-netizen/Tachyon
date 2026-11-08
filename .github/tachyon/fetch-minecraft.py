@@ -49,6 +49,11 @@ def fetch(url, path, want):
     os.replace(path + ".part", path)
 
 
+# The libraries of the system this runs on, as Mojang's launcher picks them (a Windows horizon-prepare wants the
+# Windows natives).
+OS_NAME = {"win32": "windows", "darwin": "osx"}.get(sys.platform, "linux")
+
+
 def allowed(library):
     rules = library.get("rules")
     if not rules:
@@ -56,7 +61,7 @@ def allowed(library):
     allow = False
     for rule in rules:
         os_rule = rule.get("os")
-        if os_rule and os_rule.get("name") not in (None, "linux"):
+        if os_rule and os_rule.get("name") not in (None, OS_NAME):
             continue
         allow = rule["action"] == "allow"
     return allow
