@@ -239,6 +239,8 @@ pub enum Part {
     Diode(Dir, super::redstone::Pulse),
     /// Create's redstone link, facing out of the block it is on (`link.rs`).
     Link(Dir),
+    /// Create's creative fluid tank: the fluid it is set to without end (`fluids.rs`).
+    CreativeTank,
     /// Create's steam engine, pointing away from its boiler's tank (`steam.rs`).
     SteamEngine(Dir),
     /// Create's powered shaft: a shaft a steam engine turns, a source.
@@ -355,6 +357,7 @@ impl Part {
             | Part::ToggleLatch(_)
             | Part::Diode(_, _)
             | Part::Link(_)
+            | Part::CreativeTank
             | Part::SteamEngine(_) => false,
         }
     }

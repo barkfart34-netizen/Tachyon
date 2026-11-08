@@ -146,7 +146,7 @@ pub(super) fn bit(d: Dir) -> u8 {
 /// (FluidPipeBlock.canConnectTo).
 pub(super) fn connects(neighbour: Option<Part>, d: Dir) -> bool {
     match neighbour {
-        Some(Part::Pipe(_) | Part::Tank | Part::Spout | Part::Drain | Part::Basin) => true,
+        Some(Part::Pipe(_) | Part::Tank | Part::CreativeTank | Part::Spout | Part::Drain | Part::Basin) => true,
         Some(Part::Pump(facing)) => facing.axis() == d.axis(),
         Some(Part::Valve { facing, along_first }) => valve_axis(facing, along_first) == d.axis(),
         Some(Part::SmartPipe(a)) => a == d.axis(),
@@ -210,7 +210,9 @@ fn add(a: [i32; 3], d: Dir) -> [i32; 3] {
 pub(super) fn ends(parts: &HashMap<[i32; 3], Part>, pump: [i32; 3], side: Dir) -> Vec<End> {
     let first = add(pump, side);
     match parts.get(&first) {
-        Some(Part::Tank | Part::Spout | Part::Drain | Part::Basin) => return vec![End::Holder(first)],
+        Some(Part::Tank | Part::CreativeTank | Part::Spout | Part::Drain | Part::Basin) => {
+            return vec![End::Holder(first)];
+        }
         Some(Part::HosePulley(f)) if super::hose::counter_clockwise(*f) == side.opposite() => {
             return vec![End::Hose(first)];
         }
@@ -236,7 +238,9 @@ pub(super) fn ends(parts: &HashMap<[i32; 3], Part>, pump: [i32; 3], side: Dir) -
                         queue.push_back((q, distance + 1));
                     }
                 }
-                Some(Part::Tank | Part::Spout | Part::Drain | Part::Basin) => out.push(End::Holder(q)),
+                Some(Part::Tank | Part::CreativeTank | Part::Spout | Part::Drain | Part::Basin) => {
+                    out.push(End::Holder(q));
+                }
                 Some(Part::HosePulley(f)) if super::hose::counter_clockwise(*f) == d.opposite() => {
                     out.push(End::Hose(q));
                 }
@@ -302,6 +306,7 @@ impl super::super::Game<'_> {
                         Part::Pipe(_)
                         | Part::Pump(_)
                         | Part::Tank
+                        | Part::CreativeTank
                         | Part::Spout
                         | Part::Drain
                         | Part::Basin
@@ -378,6 +383,10 @@ impl super::super::Game<'_> {
                     return Some((h.item[FLUID.len()..].to_owned(), h.count));
                 }
                 let t = o.tanks.get(&p)?;
+                // CreativeFluidTankBlockEntity: never runs out.
+                if parts.get(&p) == Some(&Part::CreativeTank) {
+                    return (t.amount > 0).then(|| (t.fluid.clone(), 64 * BUCKET));
+                }
                 (t.amount > 0).then(|| (t.fluid.clone(), t.amount))
             }),
             End::Open(p) => {
@@ -418,6 +427,7 @@ impl super::super::Game<'_> {
                         b.take_fluid(amount);
                     }
                 }
+                End::Holder(p) if parts.get(&p) == Some(&Part::CreativeTank) => {}
                 End::Holder(p) => {
                     if let Some(t) = o.tanks.get_mut(&p) {
                         t.drain(amount);
@@ -442,6 +452,9 @@ impl super::super::Game<'_> {
             End::Holder(p) => super::OWNERS.with_borrow_mut(|owners| {
                 let Some(o) = owners.get_mut(dimension) else { return 0 };
                 let part = parts.get(&p).copied();
+                if part == Some(Part::CreativeTank) {
+                    return 0;
+                }
                 // A running boiler uses up the water it takes (`steam.rs`).
                 if fluid == "minecraft:water"
                     && let Some(bottom) = o.boiling.get(&p).copied()
@@ -677,6 +690,28 @@ impl super::super::Game<'_> {
         let Some(held) = self.held().map(|s| s.item.to_string()) else {
             return false;
         };
+        if part == Part::CreativeTank {
+            if let Some(fluid) = fluid_of_bucket(&held) {
+                super::OWNERS.with_borrow_mut(|owners| {
+                    if let Some(o) = owners.get_mut(dimension) {
+                        o.tanks.insert(pos, Tank { fluid: fluid.to_owned(), amount: BUCKET });
+                        o.mills_changed = true;
+                    }
+                });
+                return true;
+            }
+            if held == "minecraft:bucket" {
+                let full = super::OWNERS.with_borrow(|owners| {
+                    owners.get(dimension).and_then(|o| o.tanks.get(&pos)).and_then(|t| bucket_of(&t.fluid))
+                });
+                if let Some(full) = full {
+                    self.tachyon_spend_held(1);
+                    self.give_or_drop(ItemStack::new(full, 1));
+                    return true;
+                }
+            }
+            return false;
+        }
         if let Some(fluid) = fluid_of_bucket(&held) {
             let took = super::OWNERS.with_borrow_mut(|owners| {
                 let o = owners.get_mut(dimension)?;
@@ -818,7 +853,8 @@ impl super::super::GameLevel<'_> {
         pos: [i32; 3],
         known: Option<(Dir, horizon_world::registry::BlockStateId)>,
     ) -> Option<horizon_world::registry::BlockStateId> {
-        let tank = |d| self.tachyon_part_beside(pos, d, known) == Some(Part::Tank);
+        let kind = self.tachyon_part_of(state);
+        let tank = |d| self.tachyon_part_beside(pos, d, known) == kind;
         let top = if tank(Dir::Up) { "false" } else { "true" };
         let bottom = if tank(Dir::Down) { "false" } else { "true" };
         let s = self.native_state_with_property(state, "top", top)?;
@@ -840,7 +876,7 @@ impl super::super::GameLevel<'_> {
         let looking = super::drill::looking(context.yaw, context.pitch);
         let placed = match self.native_state_block(state) {
             Some("create:fluid_pipe") => self.tachyon_pipe_state(state, pos, looking, None),
-            Some("create:fluid_tank") => self.tachyon_tank_state(state, pos, None),
+            Some("create:fluid_tank" | "create:creative_fluid_tank") => self.tachyon_tank_state(state, pos, None),
             Some("create:mechanical_pump") => {
                 let target = if context.sneaking { looking } else { looking.opposite() };
                 let t = target.offset();
@@ -920,7 +956,7 @@ impl super::super::GameLevel<'_> {
         let known = Some((d, neighbour));
         let next = match self.native_state_block(state) {
             Some("create:fluid_pipe") => self.tachyon_pipe_state(state, p, d, known),
-            Some("create:fluid_tank") => self.tachyon_tank_state(state, p, known),
+            Some("create:fluid_tank" | "create:creative_fluid_tank") => self.tachyon_tank_state(state, p, known),
             _ => return,
         };
         if let Some(next) = next.filter(|n| *n != state) {

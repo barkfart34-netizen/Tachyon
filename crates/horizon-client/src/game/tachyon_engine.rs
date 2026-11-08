@@ -231,6 +231,7 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
         "pulse_extender" => Part::Diode(facing()?, redstone::Pulse::Extender),
         "pulse_timer" => Part::Diode(facing()?, redstone::Pulse::Timer),
         "redstone_link" => Part::Link(facing()?),
+        "creative_fluid_tank" => Part::CreativeTank,
         // BeltBlock, level ones: run as Kinetica's belt along its facing (`create_belt.rs`).
         "belt" if property("slope") == Some("horizontal") => Part::Belt(facing()?.axis()),
         // FaceAttachedHorizontalDirectionalBlock's connected way: up from a floor, down from a
@@ -1230,6 +1231,7 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         | Part::ToggleLatch(_)
         | Part::Diode(_, _)
         | Part::Link(_)
+        | Part::CreativeTank
         | Part::Vault(_) => Vec::new(),
         // FluidValveRenderer's and HosePulleyRenderer's shaft through them.
         Part::Valve { facing, along_first } => {
@@ -1347,6 +1349,7 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::ToggleLatch(_)
         | Part::Diode(_, _)
         | Part::Link(_)
+        | Part::CreativeTank
         | Part::SpeedController(_) => Vec::new(),
     }
 }
@@ -1378,6 +1381,7 @@ fn takes_use(part: Part) -> bool {
             | Part::ToggleLatch(_)
             | Part::Diode(_, _)
             | Part::Link(_)
+            | Part::CreativeTank
     )
 }
 
@@ -2002,7 +2006,7 @@ impl Game<'_> {
             self.tachyon_use_burner(pos, part == Some(Part::LitBurner));
             return true;
         }
-        if let Some(p @ (Part::Tank | Part::Spout)) = part {
+        if let Some(p @ (Part::Tank | Part::CreativeTank | Part::Spout)) = part {
             let (dimension, root) = (self.dim.id(), self.save.root.clone());
             OWNERS.with_borrow_mut(|owners| owners.entry(dimension).or_default().load(&root, dimension));
             self.tachyon_use_tank(pos, p);
@@ -2908,6 +2912,7 @@ impl Game<'_> {
             Part::Diode(_, redstone::Pulse::Extender) => ("pulse_extender", "Pulse Extender"),
             Part::Diode(_, redstone::Pulse::Timer) => ("pulse_timer", "Pulse Timer"),
             Part::Link(_) => ("redstone_link", "Redstone Link"),
+            Part::CreativeTank => ("creative_fluid_tank", "Creative Fluid Tank"),
             Part::Press(_) => ("mechanical_press", "Mechanical Press"),
             Part::Depot => ("depot", "Depot"),
             Part::Mixer => ("mechanical_mixer", "Mechanical Mixer"),
@@ -2982,6 +2987,7 @@ impl Game<'_> {
                 | Part::Basin
                 | Part::Chute(_, _)
                 | Part::Tank
+                | Part::CreativeTank
                 | Part::Spout
                 | Part::Drain
                 | Part::Deployer { .. }

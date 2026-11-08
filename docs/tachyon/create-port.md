@@ -136,6 +136,8 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - Partikelnya memakai soul fire flame dan sesekali asap; nama proses tampil di kacamata dalam bahasa
     Inggris dan Indonesia.
   - Hasil cuci dan haunting dikocok per barang, seperti `RecipeApplier` Create.
+- **Creative fluid tank** (`fluids.rs`, 8 November 2026): ember penuh menetapkan fluidanya (ember
+  tidak terpakai), pompa dan ember kosong mengambil darinya tanpa habis; tidak menerima fluida.
 - **Analog lever, latch, brass diode** (`tachyon_engine/redstone.rs`, 8 November 2026):
   - analog lever: tiap pemakaian +1 (jongkok -1), 0..15, disimpan di state `power`; sinyal lemah ke
     semua sisi dan sinyal kuat ke blok tempatnya menempel; gagang digambar berputar seperempat putaran

@@ -68,6 +68,7 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("fluid_pipe", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
     ("mechanical_pump", "minecraft:waxed_lightning_rod", 3.0, "minecraft:copper_block"),
     ("fluid_tank", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
+    ("creative_fluid_tank", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
     ("spout", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
     ("item_drain", "minecraft:polished_andesite", 3.0, "minecraft:copper_block"),
     // FluidValveBlock's facing, axis_along_first and enabled, as the deployer's; the smart pipe's
@@ -138,6 +139,7 @@ const NOT_OCCLUDING: &[&str] = &[
     "fluid_pipe",
     "mechanical_pump",
     "fluid_tank",
+    "creative_fluid_tank",
     "spout",
     "item_drain",
     "fluid_valve",
@@ -394,7 +396,7 @@ const TURNING: &[&str] = &[
 ];
 
 /// The version of [`fix`]: a port fixed by an older one is fixed again.
-const VERSION: &str = "13";
+const VERSION: &str = "14";
 const STAMP: &str = ".tachyon-fix";
 
 /// Fixes a Create ported into `dir` (`horizon-mods/create`) by an older
@@ -589,7 +591,7 @@ pub fn fix(dir: &Path) -> Result<(), String> {
                 .collect();
             declaration["shapes"] = json!({"property": "facing", "values": values});
         }
-        if *block == "fluid_tank" {
+        if matches!(*block, "fluid_tank" | "creative_fluid_tank") {
             let flag = json!({"type": "boolean"});
             let windows = json!(["plain", "window", "window_nw", "window_sw", "window_ne", "window_se"]);
             declaration["state_properties"] =
