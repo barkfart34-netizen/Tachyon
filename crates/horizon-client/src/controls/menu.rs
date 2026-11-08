@@ -38,6 +38,8 @@ pub enum Choice {
     Size,
     Interface,
     DebugSize,
+    /// Orbital Laser's laser wheel (`/orbital wheel`), which R opens on a keyboard.
+    OrbitalWheel,
     Keyboard,
     Pause,
     Close,
@@ -238,6 +240,7 @@ impl Menu {
                     .to_owned(),
                     Choice::HideControls,
                 ),
+                ("Orbital Laser wheel".to_owned(), Choice::OrbitalWheel),
                 ("Keyboard".to_owned(), Choice::Keyboard),
                 ("Pause".to_owned(), Choice::Pause),
                 ("Close".to_owned(), Choice::Close),

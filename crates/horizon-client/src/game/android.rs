@@ -1704,6 +1704,14 @@ impl AndroidGame {
                     game.settings.save(&Game::options_path());
                 }
             }
+            Choice::OrbitalWheel => {
+                with_overlay(|o| o.menu.open = false);
+                if self.in_game()
+                    && let App::Ready(game) = &mut self.app
+                {
+                    super::orbital_glue::command(game, "orbital wheel");
+                }
+            }
             Choice::Keyboard => {
                 self.toggle_keyboard();
                 with_overlay(|o| o.menu.open = false);
