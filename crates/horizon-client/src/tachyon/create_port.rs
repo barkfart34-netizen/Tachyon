@@ -74,6 +74,8 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     // no item of its own), drawn turning as a shaft.
     ("steam_engine", "minecraft:grindstone", 3.0, "minecraft:copper_block"),
     ("powered_shaft", "minecraft:iron_chain", 1.5, "minecraft:iron_block"),
+    // BeltBlock's facing, slope, part and casing; drawn by the engine (BeltRenderer).
+    ("belt", "minecraft:polished_andesite", 0.8, "minecraft:white_wool"),
     // ArmBlock's floor-mounted arm; the engine draws its moving bodies.
     ("mechanical_arm", "minecraft:polished_andesite", 2.5, "minecraft:copper_block"),
     // A hollow block with a floor.
@@ -123,6 +125,7 @@ const NOT_OCCLUDING: &[&str] = &[
     "spout",
     "item_drain",
     "steam_engine",
+    "belt",
     "mechanical_arm",
     "millstone",
     "rotation_speed_controller",
@@ -290,7 +293,7 @@ const TURNING: &[&str] = &[
 ];
 
 /// The version of [`fix`]: a port fixed by an older one is fixed again.
-const VERSION: &str = "8";
+const VERSION: &str = "9";
 const STAMP: &str = ".tachyon-fix";
 
 /// Fixes a Create ported into `dir` (`horizon-mods/create`) by an older
@@ -473,6 +476,24 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         }
         if *block == "steam_engine" {
             declaration["shapes"] = json!({"default": [[0.125, 0.0, 0.125, 0.875, 1.0, 0.875]]});
+        }
+        if *block == "belt" {
+            let flag = json!({"type": "boolean"});
+            declaration["state_properties"] = json!({
+                "facing": {"type": "enum", "values": ["north", "south", "west", "east"]},
+                "slope": {"type": "enum", "values": ["horizontal", "upward", "downward", "vertical", "sideways"]},
+                "part": {"type": "enum", "values": ["start", "middle", "end", "pulley"]},
+                "casing": flag,
+            });
+            declaration["default_state"] =
+                json!({"facing": "north", "slope": "horizontal", "part": "start", "casing": "false"});
+            // BeltShapes.FLAT_FULL_PART: 1,3,0 to 15,13,16, along its facing.
+            let along_z = json!([[0.0625, 0.1875, 0.0, 0.9375, 0.8125, 1.0]]);
+            let along_x = json!([[0.0, 0.1875, 0.0625, 1.0, 0.8125, 0.9375]]);
+            declaration["shapes"] = json!({"property": "facing", "values": {
+                "north": along_z, "south": along_z, "west": along_x, "east": along_x,
+            }});
+            declaration["item"] = json!(false);
         }
         if *block == "powered_shaft" {
             declaration["item"] = json!(false);

@@ -6780,6 +6780,7 @@ impl Game<'_> {
         self.tachyon_apply(stack, pos, claimed);
         self.tachyon_assist_use(stack, pos, claimed);
         self.tachyon_wrench(stack, pos, face, claimed);
+        self.tachyon_belt_connector_use(stack, pos, claimed);
         mod_api::dispatch_use_item_on(self, mod_api::mods(), stack, pos, face, claimed);
     }
     /// `DispenserBlock.getDispenseMethod`: choose a behaviour for any item,

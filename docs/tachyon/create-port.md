@@ -136,6 +136,15 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - Partikelnya memakai soul fire flame dan sesekali asap; nama proses tampil di kacamata dalam bahasa
     Inggris dan Indonesia.
   - Hasil cuci dan haunting dikocok per barang, seperti `RecipeApplier` Create.
+- **Sabuk (belt)** (`tachyon_engine/create_belt.rs`, 8 November 2026):
+  - belt connector dipakai pada shaft, lalu pada shaft kedua yang sejajar sumbunya, setinggi, dan
+    segaris melintang (`canConnect`, kurang dari 20 blok, tidak ada yang menghalangi): sabuk `start`,
+    `middle`, `end` dipasang dari shaft pertama ke kedua; jongkok atau shaft yang tidak cocok
+    membatalkan pilihan pertama;
+  - engine menjalankannya sebagai sabuk Kinetica (berputar bersama shaft di pulinya, membawa barang
+    yang tergeletak di atasnya) dan menggambar partial sabuk Create dengan puli berputar di ujungnya;
+  - satu segmen dihancurkan, seluruh sabuk ikut: ujungnya kembali menjadi shaft, sisanya udara;
+  - belum: sabuk miring/vertikal/menyamping, tekstur bergulir, casing, pewarna, tunnel.
 - **Steam engine dan boiler** (`tachyon_engine/steam.rs`, 8 November 2026):
   - mesin uap di sisi tank menjadikan kolom tank itu boiler, dan memutar shaft dua blok di depannya
     (menjadi `powered_shaft`, sumber putaran) bila shaft itu melintang dari arah mesin;

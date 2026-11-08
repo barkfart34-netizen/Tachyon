@@ -36,6 +36,7 @@ mod obj_model;
 mod press;
 mod deployer;
 mod drill;
+mod create_belt;
 mod fluids;
 mod steam;
 mod saw;
@@ -207,6 +208,8 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
                 .fold(0, |m, d| m | fluids::bit(d)),
         ),
         "mechanical_pump" => Part::Pump(facing()?),
+        // BeltBlock, level ones: run as Kinetica's belt along its facing (`create_belt.rs`).
+        "belt" if property("slope") == Some("horizontal") => Part::Belt(facing()?.axis()),
         // FaceAttachedHorizontalDirectionalBlock's connected way: up from a floor, down from a
         // ceiling, else its facing (the grindstone template keeps `face` and `facing`).
         "steam_engine" => Part::SteamEngine(match property("face")? {
@@ -433,6 +436,8 @@ struct Owner {
     /// took since it was last measured (mB).
     boiling: HashMap<[i32; 3], [i32; 3]>,
     boiled: HashMap<[i32; 3], u32>,
+    /// Parts gone since the belts last looked (a belt broken in part breaks whole).
+    belt_removed: Vec<[i32; 3]>,
     /// What each fan turning does, for the goggles ("washing", "pull:air").
     fan_work: HashMap<[i32; 3], String>,
     /// The dropped items and the depots where a fan's air works them: how,
@@ -1411,6 +1416,7 @@ impl Game<'_> {
                     owner.save(&root, dimension);
                 }
             }
+            owner.belt_removed.extend(removed.iter().copied());
             // A broken chute, or one replaced by another engine part,
             // drops its full stack. Unloaded chunks keep their contents.
             let gone: Vec<[i32; 3]> = owner.chutes.keys().copied().filter(|p| {
@@ -1491,6 +1497,12 @@ impl Game<'_> {
         self.tachyon_deployers();
         self.tachyon_fluids();
         self.tachyon_steam();
+        let removed = OWNERS.with_borrow_mut(|owners| {
+            owners.get_mut(dimension).map(|o| std::mem::take(&mut o.belt_removed)).unwrap_or_default()
+        });
+        if !removed.is_empty() {
+            self.tachyon_belts_broken(&removed);
+        }
         // BasinBlockEntity.getHeatLevel: the block directly below each
         // basin, read before borrowing the world's random for the outputs.
         let basin_heat: HashMap<[i32; 3], burner::Heat> = OWNERS.with_borrow(|owners| {
@@ -2317,6 +2329,36 @@ impl Game<'_> {
                     * Mat4::from_translation(Vec3::splat(-0.5));
                 let state = self.tachyon_model(model);
                 self.submit_item_world(&state, pose, light, out);
+            }
+            // BeltRenderer's belt, top and bottom (modelled facing south), and the pulley at an end.
+            if create && let Part::Belt(axis) = part {
+                let state = self.world.block(pos[0], pos[1], pos[2]);
+                let props = self.pack.assets.registry.state(state).map(|s| s.properties.clone()).unwrap_or_default();
+                let facing = props.get("facing").and_then(|f| Dir::parse(f)).unwrap_or(Dir::South);
+                let belt_part = props.get("part").cloned().unwrap_or_default();
+                let turn = match facing {
+                    Dir::North => std::f32::consts::PI,
+                    Dir::East => std::f32::consts::FRAC_PI_2,
+                    Dir::West => -std::f32::consts::FRAC_PI_2,
+                    _ => 0.0,
+                };
+                let pose = Mat4::from_translation(origin + Vec3::splat(0.5))
+                    * Mat4::from_rotation_y(turn)
+                    * Mat4::from_translation(Vec3::splat(-0.5));
+                for model in create_belt::partials(&belt_part) {
+                    let state = self.tachyon_model(model);
+                    self.submit_item_world(&state, pose, light, out);
+                }
+                if create_belt::pulley(&belt_part) {
+                    let across = if axis == Axis::X { Axis::Z } else { Axis::X };
+                    let degrees = kinetic::angle(part, pos, speed[0], ticks);
+                    let pose = Mat4::from_translation(origin + Vec3::splat(0.5))
+                        * spin(across, degrees)
+                        * point(positive(across))
+                        * Mat4::from_translation(Vec3::splat(-0.5));
+                    let state = self.tachyon_model("create:block/belt_pulley");
+                    self.submit_item_world(&state, pose, light, out);
+                }
             }
             // DeployerRenderer's pole and hand, out by its stroke.
             if create && let Part::Deployer { facing, .. } = part {

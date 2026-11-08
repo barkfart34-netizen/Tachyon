@@ -573,6 +573,11 @@ def create(control, out):
         ("setblock", (-17, 2, -12), "create:mechanical_drill[facing=down]"),
         ("setblock", (-17, 1, -12), "minecraft:cobblestone"),
         ("setblock", (-17, 0, -12), "minecraft:hopper[facing=down]"),
+        ("setblock", (-15, 0, -4), "create:shaft[axis=x]"),
+        ("setblock", (-15, 0, -9), "create:shaft[axis=x]"),
+        ("setblock", (-16, 0, -4), "create:creative_motor[facing=east]"),
+        ("setblock", (-15, 0, -10), "minecraft:hopper[facing=down]"),
+        ("setblock", (-15, 0, -3), "minecraft:hopper[facing=down]"),
     ]
     for c in fluids:
         if "error" in control.send(f"chat /{c[0]} {at(c[1])} {c[2]}" if len(c) == 3 else
@@ -592,6 +597,15 @@ def create(control, out):
     visit((-24, 0, -4), (-24, 0, -6))
     control.send("mouse right click")
     time.sleep(1)
+    control.send("chat /item replace entity @s weapon.mainhand with create:belt_connector 2")
+    visit((-14, 0, -3), (-15, 0, -4))
+    control.send("mouse right click")
+    time.sleep(1)
+    visit((-14, 0, -8), (-15, 0, -9))
+    control.send("mouse right click")
+    time.sleep(1)
+    bx, by, bz = [b + d for b, d in zip(base, (-15, 1, -5))]
+    control.send(f"chat /summon minecraft:item {bx + 0.5} {by} {bz + 0.5} {{Item:{{id:\"minecraft:iron_ingot\",count:1}}}}")
     # The boiler's burner fed coal, its pump's motor up to 32 RPM.
     control.send("chat /item replace entity @s weapon.mainhand with minecraft:coal 4")
     visit((-20, 0, -10), (-20, 0, -12))
@@ -615,15 +629,20 @@ def create(control, out):
     filled = until(taken((-24, -1, -6), "minecraft:water_bucket"), 1)
     flowed = until(poured, 1)
     steamed = until(taken((-17, 0, -12), "minecraft:cobblestone"), 1, 60)
+    ends = [taken((-15, 0, -10), "minecraft:iron_ingot"), taken((-15, 0, -3), "minecraft:iron_ingot")]
+    belted = until(lambda: max(end() for end in ends), 1)
+    visit((-12, 1, -6), (-15, 0, -6))
+    control.send("screenshot " + os.path.join(out, "create-belt.png"))
     visit((-17, 0, -7), (-19, 3, -12))
     control.send("screenshot " + os.path.join(out, "create-steam.png"))
-    print("create fluids: drained", drained, "filled", filled, "poured", flowed, "steam drilled", steamed)
+    print("create fluids: drained", drained, "filled", filled, "poured", flowed, "steam drilled", steamed,
+          "belted", belted)
     drilled = until(taken((-7, -1, -4), "minecraft:cobblestone"), 1)
     cased = until(taken((9, -1, -4), "create:andesite_casing"), 2)
     print("create made: flour", flour, "sheets", sheets, "alloy", alloy, "crushed", crushed,
           "drilled", drilled, "cased", cased)
     return (good and flour >= 4 and sheets >= 3 and alloy >= 1 and crushed >= 4 and drilled >= 1
-            and cased >= 2 and drained >= 1 and filled >= 1 and flowed >= 1 and steamed >= 1)
+            and cased >= 2 and drained >= 1 and filled >= 1 and flowed >= 1 and steamed >= 1 and belted >= 1)
 
 
 def lost_realms(control, out):
