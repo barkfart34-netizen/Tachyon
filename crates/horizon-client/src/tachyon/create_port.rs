@@ -80,6 +80,35 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("metal_girder_encased_shaft", "minecraft:iron_block", 5.0, "minecraft:netherite_block"),
 ];
 
+/// Blocks drawn darker than Create's with their template's occlusion: Create's own `noOcclusion()`
+/// (AllBlocks: gearbox, clutch, gearshift, chain drives, water wheel, crushing wheel, press, mixer,
+/// chute, flywheel), and blocks whose shape isn't a whole block on a whole-block template (the saw's
+/// CASING_12PX, the arm, millstone, speed controller, blaze burner, gauges, the encased girder):
+/// light passes them and the faces beside them are drawn, as vanilla's `getLightBlock` for a shape
+/// that isn't full.
+const NOT_OCCLUDING: &[&str] = &[
+    "gearbox",
+    "clutch",
+    "gearshift",
+    "encased_chain_drive",
+    "adjustable_chain_gearshift",
+    "water_wheel",
+    "crushing_wheel",
+    "mechanical_press",
+    "mechanical_mixer",
+    "chute",
+    "flywheel",
+    "mechanical_saw",
+    "mechanical_arm",
+    "millstone",
+    "rotation_speed_controller",
+    "blaze_burner",
+    "lit_blaze_burner",
+    "speedometer",
+    "stressometer",
+    "metal_girder_encased_shaft",
+];
+
 /// The blocks a bracket goes on (BracketedBlockEntityBehaviour), and the
 /// kind of bracket model each takes.
 const BRACKETED: &[(&str, &str)] = &[("shaft", "shaft"), ("cogwheel", "cog"), ("large_cogwheel", "cog")];
@@ -202,7 +231,7 @@ const TURNING: &[&str] = &[
 ];
 
 /// The version of [`fix`]: a port fixed by an older one is fixed again.
-const VERSION: &str = "3";
+const VERSION: &str = "4";
 const STAMP: &str = ".tachyon-fix";
 
 /// Fixes a Create ported into `dir` (`horizon-mods/create`) by an older
@@ -314,6 +343,9 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         declaration["template"] = json!(template);
         declaration["properties"]["hardness"] = json!(hardness);
         declaration["properties"]["sounds"] = json!(sounds);
+        if NOT_OCCLUDING.contains(block) {
+            declaration["properties"]["occludes"] = json!(false);
+        }
         // A motor is a box, not its template's rod; a wheel a whole block.
         if let Some((_, property, values)) = WHOLE.iter().find(|(b, _, _)| b == block) {
             let body = if *block == "creative_motor" {

@@ -969,7 +969,9 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
             .collect(),
         // CuckooClockRenderer's shaft; the hands and doors are `clock.rs`'s.
         Part::Motor(out) | Part::Clock(out, _) => vec![(HALF, out, 1.0, 0, Dir::South)],
-        Part::Crank(out) => vec![("create:block/hand_crank/handle", out.opposite(), 1.0, 0, Dir::Up)],
+        // HAND_CRANK_HANDLE is modelled pointing north (its base on the south side, as item.json's
+        // axis): it points out of the crank's facing.
+        Part::Crank(out) => vec![("create:block/hand_crank/handle", out.opposite(), 1.0, 0, Dir::North)],
         Part::Clutch(a) | Part::Gearshift(a) => {
             let [neg, pos] = a.dirs();
             vec![(HALF, neg, 1.0, 0, Dir::South), (HALF, pos, 1.0, 1, Dir::South)]

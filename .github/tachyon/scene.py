@@ -495,6 +495,23 @@ def create(control, out):
     control.send("screenshot " + os.path.join(out, "create-mixer.png"))
     visit((-1, 0, 8), (-1, 1, 11))
     control.send("screenshot " + os.path.join(out, "create-crusher.png"))
+    # How the blocks look (dark faces, missing parts): a row behind the start, a crank on a shaft
+    # and one on its side, the saw, the arm, the millstone, a gearbox and the speed controller.
+    looks = [
+        ("setblock", (-5, 0, -4), "create:shaft[axis=y]"), ("setblock", (-5, 1, -4), "create:hand_crank[facing=up]"),
+        ("setblock", (-3, 0, -4), "create:shaft[axis=z]"), ("setblock", (-3, 0, -5), "create:hand_crank[facing=north]"),
+        ("setblock", (-1, 0, -4), "create:mechanical_saw[facing=up]"), ("setblock", (1, 0, -4), "create:mechanical_arm"),
+        ("setblock", (3, 0, -4), "create:millstone"), ("setblock", (5, 0, -4), "create:gearbox"),
+        ("setblock", (7, 0, -4), "create:rotation_speed_controller"),
+    ]
+    for c in looks:
+        if "error" in control.send(f"chat /{c[0]} {at(c[1])} {c[2]}"):
+            good = False
+    time.sleep(2)
+    visit((1, 0, -1), (1, 0, -4))
+    control.send("screenshot " + os.path.join(out, "create-looks.png"))
+    visit((-4, 0, -2), (-4, 1, -4))
+    control.send("screenshot " + os.path.join(out, "create-cranks.png"))
     # What they made, by now: the millstone's taken with an empty hand, the
     # depot's and the basin's out of the hoppers under them.
     control.send("chat /item replace entity @s weapon.mainhand with minecraft:air")
