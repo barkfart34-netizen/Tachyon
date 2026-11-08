@@ -58,6 +58,9 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("mechanical_mixer", "minecraft:polished_andesite", 2.5, "minecraft:copper_block"),
     // SawBlock keeps Create's own states (facing, axis_along_first, flipped).
     ("mechanical_saw", "minecraft:polished_andesite", 2.0, "minecraft:copper_block"),
+    // DrillBlock's six facings (a DirectionalKineticBlock, andesite's 1.5);
+    // `drill.rs` places it facing the player.
+    ("mechanical_drill", "minecraft:waxed_lightning_rod", 1.5, "minecraft:stone"),
     // ArmBlock's floor-mounted arm; the engine draws its moving bodies.
     ("mechanical_arm", "minecraft:polished_andesite", 2.5, "minecraft:copper_block"),
     // A hollow block with a floor.
@@ -99,6 +102,7 @@ const NOT_OCCLUDING: &[&str] = &[
     "chute",
     "flywheel",
     "mechanical_saw",
+    "mechanical_drill",
     "mechanical_arm",
     "millstone",
     "rotation_speed_controller",
@@ -210,6 +214,18 @@ fn bracket_pools(block: &str) -> Vec<Value> {
     pools
 }
 
+/// AllShapes.CASING_12PX by facing: four pixels open on the facing side.
+fn casing_12px() -> Value {
+    json!({"property": "facing", "values": {
+        "up": [[0.0, 0.0, 0.0, 1.0, 0.75, 1.0]],
+        "down": [[0.0, 0.25, 0.0, 1.0, 1.0, 1.0]],
+        "north": [[0.0, 0.0, 0.25, 1.0, 1.0, 1.0]],
+        "south": [[0.0, 0.0, 0.0, 1.0, 1.0, 0.75]],
+        "west": [[0.25, 0.0, 0.0, 1.0, 1.0, 1.0]],
+        "east": [[0.0, 0.0, 0.0, 0.75, 1.0, 1.0]],
+    }})
+}
+
 /// The blocks a whole block in every state, by their template's property.
 const WHOLE: &[(&str, &str, &[&str])] = &[
     ("creative_motor", "facing", &["down", "up", "north", "south", "west", "east"]),
@@ -231,7 +247,7 @@ const TURNING: &[&str] = &[
 ];
 
 /// The version of [`fix`]: a port fixed by an older one is fixed again.
-const VERSION: &str = "4";
+const VERSION: &str = "5";
 const STAMP: &str = ".tachyon-fix";
 
 /// Fixes a Create ported into `dir` (`horizon-mods/create`) by an older
@@ -382,6 +398,10 @@ pub fn fix(dir: &Path) -> Result<(), String> {
                 "true,true": [wide_pole, beam_x, beam_z],
             }});
         }
+        // AllShapes.CASING_12PX, as the saw's: four pixels open on the head's side.
+        if *block == "mechanical_drill" {
+            declaration["shapes"] = casing_12px();
+        }
         if *block == "mechanical_saw" {
             let facings = json!(["down", "up", "north", "south", "west", "east"]);
             declaration["state_properties"] = json!({
@@ -391,15 +411,7 @@ pub fn fix(dir: &Path) -> Result<(), String> {
             });
             declaration["default_state"] =
                 json!({"facing": "up", "axis_along_first": "false", "flipped": "false"});
-            // AllShapes.CASING_12PX: four pixels open on the blade's side.
-            declaration["shapes"] = json!({"property": "facing", "values": {
-                "up": [[0.0, 0.0, 0.0, 1.0, 0.75, 1.0]],
-                "down": [[0.0, 0.25, 0.0, 1.0, 1.0, 1.0]],
-                "north": [[0.0, 0.0, 0.25, 1.0, 1.0, 1.0]],
-                "south": [[0.0, 0.0, 0.0, 1.0, 1.0, 0.75]],
-                "west": [[0.25, 0.0, 0.0, 1.0, 1.0, 1.0]],
-                "east": [[0.0, 0.0, 0.0, 0.75, 1.0, 1.0]],
-            }});
+            declaration["shapes"] = casing_12px();
         }
         if *block == "metal_girder_encased_shaft" {
             let flag = json!({"type": "boolean"});

@@ -232,18 +232,20 @@ impl super::super::Game<'_> {
             return;
         }
         let dimension = self.native_dimension();
-        let saws: Vec<([i32; 3], Dir, bool, f32)> = super::OWNERS.with_borrow(|owners| {
+        // A drill (`drill.rs`) breaks what is in front as a sideways saw does, felling nothing.
+        let saws: Vec<([i32; 3], Dir, Option<bool>, f32)> = super::OWNERS.with_borrow(|owners| {
             let Some(o) = owners.get(dimension) else {
                 return Vec::new();
             };
             let mut saws: Vec<_> = (o.index.parts.iter())
                 .filter_map(|(p, part)| {
-                    let Part::Saw {
-                        facing,
-                        along_first,
-                    } = *part
-                    else {
-                        return None;
+                    let (facing, along_first) = match *part {
+                        Part::Saw {
+                            facing,
+                            along_first,
+                        } => (facing, Some(along_first)),
+                        Part::Drill(facing) => (facing, None),
+                        _ => return None,
                     };
                     let speed = o.shown.speeds.get(p).map_or(0.0, |s| s[0]);
                     (speed != 0.0).then_some((*p, facing, along_first, speed))
@@ -255,11 +257,19 @@ impl super::super::Game<'_> {
         let mut seen: HashSet<u32> = HashSet::new();
         let mut kept: HashSet<[i32; 3]> = HashSet::new();
         for (pos, facing, along_first, speed) in saws {
-            if facing == Dir::Up {
-                self.tachyon_saw_cut(pos, along_first, speed, &mut seen);
-            } else if facing != Dir::Down {
-                kept.insert(pos);
-                self.tachyon_saw_break(pos, facing, speed);
+            match along_first {
+                None => {
+                    kept.insert(pos);
+                    self.tachyon_saw_break(pos, facing, speed, false);
+                }
+                Some(along_first) if facing == Dir::Up => {
+                    self.tachyon_saw_cut(pos, along_first, speed, &mut seen);
+                }
+                Some(_) if facing != Dir::Down => {
+                    kept.insert(pos);
+                    self.tachyon_saw_break(pos, facing, speed, true);
+                }
+                Some(_) => {}
             }
         }
         super::OWNERS.with_borrow_mut(|owners| {
@@ -320,7 +330,10 @@ impl super::super::Game<'_> {
         }
     }
 
-    fn tachyon_saw_break(&mut self, pos: [i32; 3], facing: Dir, speed: f32) {
+    /// Breaks the block in front, a saw's (`saw`: felling a log's tree, sparing saplings) or a
+    /// drill's (`BlockBreakingKineticBlockEntity.isBreakable`: anything but air, fluids and the
+    /// unbreakable).
+    fn tachyon_saw_break(&mut self, pos: [i32; 3], facing: Dir, speed: f32, saw: bool) {
         let dimension = self.native_dimension();
         let o = facing.offset();
         let target = [pos[0] + o[0], pos[1] + o[1], pos[2] + o[2]];
@@ -334,7 +347,11 @@ impl super::super::Game<'_> {
         let state = self.world.block(target[0], target[1], target[2]);
         let facts = self.res.facts().get(state);
         let (name, hardness) = (facts.name.to_string(), facts.hardness);
-        let breakable = !facts.replaceable && hardness >= 0.0 && !name.ends_with("_sapling");
+        let breakable = if saw {
+            !facts.replaceable && hardness >= 0.0 && !name.ends_with("_sapling")
+        } else {
+            super::drill::breakable(&name, hardness)
+        };
         let mut breaker = super::OWNERS.with_borrow(|owners| {
             owners
                 .get(dimension)
@@ -358,7 +375,7 @@ impl super::super::Game<'_> {
                 self.native_level_play_sound(&facts_hit_sound(&name), at, 4, 0.25, 1.0);
             }
             if b.progress >= 10 {
-                self.tachyon_saw_fell(target, is_log(&name));
+                self.tachyon_saw_fell(target, saw && is_log(&name));
                 breaker = None;
             } else {
                 breaker = Some(b);

@@ -136,6 +136,12 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - Partikelnya memakai soul fire flame dan sesekali asap; nama proses tampil di kacamata dalam bahasa
     Inggris dan Indonesia.
   - Hasil cuci dan haunting dikocok per barang, seperti `RecipeApplier` Create.
+- **Mechanical drill** (`tachyon_engine/drill.rs`, 8 November 2026):
+  - menghancurkan blok di depan kepalanya seperti gergaji samping (`BlockBreakingKineticBlockEntity`);
+  - beban 4 per RPM, poros dari belakang;
+  - dipasang menghadap pemain, atau membelakangi poros di sebelahnya (`DirectionalKineticBlock`);
+  - kepala `mechanical_drill/head` berputar; bentuk `CASING_12PX`;
+  - belum: melukai entitas di depan, retakan blok, jalan pintas cobblestone generator, contraption.
 - **Kincir air besar bisa berputar dan digambar** (`tachyon_engine/water_wheel.rs`):
   - memeriksa 12 titik di tepi, dua blok dari tengah, bukan empat tetangga kincir kecil;
   - suara berlawanan saling membatalkan; hasilnya -4, 0, atau 4 RPM, kapasitas 128 per RPM (512 SU saat berputar);

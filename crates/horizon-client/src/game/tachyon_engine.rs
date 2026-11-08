@@ -34,6 +34,7 @@ pub(super) mod loading;
 mod millstone;
 mod obj_model;
 mod press;
+mod drill;
 mod saw;
 mod speed_controller;
 mod water_wheel;
@@ -193,6 +194,8 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
             facing: facing()?,
             along_first: property("axis_along_first")? == "true",
         },
+        // DrillBlock: its head's facing.
+        "mechanical_drill" => Part::Drill(facing()?),
         "depot" => Part::Depot,
         // The stair template keeps four horizontal facings. Its bottom
         // half means down, its top half the diagonal chute's facing.
@@ -981,6 +984,8 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         Part::Saw { facing, .. } if facing.axis() != Axis::Y => {
             vec![(HALF, facing.opposite(), 1.0, 0, Dir::South)]
         }
+        // DrillRenderer's head, by partialFacing: modelled facing south.
+        Part::Drill(facing) => vec![("create:block/mechanical_drill/head", facing, 1.0, 0, Dir::South)],
         Part::Saw { along_first, .. } => {
             vec![(SHAFT, positive(if along_first { Axis::X } else { Axis::Z }), 1.0, 0, Dir::Up)]
         }
@@ -1071,6 +1076,7 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::Flywheel(_)
         | Part::Clock(_, _)
         | Part::Saw { .. }
+        | Part::Drill(_)
         | Part::SpeedController(_) => Vec::new(),
     }
 }
@@ -2351,6 +2357,7 @@ impl Game<'_> {
             Part::Windmill(_) => ("windmill", "Windmill"),
             Part::Millstone => ("millstone", "Millstone"),
             Part::Saw { .. } => ("mechanical_saw", "Mechanical Saw"),
+            Part::Drill(_) => ("mechanical_drill", "Mechanical Drill"),
             Part::Press(_) => ("mechanical_press", "Mechanical Press"),
             Part::Depot => ("depot", "Depot"),
             Part::Mixer => ("mechanical_mixer", "Mechanical Mixer"),

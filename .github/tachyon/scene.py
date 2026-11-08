@@ -503,6 +503,11 @@ def create(control, out):
         ("setblock", (-1, 0, -4), "create:mechanical_saw[facing=up]"), ("setblock", (1, 0, -4), "create:mechanical_arm"),
         ("setblock", (3, 0, -4), "create:millstone"), ("setblock", (5, 0, -4), "create:gearbox"),
         ("setblock", (7, 0, -4), "create:rotation_speed_controller"),
+        # A drill turned from above, drilling the cobblestone under it into the hopper below.
+        ("setblock", (-7, -1, -4), "minecraft:hopper[facing=down]"),
+        ("setblock", (-7, 0, -4), "minecraft:cobblestone"),
+        ("setblock", (-7, 1, -4), "create:mechanical_drill[facing=down]"),
+        ("setblock", (-7, 2, -4), "create:creative_motor[facing=down]"),
     ]
     for c in looks:
         if "error" in control.send(f"chat /{c[0]} {at(c[1])} {c[2]}"):
@@ -520,8 +525,9 @@ def create(control, out):
     sheets = until(taken((5, -1, 7), "create:iron_sheet"), 3)
     alloy = until(taken((-4, -1, 8), "create:andesite_alloy"), 1)
     crushed = until(taken((-1, 0, 11), "create:crushed_raw_iron"), 4)
-    print("create made: flour", flour, "sheets", sheets, "alloy", alloy, "crushed", crushed)
-    return good and flour >= 4 and sheets >= 3 and alloy >= 1 and crushed >= 4
+    drilled = until(taken((-7, -1, -4), "minecraft:cobblestone"), 1)
+    print("create made: flour", flour, "sheets", sheets, "alloy", alloy, "crushed", crushed, "drilled", drilled)
+    return good and flour >= 4 and sheets >= 3 and alloy >= 1 and crushed >= 4 and drilled >= 1
 
 
 def lost_realms(control, out):

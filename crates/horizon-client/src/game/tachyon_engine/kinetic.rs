@@ -211,6 +211,9 @@ pub enum Part {
     /// Create's mechanical saw: its blade's facing and, facing up or down,
     /// whether its shaft runs along x (DirectionalAxisKineticBlock).
     Saw { facing: Dir, along_first: bool },
+    /// Create's mechanical drill (DrillBlock, a DirectionalKineticBlock): its head's facing, its
+    /// shaft out of the back.
+    Drill(Dir),
     /// Create's cuckoo clock: a shaft out of its back (the side given), and
     /// whether it is the mysterious one.
     Clock(Dir, bool),
@@ -291,6 +294,7 @@ impl Part {
                 }
             }
             Part::SpeedController(a) => a != Axis::Y && d.axis() == a,
+            Part::Drill(facing) => d == facing.opposite(),
             // Its pulleys' shafts, out of its sides.
             Part::Belt(a) => d.axis() != a && d.axis() != Axis::Y,
             Part::EncasedCog(_)
@@ -307,7 +311,8 @@ impl Part {
     /// a machine's; nothing for what only passes the turning on.
     pub fn impact(self) -> f32 {
         match self {
-            Part::Millstone | Part::Saw { .. } => 4.0,
+            // AllBlocks: CStress.setImpact(4.0) for both.
+            Part::Millstone | Part::Saw { .. } | Part::Drill(_) => 4.0,
             Part::Press(_) => 8.0,
             Part::Mixer => 4.0,
             Part::Arm => 2.0,
