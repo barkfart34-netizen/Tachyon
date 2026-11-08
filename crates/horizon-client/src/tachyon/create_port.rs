@@ -76,6 +76,11 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("smart_fluid_pipe", "minecraft:grindstone", 3.0, "minecraft:copper_block"),
     ("hose_pulley", "minecraft:white_glazed_terracotta", 3.0, "minecraft:copper_block"),
     ("item_vault", "minecraft:polished_andesite", 3.0, "minecraft:netherite_block"),
+    // AnalogLeverBlock's face and facing with its strength kept in the state; the latches'
+    // diode states (AbstractDiodeBlock: facing, powered, powering and the side input).
+    ("analog_lever", "minecraft:polished_andesite", 0.5, "minecraft:oak_planks"),
+    ("powered_latch", "minecraft:polished_andesite", 0.0, "minecraft:oak_planks"),
+    ("powered_toggle_latch", "minecraft:polished_andesite", 0.0, "minecraft:oak_planks"),
     // SteamEngineBlock's face and facing, a grindstone's; the shaft it powers (PoweredShaftBlock,
     // no item of its own), drawn turning as a shaft.
     ("steam_engine", "minecraft:grindstone", 3.0, "minecraft:copper_block"),
@@ -133,6 +138,9 @@ const NOT_OCCLUDING: &[&str] = &[
     "fluid_valve",
     "smart_fluid_pipe",
     "hose_pulley",
+    "analog_lever",
+    "powered_latch",
+    "powered_toggle_latch",
     "steam_engine",
     "belt",
     "mechanical_arm",
@@ -306,6 +314,30 @@ fn valve_shape() -> Value {
     json!({"properties": ["facing", "axis_along_first"], "values": values})
 }
 
+/// AllShapes.ANALOG_LEVER (4,0,5 to 12,3,11 on a floor), turned for its face and facing.
+fn lever_shape() -> Value {
+    let mut values = serde_json::Map::new();
+    for face in ["floor", "wall", "ceiling"] {
+        for facing in ["north", "south", "west", "east"] {
+            let along_x = matches!(facing, "west" | "east");
+            let b = match face {
+                "floor" if along_x => [0.3125, 0.0, 0.25, 0.6875, 0.1875, 0.75],
+                "floor" => [0.25, 0.0, 0.3125, 0.75, 0.1875, 0.6875],
+                "ceiling" if along_x => [0.3125, 0.8125, 0.25, 0.6875, 1.0, 0.75],
+                "ceiling" => [0.25, 0.8125, 0.3125, 0.75, 1.0, 0.6875],
+                _ => match facing {
+                    "north" => [0.25, 0.3125, 0.8125, 0.75, 0.6875, 1.0],
+                    "south" => [0.25, 0.3125, 0.0, 0.75, 0.6875, 0.1875],
+                    "west" => [0.8125, 0.3125, 0.25, 1.0, 0.6875, 0.75],
+                    _ => [0.0, 0.3125, 0.25, 0.1875, 0.6875, 0.75],
+                },
+            };
+            values.insert(format!("{face},{facing}"), json!([b]));
+        }
+    }
+    json!({"properties": ["face", "facing"], "values": values})
+}
+
 /// AllShapes.SMART_FLUID_PIPE: the pipe and its filter's flange, up on a wall, else along its facing.
 fn smart_pipe_shape() -> Value {
     let mut values = serde_json::Map::new();
@@ -353,7 +385,7 @@ const TURNING: &[&str] = &[
 ];
 
 /// The version of [`fix`]: a port fixed by an older one is fixed again.
-const VERSION: &str = "10";
+const VERSION: &str = "11";
 const STAMP: &str = ".tachyon-fix";
 
 /// Fixes a Create ported into `dir` (`horizon-mods/create`) by an older
@@ -401,6 +433,9 @@ const RECIPES: &[&str] = &[
     "crafting/kinetics/item_vault",
     "crafting/kinetics/steam_engine",
     "crafting/kinetics/mechanical_arm",
+    "crafting/logistics/powered_latch",
+    "crafting/logistics/powered_toggle_latch",
+    "crafting/kinetics/analog_lever",
 ];
 
 /// NeoForge's convention tags the restored recipes use, where the port has
@@ -591,6 +626,34 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         }
         if *block == "hose_pulley" {
             declaration["shapes"] = json!({"default": [[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]]});
+        }
+        if *block == "analog_lever" {
+            let horizontal = json!(["north", "south", "west", "east"]);
+            let power: Vec<String> = (0..16).map(|n| n.to_string()).collect();
+            declaration["state_properties"] = json!({
+                "face": {"type": "enum", "values": ["floor", "wall", "ceiling"]},
+                "facing": {"type": "enum", "values": horizontal},
+                "power": {"type": "enum", "values": power},
+            });
+            declaration["default_state"] = json!({"face": "wall", "facing": "north", "power": "0"});
+            declaration["shapes"] = lever_shape();
+        }
+        if matches!(*block, "powered_latch" | "powered_toggle_latch") {
+            let flag = json!({"type": "boolean"});
+            let mut properties = json!({
+                "facing": {"type": "enum", "values": ["north", "south", "west", "east"]},
+                "powered": flag,
+                "powering": flag,
+            });
+            let mut default = json!({"facing": "north", "powered": "false", "powering": "false"});
+            if *block == "powered_latch" {
+                properties["powered_side"] = flag.clone();
+                default["powered_side"] = json!("false");
+            }
+            declaration["state_properties"] = properties;
+            declaration["default_state"] = default;
+            // DiodeBlock.SHAPE: two pixels high.
+            declaration["shapes"] = json!({"default": [[0.0, 0.0, 0.0, 1.0, 0.125, 1.0]]});
         }
         if *block == "item_vault" {
             declaration["state_properties"] = json!({

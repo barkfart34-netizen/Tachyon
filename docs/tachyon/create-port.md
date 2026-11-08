@@ -136,6 +136,16 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - Partikelnya memakai soul fire flame dan sesekali asap; nama proses tampil di kacamata dalam bahasa
     Inggris dan Indonesia.
   - Hasil cuci dan haunting dikocok per barang, seperti `RecipeApplier` Create.
+- **Analog lever, powered latch, toggle latch** (`tachyon_engine/redstone.rs`, 8 November 2026):
+  - analog lever: tiap pemakaian +1 (jongkok -1), 0..15, disimpan di state `power`; sinyal lemah ke
+    semua sisi dan sinyal kuat ke blok tempatnya menempel; gagang digambar berputar seperempat putaran
+    pada 15;
+  - powered latch: belakang menyala → keluar 15 dari depan; sisi menyala → padam (yang berubah
+    terakhir menang, seperti `PoweredLatchBlock.tick`); toggle latch: tiap belakang menyala dan tiap
+    pemakaian membalik keluarannya;
+  - sinyal dijawab dari state saja lewat hook sinyal blok; tetangga diberi tahu saat berubah;
+  - porter versi 11; belum: pulse repeater/extender/timer (butuh kotak nilai), redstone link, nixie
+    tube, threshold switch, content/smart observer, display link; jeda satu tick latch belum ada.
 - **Fluid valve, smart fluid pipe, hose pulley, item vault** (8 November 2026):
   - fluid valve (`fluids.rs`): pipa di sumbu yang bukan arah hadap dan bukan sumbu shaft-nya
     (`FluidValveBlock.getPipeAxis`); terbuka (`enabled`, model terbuka, jarum berputar seperempat)

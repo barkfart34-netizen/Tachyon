@@ -1240,6 +1240,17 @@ impl Behaviours {
     ) -> bool {
         self.sim(level, ticks).has_neighbor_signal(pos)
     }
+    /// `SignalGetter.getSignal(pos, direction)`: what the block at `pos` gives toward
+    /// `direction` (from the block reading it), through it when it conducts.
+    pub fn signal<L: LevelAccess + ?Sized>(
+        &self,
+        level: &mut L,
+        ticks: &mut Ticks,
+        pos: BlockPos,
+        direction: Direction,
+    ) -> i32 {
+        self.sim(level, ticks).signal(pos, direction)
+    }
     pub fn best_neighbor_signal<L: LevelAccess + ?Sized>(
         &self,
         level: &mut L,

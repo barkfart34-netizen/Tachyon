@@ -39,6 +39,7 @@ mod drill;
 mod create_belt;
 mod fluids;
 mod hose;
+mod redstone;
 mod vault;
 mod steam;
 mod saw;
@@ -222,6 +223,9 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
         }),
         "hose_pulley" => Part::HosePulley(facing()?),
         "item_vault" => Part::Vault(axis()?),
+        "analog_lever" => Part::AnalogLever,
+        "powered_latch" => Part::Latch(facing()?),
+        "powered_toggle_latch" => Part::ToggleLatch(facing()?),
         // BeltBlock, level ones: run as Kinetica's belt along its facing (`create_belt.rs`).
         "belt" if property("slope") == Some("horizontal") => Part::Belt(facing()?.axis()),
         // FaceAttachedHorizontalDirectionalBlock's connected way: up from a floor, down from a
@@ -1200,6 +1204,9 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         | Part::Drain
         | Part::SteamEngine(_)
         | Part::SmartPipe(_)
+        | Part::AnalogLever
+        | Part::Latch(_)
+        | Part::ToggleLatch(_)
         | Part::Vault(_) => Vec::new(),
         // FluidValveRenderer's and HosePulleyRenderer's shaft through them.
         Part::Valve { facing, along_first } => {
@@ -1312,6 +1319,9 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::SmartPipe(_)
         | Part::HosePulley(_)
         | Part::Vault(_)
+        | Part::AnalogLever
+        | Part::Latch(_)
+        | Part::ToggleLatch(_)
         | Part::SpeedController(_) => Vec::new(),
     }
 }
@@ -1338,6 +1348,9 @@ fn takes_use(part: Part) -> bool {
             | Part::LitBurner
             | Part::Belt(_)
             | Part::Funnel(_)
+            | Part::AnalogLever
+            | Part::Latch(_)
+            | Part::ToggleLatch(_)
     )
 }
 
@@ -1556,6 +1569,7 @@ impl Game<'_> {
         self.tachyon_saws();
         self.tachyon_deployers();
         self.tachyon_hoses();
+        self.tachyon_latches();
         self.tachyon_fluids();
         self.tachyon_steam();
         let removed = OWNERS.with_borrow_mut(|owners| {
@@ -1973,6 +1987,9 @@ impl Game<'_> {
             return true;
         }
         let sneaking = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft);
+        if matches!(part, Some(Part::AnalogLever | Part::Latch(_) | Part::ToggleLatch(_))) {
+            return self.tachyon_use_redstone(pos, sneaking);
+        }
         let dimension = self.dim.id();
         let root = self.save.root.clone();
         // A belt: the held stack onto it, to be carried.
@@ -2496,6 +2513,37 @@ impl Game<'_> {
                 let state = self.tachyon_model("create:block/fluid_valve/pointer");
                 self.submit_item_world(&state, pose, light, out);
             }
+            // AnalogLeverRenderer's handle, a quarter turn at 15, and its indicator.
+            if create && part == Part::AnalogLever {
+                use std::f32::consts::{FRAC_PI_2, PI};
+                let face = self.native_block_property(pos, "face").unwrap_or_default();
+                let facing = self.native_block_property(pos, "facing").and_then(|f| Dir::parse(&f)).unwrap_or(Dir::North);
+                let power: f32 = self.native_block_property(pos, "power").and_then(|p| p.parse().ok()).unwrap_or(0.0);
+                let r_x = match face.as_str() {
+                    "floor" => 0.0,
+                    "wall" => FRAC_PI_2,
+                    _ => PI,
+                };
+                let r_y = match facing {
+                    Dir::North => PI,
+                    Dir::East => FRAC_PI_2,
+                    Dir::West => -FRAC_PI_2,
+                    _ => 0.0,
+                };
+                let base = Mat4::from_translation(origin + Vec3::splat(0.5))
+                    * Mat4::from_rotation_y(r_y)
+                    * Mat4::from_rotation_x(r_x)
+                    * Mat4::from_translation(Vec3::splat(-0.5));
+                let pivot = Vec3::new(0.5, 1.0 / 16.0, 0.5);
+                let handle = base
+                    * Mat4::from_translation(pivot)
+                    * Mat4::from_rotation_x(power / 15.0 * FRAC_PI_2)
+                    * Mat4::from_translation(-pivot);
+                let state = self.tachyon_model("create:block/analog_lever/handle");
+                self.submit_item_world(&state, handle, light, out);
+                let state = self.tachyon_model("create:block/analog_lever/indicator");
+                self.submit_item_world(&state, base, light, out);
+            }
             // HosePulleyRenderer (AbstractPulleyRenderer): the coil, the hose down to its magnet.
             if create && let Part::HosePulley(facing) = part {
                 let axis = hose::clockwise(facing).axis();
@@ -2822,6 +2870,9 @@ impl Game<'_> {
             Part::SmartPipe(_) => ("smart_fluid_pipe", "Smart Fluid Pipe"),
             Part::HosePulley(_) => ("hose_pulley", "Hose Pulley"),
             Part::Vault(_) => ("item_vault", "Item Vault"),
+            Part::AnalogLever => ("analog_lever", "Analog Lever"),
+            Part::Latch(_) => ("powered_latch", "Powered Latch"),
+            Part::ToggleLatch(_) => ("powered_toggle_latch", "Powered Toggle Latch"),
             Part::Press(_) => ("mechanical_press", "Mechanical Press"),
             Part::Depot => ("depot", "Depot"),
             Part::Mixer => ("mechanical_mixer", "Mechanical Mixer"),

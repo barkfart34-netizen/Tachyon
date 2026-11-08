@@ -596,6 +596,10 @@ def create(control, out):
         ("setblock", (-16, 0, -16), "create:item_vault[axis=x,large=false]"),
         ("setblock", (-17, 1, -16), "minecraft:hopper[facing=down]"),
         ("setblock", (-16, -1, -16), "minecraft:hopper[facing=down]"),
+        ("setblock", (-21, 0, -14), "create:analog_lever[face=floor,facing=north,power=0]"),
+        ("setblock", (-20, 0, -14), "minecraft:redstone_lamp"),
+        ("setblock", (-17, 0, -14), "create:powered_toggle_latch[facing=east,powered=false,powering=false]"),
+        ("setblock", (-18, 0, -14), "minecraft:redstone_lamp"),
     ]
     for c in fluids:
         if "error" in control.send(f"chat /{c[0]} {at(c[1])} {c[2]}" if len(c) == 3 else
@@ -634,6 +638,12 @@ def create(control, out):
     visit((-23, 0, -10), (-23, 2, -12))
     control.send("mouse right click")
     time.sleep(1)
+    visit((-21, 1, -12), (-21, 0, -14))
+    control.send("mouse right click")
+    time.sleep(1)
+    visit((-17, 1, -12), (-17, 0, -14))
+    control.send("mouse right click")
+    time.sleep(1)
     visit((-18, 0, -5), (-18, 0, -8))
     control.send("screenshot " + os.path.join(out, "create-fluids.png"))
 
@@ -660,19 +670,22 @@ def create(control, out):
     corners = [block_is(c, "minecraft:air") for c in [(-24, 2, -16), (-24, 1, -16)]]
     hosed = until(lambda: min(c() for c in corners), 1, 60)
     vaulted = until(taken((-16, -1, -16), "minecraft:iron_ingot"), 1)
+    levered = until(block_is((-20, 0, -14), "minecraft:redstone_lamp[lit=true]"), 1, 10)
+    latched = until(block_is((-18, 0, -14), "minecraft:redstone_lamp[lit=true]"), 1, 10)
     visit((-21, 6, -11), (-23, 3, -16))
     control.send("screenshot " + os.path.join(out, "create-hose.png"))
     visit((-17, 0, -7), (-19, 3, -12))
     control.send("screenshot " + os.path.join(out, "create-steam.png"))
     print("create fluids: drained", drained, "filled", filled, "poured", flowed, "steam drilled", steamed,
-          "belted", belted, "hose drained", hosed, "vaulted", vaulted)
+          "belted", belted, "hose drained", hosed, "vaulted", vaulted,
+          "levered", levered, "latched", latched)
     drilled = until(taken((-7, -1, -4), "minecraft:cobblestone"), 1)
     cased = until(taken((9, -1, -4), "create:andesite_casing"), 2)
     print("create made: flour", flour, "sheets", sheets, "alloy", alloy, "crushed", crushed,
           "drilled", drilled, "cased", cased)
     return (good and flour >= 4 and sheets >= 3 and alloy >= 1 and crushed >= 4 and drilled >= 1
             and cased >= 2 and drained >= 1 and filled >= 1 and flowed >= 1 and steamed >= 1 and belted >= 1
-            and hosed >= 1 and vaulted >= 1)
+            and hosed >= 1 and vaulted >= 1 and levered >= 1 and latched >= 1)
 
 
 def lost_realms(control, out):

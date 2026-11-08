@@ -1748,6 +1748,7 @@ impl GameLevel<'_> {
         self.tachyon_drill_place(state, context, answer);
         self.tachyon_deployer_place(state, context, answer);
         self.tachyon_fluid_place(state, context, answer);
+        self.tachyon_redstone_place(state, context, answer);
         mod_api::dispatch_state_for_placement(
             self,
             mod_api::mods(),

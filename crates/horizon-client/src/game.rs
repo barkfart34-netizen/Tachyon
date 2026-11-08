@@ -1410,6 +1410,7 @@ impl LevelAccess for GameLevel<'_> {
     fn adjust_signal_source(&self, state: BlockStateId, vanilla: bool) -> bool {
         let mut source = vanilla;
         if self.native_authoritative {
+            self.tachyon_signal_source(state, &mut source);
             self.native_is_signal_source(state, &mut source);
         }
         source
@@ -1424,6 +1425,7 @@ impl LevelAccess for GameLevel<'_> {
     ) -> i32 {
         let mut signal = vanilla;
         if self.native_authoritative {
+            self.tachyon_block_signal(state, direction, direct, &mut signal);
             let face = direction.opposite();
             self.native_block_signal(self.dimension, pos, state, face, direct, &mut signal);
         }

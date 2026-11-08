@@ -231,6 +231,10 @@ pub enum Part {
     HosePulley(Dir),
     /// Create's item vault, along its axis (`vault.rs`).
     Vault(Axis),
+    /// Create's analog lever, powered latch and toggle latch, facing (`redstone.rs`).
+    AnalogLever,
+    Latch(Dir),
+    ToggleLatch(Dir),
     /// Create's steam engine, pointing away from its boiler's tank (`steam.rs`).
     SteamEngine(Dir),
     /// Create's powered shaft: a shaft a steam engine turns, a source.
@@ -342,6 +346,9 @@ impl Part {
             | Part::Drain
             | Part::SmartPipe(_)
             | Part::Vault(_)
+            | Part::AnalogLever
+            | Part::Latch(_)
+            | Part::ToggleLatch(_)
             | Part::SteamEngine(_) => false,
         }
     }
