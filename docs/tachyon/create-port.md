@@ -148,7 +148,11 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
     (2, timer 20) persis `updateState` Create; pemakaian membalik keluaran (`inverted`), pemakaian
     sambil jongkok mengganti interval 2, 5, 10, 20, 40, 100, 200, 600, 1200 tick (pengganti kotak
     gulir Create), interval disimpan di file mesin;
-  - porter versi 12; belum: redstone link, nixie tube, threshold switch, content/smart observer,
+  - redstone link (`link.rs`): pemancar membaca redstone di sekitarnya, penerima dengan frekuensi
+    (dua item; slot kosong ikut dihitung) yang sama dalam 256 blok memberi sinyal terkuat; jongkok
+    dengan tangan kosong mengganti mode, pemakaian dengan item mengisi slot frekuensi kosong pertama
+    (item ketiga memulai pasangan baru), frekuensi disimpan di file mesin;
+  - porter versi 13; belum: nixie tube, threshold switch, content/smart observer,
     display link; jeda satu tick latch belum ada.
 - **Fluid valve, smart fluid pipe, hose pulley, item vault** (8 November 2026):
   - fluid valve (`fluids.rs`): pipa di sumbu yang bukan arah hadap dan bukan sumbu shaft-nya

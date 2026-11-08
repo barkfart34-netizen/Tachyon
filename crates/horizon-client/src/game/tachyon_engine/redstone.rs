@@ -197,7 +197,7 @@ impl super::super::GameLevel<'_> {
     pub(in crate::game) fn tachyon_signal_source(&self, state: BlockStateId, source: &mut bool) {
         if matches!(
             self.native_state_block(state),
-            Some(ANALOG_LEVER | LATCH | TOGGLE_LATCH | PULSE_REPEATER | PULSE_EXTENDER | PULSE_TIMER)
+            Some(ANALOG_LEVER | LATCH | TOGGLE_LATCH | PULSE_REPEATER | PULSE_EXTENDER | PULSE_TIMER | super::link::LINK)
         ) {
             *source = true;
         }
@@ -206,6 +206,10 @@ impl super::super::GameLevel<'_> {
     /// `getSignal` and `getDirectSignal` for these blocks, `direction` vanilla's.
     pub(in crate::game) fn tachyon_block_signal(&self, state: BlockStateId, direction: Direction, direct: bool, signal: &mut i32) {
         let Some(s) = self.registry.state(state) else { return };
+        if s.name == super::link::LINK {
+            *signal = super::link::signal(|k| s.properties.get(k).cloned(), of(direction), direct);
+            return;
+        }
         if let Some(n) = self::signal(&s.name, |k| s.properties.get(k).cloned(), of(direction), direct) {
             *signal = n;
         }
@@ -234,6 +238,8 @@ impl super::super::GameLevel<'_> {
                     .and_then(|s| self.native_state_with_property(s, "facing", facing.name()))
                     .and_then(|s| self.native_state_with_property(s, "power", "0"))
             }
+            // RedstoneLinkBlock.getStateForPlacement: facing out of the face clicked.
+            Some(super::link::LINK) => self.native_state_with_property(state, "facing", of(context.face).name()),
             Some(LATCH | TOGGLE_LATCH | PULSE_REPEATER | PULSE_EXTENDER | PULSE_TIMER) => {
                 self.native_state_with_property(state, "facing", horizontal.opposite().name())
             }
@@ -247,7 +253,7 @@ impl super::super::GameLevel<'_> {
 
 impl super::super::Game<'_> {
     /// Sets the properties `values` of the block at `p` and tells its neighbours its signal changed.
-    fn tachyon_redstone_set(&mut self, p: [i32; 3], values: &[(&str, String)]) {
+    pub(super) fn tachyon_redstone_set(&mut self, p: [i32; 3], values: &[(&str, String)]) {
         let registry = self.pack.assets.registry;
         let state = self.world.block(p[0], p[1], p[2]);
         let Some(mut s) = registry.state(state).cloned() else { return };

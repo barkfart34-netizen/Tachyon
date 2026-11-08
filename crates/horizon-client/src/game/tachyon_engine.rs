@@ -39,6 +39,7 @@ mod drill;
 mod create_belt;
 mod fluids;
 mod hose;
+mod link;
 mod redstone;
 mod vault;
 mod steam;
@@ -229,6 +230,7 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
         "pulse_repeater" => Part::Diode(facing()?, redstone::Pulse::Repeater),
         "pulse_extender" => Part::Diode(facing()?, redstone::Pulse::Extender),
         "pulse_timer" => Part::Diode(facing()?, redstone::Pulse::Timer),
+        "redstone_link" => Part::Link(facing()?),
         // BeltBlock, level ones: run as Kinetica's belt along its facing (`create_belt.rs`).
         "belt" if property("slope") == Some("horizontal") => Part::Belt(facing()?.axis()),
         // FaceAttachedHorizontalDirectionalBlock's connected way: up from a floor, down from a
@@ -465,6 +467,8 @@ struct Owner {
     vaults: HashMap<[i32; 3], vault::Vault>,
     /// Each brass diode's interval and count (`redstone.rs`).
     diodes: HashMap<[i32; 3], redstone::Diode>,
+    /// Each redstone link's frequency (`link.rs`).
+    links: HashMap<[i32; 3], link::Frequency>,
     /// What each fan turning does, for the goggles ("washing", "pull:air").
     fan_work: HashMap<[i32; 3], String>,
     /// The dropped items and the depots where a fan's air works them: how,
@@ -577,6 +581,8 @@ impl Owner {
         let diodes: Vec<([i32; 3], redstone::Diode)> =
             serde_json::from_value(value["diodes"].clone()).unwrap_or_default();
         self.diodes = diodes.into_iter().collect();
+        let links: Vec<([i32; 3], link::Frequency)> = serde_json::from_value(value["links"].clone()).unwrap_or_default();
+        self.links = links.into_iter().collect();
         self.dirty = true;
     }
     fn save(&self, root: &std::path::Path, dimension: &str) {
@@ -624,7 +630,11 @@ impl Owner {
         vaults.sort_by_key(|(p, _)| **p);
         let mut diodes: Vec<(&[i32; 3], &redstone::Diode)> = self.diodes.iter().collect();
         diodes.sort_by_key(|(p, _)| **p);
+        let mut links: Vec<(&[i32; 3], &link::Frequency)> =
+            self.links.iter().filter(|(_, f)| **f != link::Frequency::default()).collect();
+        links.sort_by_key(|(p, _)| **p);
         let text = serde_json::json!({
+            "links": links,
             "diodes": diodes,
             "hoses": hoses,
             "vaults": vaults,
@@ -1219,6 +1229,7 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         | Part::Latch(_)
         | Part::ToggleLatch(_)
         | Part::Diode(_, _)
+        | Part::Link(_)
         | Part::Vault(_) => Vec::new(),
         // FluidValveRenderer's and HosePulleyRenderer's shaft through them.
         Part::Valve { facing, along_first } => {
@@ -1335,6 +1346,7 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::Latch(_)
         | Part::ToggleLatch(_)
         | Part::Diode(_, _)
+        | Part::Link(_)
         | Part::SpeedController(_) => Vec::new(),
     }
 }
@@ -1365,6 +1377,7 @@ fn takes_use(part: Part) -> bool {
             | Part::Latch(_)
             | Part::ToggleLatch(_)
             | Part::Diode(_, _)
+            | Part::Link(_)
     )
 }
 
@@ -1584,6 +1597,7 @@ impl Game<'_> {
         self.tachyon_deployers();
         self.tachyon_hoses();
         self.tachyon_latches();
+        self.tachyon_links();
         self.tachyon_fluids();
         self.tachyon_steam();
         let removed = OWNERS.with_borrow_mut(|owners| {
@@ -2001,6 +2015,9 @@ impl Game<'_> {
             return true;
         }
         let sneaking = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft);
+        if let Some(Part::Link(_)) = part {
+            return self.tachyon_use_link(pos, sneaking);
+        }
         if matches!(part, Some(Part::AnalogLever | Part::Latch(_) | Part::ToggleLatch(_) | Part::Diode(_, _))) {
             return self.tachyon_use_redstone(pos, sneaking);
         }
@@ -2890,6 +2907,7 @@ impl Game<'_> {
             Part::Diode(_, redstone::Pulse::Repeater) => ("pulse_repeater", "Pulse Repeater"),
             Part::Diode(_, redstone::Pulse::Extender) => ("pulse_extender", "Pulse Extender"),
             Part::Diode(_, redstone::Pulse::Timer) => ("pulse_timer", "Pulse Timer"),
+            Part::Link(_) => ("redstone_link", "Redstone Link"),
             Part::Press(_) => ("mechanical_press", "Mechanical Press"),
             Part::Depot => ("depot", "Depot"),
             Part::Mixer => ("mechanical_mixer", "Mechanical Mixer"),

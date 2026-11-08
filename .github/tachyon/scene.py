@@ -600,6 +600,10 @@ def create(control, out):
         ("setblock", (-20, 0, -14), "minecraft:redstone_lamp"),
         ("setblock", (-17, 0, -14), "create:powered_toggle_latch[facing=east,powered=false,powering=false]"),
         ("setblock", (-18, 0, -14), "minecraft:redstone_lamp"),
+        # Two redstone links of the empty frequency: the lever's transmitter, a lamp's receiver.
+        ("setblock", (-22, 0, -14), "create:redstone_link[facing=up,powered=false,receiver=false,power=0]"),
+        ("setblock", (-14, 0, -15), "create:redstone_link[facing=up,powered=false,receiver=true,power=0]"),
+        ("setblock", (-15, 0, -15), "minecraft:redstone_lamp"),
     ]
     for c in fluids:
         if "error" in control.send(f"chat /{c[0]} {at(c[1])} {c[2]}" if len(c) == 3 else
@@ -672,20 +676,22 @@ def create(control, out):
     vaulted = until(taken((-16, -1, -16), "minecraft:iron_ingot"), 1)
     levered = until(block_is((-20, 0, -14), "minecraft:redstone_lamp[lit=true]"), 1, 10)
     latched = until(block_is((-18, 0, -14), "minecraft:redstone_lamp[lit=true]"), 1, 10)
+    linked = until(block_is((-15, 0, -15), "minecraft:redstone_lamp[lit=true]"), 1, 10)
     visit((-21, 6, -11), (-23, 3, -16))
     control.send("screenshot " + os.path.join(out, "create-hose.png"))
     visit((-17, 0, -7), (-19, 3, -12))
     control.send("screenshot " + os.path.join(out, "create-steam.png"))
     print("create fluids: drained", drained, "filled", filled, "poured", flowed, "steam drilled", steamed,
           "belted", belted, "hose drained", hosed, "vaulted", vaulted,
-          "levered", levered, "latched", latched)
+          "levered", levered, "latched", latched, "linked", linked)
     drilled = until(taken((-7, -1, -4), "minecraft:cobblestone"), 1)
     cased = until(taken((9, -1, -4), "create:andesite_casing"), 2)
     print("create made: flour", flour, "sheets", sheets, "alloy", alloy, "crushed", crushed,
           "drilled", drilled, "cased", cased)
     return (good and flour >= 4 and sheets >= 3 and alloy >= 1 and crushed >= 4 and drilled >= 1
             and cased >= 2 and drained >= 1 and filled >= 1 and flowed >= 1 and steamed >= 1 and belted >= 1
-            and hosed >= 1 and vaulted >= 1 and levered >= 1 and latched >= 1)
+            and hosed >= 1 and vaulted >= 1 and levered >= 1 and latched >= 1
+            and linked >= 1)
 
 
 def lost_realms(control, out):

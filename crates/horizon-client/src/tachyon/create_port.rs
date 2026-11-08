@@ -84,6 +84,8 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("pulse_repeater", "minecraft:polished_andesite", 0.0, "minecraft:oak_planks"),
     ("pulse_extender", "minecraft:polished_andesite", 0.0, "minecraft:oak_planks"),
     ("pulse_timer", "minecraft:polished_andesite", 0.0, "minecraft:oak_planks"),
+    // RedstoneLinkBlock's six facings, powered and receiver, with the received strength kept.
+    ("redstone_link", "minecraft:polished_andesite", 0.0, "minecraft:oak_planks"),
     // SteamEngineBlock's face and facing, a grindstone's; the shaft it powers (PoweredShaftBlock,
     // no item of its own), drawn turning as a shaft.
     ("steam_engine", "minecraft:grindstone", 3.0, "minecraft:copper_block"),
@@ -147,6 +149,7 @@ const NOT_OCCLUDING: &[&str] = &[
     "pulse_repeater",
     "pulse_extender",
     "pulse_timer",
+    "redstone_link",
     "steam_engine",
     "belt",
     "mechanical_arm",
@@ -391,7 +394,7 @@ const TURNING: &[&str] = &[
 ];
 
 /// The version of [`fix`]: a port fixed by an older one is fixed again.
-const VERSION: &str = "12";
+const VERSION: &str = "13";
 const STAMP: &str = ".tachyon-fix";
 
 /// Fixes a Create ported into `dir` (`horizon-mods/create`) by an older
@@ -444,6 +447,7 @@ const RECIPES: &[&str] = &[
     "crafting/logistics/pulse_repeater",
     "crafting/logistics/pulse_extender",
     "crafting/logistics/pulse_timer",
+    "crafting/logistics/redstone_link",
     "crafting/kinetics/analog_lever",
 ];
 
@@ -667,6 +671,27 @@ pub fn fix(dir: &Path) -> Result<(), String> {
             declaration["default_state"] = default;
             // DiodeBlock.SHAPE: two pixels high.
             declaration["shapes"] = json!({"default": [[0.0, 0.0, 0.0, 1.0, 0.125, 1.0]]});
+        }
+        if *block == "redstone_link" {
+            let flag = json!({"type": "boolean"});
+            let power: Vec<String> = (0..16).map(|n| n.to_string()).collect();
+            declaration["state_properties"] = json!({
+                "facing": {"type": "enum", "values": ["down", "up", "north", "south", "west", "east"]},
+                "powered": flag,
+                "receiver": flag,
+                "power": {"type": "enum", "values": power},
+            });
+            declaration["default_state"] =
+                json!({"facing": "up", "powered": "false", "receiver": "false", "power": "0"});
+            // AllShapes.REDSTONE_BRIDGE: a tablet against the block it is on.
+            declaration["shapes"] = json!({"property": "facing", "values": {
+                "up": [[0.125, 0.0, 0.125, 0.875, 0.1875, 0.875]],
+                "down": [[0.125, 0.8125, 0.125, 0.875, 1.0, 0.875]],
+                "north": [[0.125, 0.125, 0.8125, 0.875, 0.875, 1.0]],
+                "south": [[0.125, 0.125, 0.0, 0.875, 0.875, 0.1875]],
+                "west": [[0.8125, 0.125, 0.125, 1.0, 0.875, 0.875]],
+                "east": [[0.0, 0.125, 0.125, 0.1875, 0.875, 0.875]],
+            }});
         }
         if *block == "item_vault" {
             declaration["state_properties"] = json!({
