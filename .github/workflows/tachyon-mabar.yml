@@ -34,3 +34,17 @@ jobs:
           Check 'desktop shortcut' (Test-Path (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Tachyon.lnk'))
           & "$env:ProgramFiles\Tailscale\tailscale.exe" version
           if (-not $ok) { exit 1 }
+      - name: The setting-only bat, from the game's folder
+        shell: cmd
+        env:
+          TACHYON_MABAR_AUTO: "1"
+        run: |
+          for /r "%LOCALAPPDATA%\Tachyon\app" %%f in (Tachyon.exe) do if exist "%%f" copy /y packaging\windows\Tachyon-Mabar-Setting.bat "%%~dpfTachyon-Mabar-Setting.bat"
+          for /r "%LOCALAPPDATA%\Tachyon\app" %%f in (Tachyon-Mabar-Setting.bat) do if exist "%%f" call "%%f" < NUL
+      - name: What the setting bat left
+        shell: pwsh
+        run: |
+          $rules = Get-NetFirewallRule -DisplayName 'Tachyon Mabar:*' -ErrorAction SilentlyContinue
+          $rules | ForEach-Object { "rule: $($_.DisplayName)" }
+          if (-not ($rules | Where-Object DisplayName -like '*Tachyon.exe')) { 'MISSING: the rule for Tachyon.exe'; exit 1 }
+          if (-not ($rules | Where-Object DisplayName -like '*port 25580*')) { 'MISSING: the port rule'; exit 1 }
