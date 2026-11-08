@@ -6967,6 +6967,8 @@ impl Renderer {
         }
     }
     pub fn render(&mut self, frame: &Frame) -> Result<bool> {
+        // Tachyon: what Orbital Laser's post passes read of the frame.
+        crate::orbital_post::capture(frame);
         // A lost device cannot accept uploads either. Leave recovery to the
         // owner instead of submitting atlas patches to the invalid device.
         if self.device_lost() {

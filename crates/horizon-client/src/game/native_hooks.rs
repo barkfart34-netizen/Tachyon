@@ -2236,6 +2236,7 @@ impl Game<'_> {
     }
     /// Once a frame, in a world or not, after Horizon's extras.
     pub(super) fn native_frame(&mut self, elapsed: Duration) {
+        super::orbital_glue::frame(self, elapsed);
         self.tachyon_frame(elapsed);
         mod_api::dispatch_frame(self, mod_api::mods(), elapsed);
     }
@@ -2286,6 +2287,7 @@ impl Game<'_> {
     /// tells it after the new level is made. Client-side, on the window; the
     /// server's levels have `native_level_load`. API 135.
     pub(super) fn native_client_level_load(&mut self, dimension: &str) {
+        super::orbital_glue::client_level_load(self, dimension);
         mod_api::dispatch_client_level_load(self, mod_api::mods(), dimension);
     }
     /// The client dropped its level for `dimension` (`LevelEvent.Unload`
@@ -2294,12 +2296,14 @@ impl Game<'_> {
     /// `native_client_level_load`. Not told when the game itself quits.
     /// Client-side. API 135.
     pub(super) fn native_client_level_unload(&mut self, dimension: &str) {
+        super::orbital_glue::client_level_unload(self, dimension);
         mod_api::dispatch_client_level_unload(self, mod_api::mods(), dimension);
     }
     /// Once a tick, in every `Game`: the window's (in single player, on LAN
     /// and on servers), and the server's own (`native_window` is false
     /// there: the single player server thread, a dedicated server).
     pub(super) fn native_tick(&mut self) {
+        super::orbital_glue::tick(self);
         self.tachyon_tick();
         mod_api::dispatch_tick(self, mod_api::mods());
     }
@@ -2523,6 +2527,7 @@ impl Game<'_> {
     }
     /// After a successful authoritative server level tick pass.
     pub(super) fn native_level_tick_post(&mut self, dimension: &str) {
+        super::orbital_glue::level_tick(self, dimension);
         self.tachyon_water_wheel_settle(dimension);
         self.tachyon_girder_settle(dimension);
         mod_api::dispatch_level_tick_post(self, mod_api::mods(), dimension);
@@ -2547,6 +2552,7 @@ impl Game<'_> {
     /// `native_fill` and `native_text`. Skip a corner `native_corner_shown`
     /// says is taken.
     pub(super) fn native_hud(&mut self, batch: &mut HudBatch, corners: &mut Corners) {
+        super::orbital_glue::hud(self, batch, corners);
         self.tachyon_hud(batch, corners);
         mod_api::dispatch_hud(self, mod_api::mods(), batch, corners);
     }
@@ -2690,6 +2696,7 @@ impl Game<'_> {
     /// (`key.keyboard.z`, `key.mouse.left`): keys on any screen (check
     /// `native_playing`), mouse buttons while playing. Repeats are left out.
     pub(super) fn native_key(&mut self, key: &str, pressed: bool) {
+        super::orbital_glue::key(self, key, pressed);
         self.tachyon_key(key, pressed);
         mod_api::dispatch_key(self, mod_api::mods(), key, pressed);
     }
@@ -2781,6 +2788,9 @@ impl Game<'_> {
     /// A command typed or clicked in chat, without its slash, before the
     /// server and Horizon's commands see it: set `ran` when the mod ran it.
     pub(super) fn native_command(&mut self, command: &str, ran: &mut bool) {
+        if super::orbital_glue::command(self, command) {
+            *ran = true;
+        }
         self.tachyon_command(command, ran);
         mod_api::dispatch_command(self, mod_api::mods(), command, ran);
     }
@@ -2854,6 +2864,7 @@ impl Game<'_> {
     /// Horizon scales the sum by Distortion Effects and bounds it
     /// (`native_shake_matrix`). API 82.
     pub(super) fn native_camera_shake(&self, partial: f32, shake: &mut NativeShake) {
+        super::orbital_glue::camera_shake(self, partial, shake);
         mod_api::dispatch_camera_shake(self, mod_api::mods(), partial, shake);
     }
     /// Once a frame while the world is drawn, `partial` ticks past the last tick (0 to 1), the
@@ -3128,6 +3139,7 @@ impl Game<'_> {
     }
     /// Options > Mods lists the native mods: push yours.
     pub(super) fn native_mods(&mut self, mods: &mut Vec<NativeMod>) {
+        super::orbital_glue::mods(self, mods);
         self.tachyon_mods(mods);
         mod_api::dispatch_mods(self, mod_api::mods(), mods);
     }
@@ -3585,6 +3597,7 @@ impl Game<'_> {
         batch: &mut HudBatch,
         screen: &NativeScreenView<'_>,
     ) {
+        super::orbital_glue::screen_render_post(self, batch, screen);
         mod_api::dispatch_screen_render_post(self, mod_api::mods(), batch, screen);
     }
     /// A mouse button went down over the open screen
@@ -3615,6 +3628,7 @@ impl Game<'_> {
         modifiers: u32,
         canceled: &mut bool,
     ) {
+        super::orbital_glue::screen_click(self, screen, button, canceled);
         mod_api::dispatch_screen_mouse_button_pressed_pre(
             self,
             mod_api::mods(),
@@ -3747,6 +3761,7 @@ impl Game<'_> {
         modifiers: u32,
         canceled: &mut bool,
     ) {
+        super::orbital_glue::screen_key(self, screen, key, canceled);
         mod_api::dispatch_screen_key_pressed_pre(
             self,
             mod_api::mods(),
@@ -3805,6 +3820,7 @@ impl Game<'_> {
         modifiers: u32,
         canceled: &mut bool,
     ) {
+        super::orbital_glue::screen_char(self, screen, c, canceled);
         mod_api::dispatch_screen_char_typed_pre(
             self,
             mod_api::mods(),
@@ -4108,6 +4124,7 @@ impl Game<'_> {
     /// chat box then completes them as vanilla's, within their level. A
     /// name vanilla has is left out. API 8.
     pub(super) fn native_register_commands(&mut self, commands: &mut Vec<NativeCommand>) {
+        super::orbital_glue::register_commands(self, commands);
         mod_api::dispatch_register_commands(self, mod_api::mods(), commands);
     }
     /// A player's command on the server (`Commands.performCommand`),
@@ -4123,6 +4140,7 @@ impl Game<'_> {
         command: &str,
         ran: &mut bool,
     ) {
+        super::orbital_glue::perform_command(self, command, ran);
         mod_api::dispatch_perform_command(self, mod_api::mods(), player, command, ran);
     }
     /// A player takes an item from an armor stand or puts one on it
@@ -7138,11 +7156,13 @@ impl Game<'_> {
     /// player's own bytes, checked by nothing. Runs in the tick after it
     /// arrives, with no player's state swapped in. Server-side. API 40.
     pub(super) fn native_net_from_client(&mut self, player: u128, channel: &str, data: &[u8]) {
+        super::orbital_glue::from_client(self, player, channel, data);
         mod_api::dispatch_net_from_client(self, mod_api::mods(), player, channel, data);
     }
     /// A message from the server on `channel` (`mod_id:name`), whose `data`
     /// is the sender's own bytes. The window's game only. API 40.
     pub(super) fn native_net_from_server(&mut self, channel: &str, data: &[u8]) {
+        super::orbital_glue::from_server(self, channel, data);
         mod_api::dispatch_net_from_server(self, mod_api::mods(), channel, data);
     }
     /// A play packet from the server reached the window's game, decoded,

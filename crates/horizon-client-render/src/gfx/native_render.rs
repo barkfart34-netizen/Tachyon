@@ -150,6 +150,8 @@ pub struct RenderNeeds {
 /// The world is drawn (see [`WorldDrawn`]). Not called on the title screen's panorama.
 #[inline(never)]
 pub fn native_world_drawn(world: &mut WorldDrawn<'_>) {
+    // Tachyon: Orbital Laser's post passes (built in).
+    crate::orbital_post::draw(world);
     generated::dispatch_world_drawn(RENDERERS.get().map_or(&[], |renderers| renderers), world);
 }
 
@@ -163,6 +165,7 @@ pub fn native_hand_drawn(hand: &mut HandDrawn<'_>) {
 /// Asked as a frame is built and drawn: set what your mod needs.
 #[inline(never)]
 pub fn native_render_needs(needs: &mut RenderNeeds) {
+    crate::orbital_post::needs(needs);
     generated::dispatch_render_needs(RENDERERS.get().map_or(&[], |renderers| renderers), needs);
 }
 

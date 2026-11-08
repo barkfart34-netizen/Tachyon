@@ -41,6 +41,7 @@ pub(super) fn loading_mods(disabled: &std::collections::BTreeSet<String>) -> Vec
         (recipes::ID, recipes::NAME),
         (zoom::ID, "Zoom"),
         (super::tachyon_engine::chronicles::ID, "Chronicles"),
+        (super::orbital_glue::ID, "Orbital Laser"),
     ]
     .into_iter()
     .filter(|(id, _)| !disabled.contains(*id))

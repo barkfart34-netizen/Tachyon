@@ -571,6 +571,43 @@ def chronicles(control, out):
     return bool(reply.get("ok"))
 
 
+def orbital(control, out):
+    """Orbital Laser (built in): the Designator given, its wheel open, then one
+    Plasma strike with terrain damage off (light and sound only) aimed at the
+    ground ahead, pictured as it comes down. Whether the mod answered and the
+    strike began (its status panel's or the action bar's countdown)."""
+    control.send("chat /orbital give")
+    time.sleep(3)
+    control.send("chat /orbital terrain off")
+    time.sleep(1)
+    control.send("chat /orbital plasma")
+    time.sleep(2)
+    chat = " ".join(str(line) for line in control.send("chat-log 8").get("chat", []))
+    print("orbital chat:", chat)
+    control.send("chat /orbital wheel")
+    time.sleep(3)
+    control.send("screenshot " + os.path.join(out, "orbital-wheel.png"))
+    control.send("key escape tap")
+    time.sleep(2)
+    control.send("resume")
+    control.send("look 0 35")
+    time.sleep(1)
+    control.send("mouse right down")
+    time.sleep(1.5)
+    control.send("mouse right up")
+    shots = 0
+    for i, wait in enumerate([4, 6, 8]):
+        time.sleep(wait)
+        if control.send("screenshot " + os.path.join(out, f"orbital-strike-{i}.png")).get("ok"):
+            shots += 1
+    after = " ".join(str(line) for line in control.send("chat-log 8").get("chat", []))
+    print("orbital chat after:", after)
+    control.send("chat /orbital stop")
+    time.sleep(2)
+    broken = "isn't installed" in chat or "Unknown" in chat or "unknown" in chat
+    return shots == 3 and not broken
+
+
 def main():
     game, home, out = sys.argv[1:4]
     # "create": Create's scene alone, in a game folder Create was got into.
@@ -623,6 +660,8 @@ def main():
             failed.append("lost realms")
         if not chronicles(control, out):
             failed.append("chronicles")
+        if not orbital(control, out):
+            failed.append("orbital laser")
         control.send("options mods")
         time.sleep(2)
         if not control.send("screenshot " + os.path.join(out, "mods.png")).get("ok"):

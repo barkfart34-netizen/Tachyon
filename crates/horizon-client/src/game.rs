@@ -353,6 +353,8 @@ mod subtitle_hud;
 mod sulfur_cubes;
 mod tachyon_engine;
 mod tachyon_mods;
+/// Orbital Laser (Stink-O/orbital-laser, MIT): its native bundle's host, built in; the hook points call it.
+mod orbital_glue;
 mod tempban;
 mod test_block_edit;
 mod test_blocks;

@@ -1290,6 +1290,10 @@ impl MotionWorld<'_, '_, '_> {
         keys: crate::sprint::Keys,
         sprint_window: i32,
     ) -> Result<()> {
+        // Tachyon: Orbital Laser carries the player in place of their own motion while it holds them.
+        if let std::ops::ControlFlow::Break(done) = crate::orbital_carry::player_tick(self, keys) {
+            return done;
+        }
         self.local_tick(keys, |player, keys| {
             player.sprint_input_tick_with_window(keys, sprint_window)
         })

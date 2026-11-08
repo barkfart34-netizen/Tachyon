@@ -45,6 +45,8 @@ pub mod fog;
 pub mod font;
 pub mod fusion;
 pub mod gfx;
+/// Orbital Laser's post passes (Stink-O/orbital-laser, MIT), drawn on the renderer's hook points.
+pub mod orbital_post;
 pub mod graphics;
 pub mod graphics_style;
 pub mod graphics_ui;

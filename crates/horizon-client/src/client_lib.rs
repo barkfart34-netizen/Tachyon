@@ -96,6 +96,8 @@ pub mod mobs;
 pub mod mod_content;
 pub mod mod_registry;
 pub mod motion;
+/// Orbital Laser's `world.carry-player` (Stink-O/orbital-laser, MIT).
+pub mod orbital_carry;
 pub mod multiplayer;
 pub mod music;
 pub mod native_client_hooks;
