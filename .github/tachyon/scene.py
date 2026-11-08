@@ -669,7 +669,8 @@ def main():
         HORIZON_NO_HEARTBEAT="1",
         HORIZON_NO_DISCORD="1",
     )
-    world = "Create" if mode == "create" else "Scene"
+    # A second run in the same home gets a fresh world by TACHYON_SCENE_WORLD.
+    world = os.environ.get("TACHYON_SCENE_WORLD") or ("Create" if mode == "create" else "Scene")
     args = [game, "--world", world, "--creative", "--seed", "5", "--render-distance", "4",
             "--width", "1280", "--height", "720", "--control", "--no-pause"]
     proc = subprocess.Popen(args, cwd=home, env=env)

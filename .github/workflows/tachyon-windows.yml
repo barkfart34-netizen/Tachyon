@@ -212,6 +212,29 @@ jobs:
           cp "$home/tachyon-import.txt" "$GITHUB_WORKSPACE/snapshots/" || true
           exit $code
 
+      # Create Aeronautics got the same way (its bundled jar's three mods, each imported), then
+      # Create's scene again with them in the game: it must still start and work.
+      - name: Create Aeronautics imported beside Create
+        shell: bash
+        continue-on-error: true
+        run: |
+          home="$RUNNER_TEMP/modded"
+          TACHYON_FETCH=aeronautics HORIZON_HOME="$home" dist/Tachyon/Tachyon.exe && echo "fetched" || echo "the fetch failed: $?"
+          cat "$home/tachyon-import.txt" || true
+          echo
+          cat "$home/horizon-mods.txt" || true
+          ls "$home/horizon-mods" || true
+          for m in simulated aeronautics offroad; do
+            echo "$m: $(find "$home/horizon-mods/$m" -path '*horizon/block/*.json' 2>/dev/null | wc -l) blocks"
+          done
+          code=0
+          TACHYON_SCENE_WORLD=Aeronautics timeout 900 python .github/tachyon/scene.py \
+            "$GITHUB_WORKSPACE/dist/Tachyon/Tachyon.exe" "$home" "$GITHUB_WORKSPACE/snapshots/aeronautics" create || code=$?
+          grep -i "aeronautics\|simulated\|offroad\|error\|panic" "$home/logs/latest.log" | head -60 || true
+          cp "$home/logs/latest.log" "$GITHUB_WORKSPACE/snapshots/aeronautics-game.log" || true
+          cp "$home/tachyon-import.txt" "$GITHUB_WORKSPACE/snapshots/aeronautics-import.txt" || true
+          exit $code
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
