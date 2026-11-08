@@ -508,11 +508,25 @@ def create(control, out):
         ("setblock", (-7, 0, -4), "minecraft:cobblestone"),
         ("setblock", (-7, 1, -4), "create:mechanical_drill[facing=down]"),
         ("setblock", (-7, 2, -4), "create:creative_motor[facing=down]"),
+        # A deployer facing down, two blocks over a depot, turned from the side.
+        ("setblock", (9, -1, -4), "minecraft:hopper[facing=down]"),
+        ("setblock", (9, 0, -4), "create:depot"),
+        ("setblock", (9, 2, -4), "create:deployer[facing=down,axis_along_first=true]"),
+        ("setblock", (10, 2, -4), "create:creative_motor[facing=west]"),
     ]
     for c in looks:
         if "error" in control.send(f"chat /{c[0]} {at(c[1])} {c[2]}"):
             good = False
     time.sleep(2)
+    control.send("chat /item replace entity @s weapon.mainhand with create:andesite_alloy 4")
+    visit((9, 2, -2), (9, 2, -4))
+    control.send("mouse right click")
+    time.sleep(1)
+    control.send(f"chat /item replace block {at((9, -1, -4))} container.4 with minecraft:air")
+    control.send("chat /item replace entity @s weapon.mainhand with minecraft:stripped_oak_log 2")
+    visit((9, 0, -2), (9, 0, -4))
+    control.send("mouse right click")
+    time.sleep(1)
     visit((1, 0, -1), (1, 0, -4))
     control.send("screenshot " + os.path.join(out, "create-looks.png"))
     visit((-4, 0, -2), (-4, 1, -4))
@@ -526,8 +540,11 @@ def create(control, out):
     alloy = until(taken((-4, -1, 8), "create:andesite_alloy"), 1)
     crushed = until(taken((-1, 0, 11), "create:crushed_raw_iron"), 4)
     drilled = until(taken((-7, -1, -4), "minecraft:cobblestone"), 1)
-    print("create made: flour", flour, "sheets", sheets, "alloy", alloy, "crushed", crushed, "drilled", drilled)
-    return good and flour >= 4 and sheets >= 3 and alloy >= 1 and crushed >= 4 and drilled >= 1
+    cased = until(taken((9, -1, -4), "create:andesite_casing"), 2)
+    print("create made: flour", flour, "sheets", sheets, "alloy", alloy, "crushed", crushed,
+          "drilled", drilled, "cased", cased)
+    return (good and flour >= 4 and sheets >= 3 and alloy >= 1 and crushed >= 4 and drilled >= 1
+            and cased >= 2)
 
 
 def lost_realms(control, out):

@@ -34,6 +34,7 @@ pub(super) mod loading;
 mod millstone;
 mod obj_model;
 mod press;
+mod deployer;
 mod drill;
 mod saw;
 mod speed_controller;
@@ -196,6 +197,11 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
         },
         // DrillBlock: its head's facing.
         "mechanical_drill" => Part::Drill(facing()?),
+        // DeployerBlock: its hand's facing; `axis_along_first` its shaft's way.
+        "deployer" => Part::Deployer {
+            facing: facing()?,
+            along_first: property("axis_along_first")? == "true",
+        },
         "depot" => Part::Depot,
         // The stair template keeps four horizontal facings. Its bottom
         // half means down, its top half the diagonal chute's facing.
@@ -392,6 +398,8 @@ struct Owner {
     burners: HashMap<[i32; 3], burner::Burner>,
     /// A machine's contents or motion changed since the file was written.
     mills_changed: bool,
+    /// What each deployer holds and how far its stroke is (`deployer.rs`).
+    deployers: HashMap<[i32; 3], deployer::Deployer>,
     /// What each fan turning does, for the goggles ("washing", "pull:air").
     fan_work: HashMap<[i32; 3], String>,
     /// The dropped items and the depots where a fan's air works them: how,
@@ -491,6 +499,9 @@ impl Owner {
             serde_json::from_value(value["crushers"].clone()).unwrap_or_default();
         self.crushers = crushers.into_iter().collect();
         self.chutes = chute::read(&value["chutes"]);
+        let deployers: Vec<([i32; 3], deployer::Deployer)> =
+            serde_json::from_value(value["deployers"].clone()).unwrap_or_default();
+        self.deployers = deployers.into_iter().collect();
         self.dirty = true;
     }
     fn save(&self, root: &std::path::Path, dimension: &str) {
@@ -526,8 +537,12 @@ impl Owner {
         let mut chutes: Vec<(&[i32; 3], &chute::Chute)> =
             self.chutes.iter().filter(|(_, c)| c.item.is_some()).collect();
         chutes.sort_by_key(|(p, _)| **p);
+        let mut deployers: Vec<(&[i32; 3], &deployer::Deployer)> =
+            self.deployers.iter().filter(|(_, d)| d.held.is_some()).collect();
+        deployers.sort_by_key(|(p, _)| **p);
         let file = Self::file(root, dimension);
         let text = serde_json::json!({
+            "deployers": deployers,
             "motors": rows,
             "controllers": controllers,
             "mills": mills,
@@ -768,6 +783,8 @@ struct Shown {
     targets: HashMap<[i32; 3], i32>,
     /// The mechanical arms' movement and held stacks.
     arms: HashMap<[i32; 3], arm::Snapshot>,
+    /// The deployers' strokes: their state (0 waiting, 1 out, 2 back) and timer.
+    deployers: HashMap<[i32; 3], [i32; 2]>,
 }
 
 /// What the parts show as a payload: the turning parts (each half's
@@ -784,6 +801,7 @@ fn encode(shown: &Shown) -> Vec<u8> {
         chutes,
         targets,
         arms,
+        deployers,
     } = shown;
     let mut out = Vec::with_capacity(
         37 + speeds.len() * 20 + jammed.len() * 12 + stress.len() * 20 + targets.len() * 16,
@@ -856,11 +874,17 @@ fn encode(shown: &Shown) -> Vec<u8> {
         out.extend_from_slice(&(data.len() as u32).to_le_bytes());
         out.extend_from_slice(&data);
     }
+    out.extend_from_slice(&(deployers.len() as u32).to_le_bytes());
+    for (p, [state, timer]) in deployers {
+        pos(&mut out, p);
+        out.extend_from_slice(&state.to_le_bytes());
+        out.extend_from_slice(&timer.to_le_bytes());
+    }
     out
 }
 
 /// The payload's form.
-const VERSION: u8 = 9;
+const VERSION: u8 = 10;
 
 fn decode(data: &[u8]) -> Option<Shown> {
     let mut at = 0usize;
@@ -966,6 +990,13 @@ fn decode(data: &[u8]) -> Option<Shown> {
         let arm = serde_json::from_slice(next(len)?).ok()?;
         arms.insert(p, arm);
     }
+    let count = u32::from_le_bytes(word(next(4)?)) as usize;
+    let mut deployers = HashMap::with_capacity(count.min(1 << 10));
+    for _ in 0..count {
+        let b = next(20)?;
+        let stroke = [i32::from_le_bytes(word(&b[12..16])), i32::from_le_bytes(word(&b[16..20]))];
+        deployers.insert(pos(b), stroke);
+    }
     Some(Shown {
         speeds,
         jammed,
@@ -976,6 +1007,7 @@ fn decode(data: &[u8]) -> Option<Shown> {
         chutes,
         targets,
         arms,
+        deployers,
     })
 }
 
@@ -1039,6 +1071,10 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         }
         // DrillRenderer's head, by partialFacing: modelled facing south.
         Part::Drill(facing) => vec![("create:block/mechanical_drill/head", facing, 1.0, 0, Dir::South)],
+        // DeployerRenderer's shaft through it; the pole and hand are drawn with its stroke.
+        Part::Deployer { facing, along_first } => {
+            vec![(SHAFT, positive(deployer::shaft_axis(facing, along_first)), 1.0, 0, Dir::Up)]
+        }
         Part::Saw { along_first, .. } => {
             vec![(SHAFT, positive(if along_first { Axis::X } else { Axis::Z }), 1.0, 0, Dir::Up)]
         }
@@ -1130,6 +1166,7 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::Clock(_, _)
         | Part::Saw { .. }
         | Part::Drill(_)
+        | Part::Deployer { .. }
         | Part::SpeedController(_) => Vec::new(),
     }
 }
@@ -1147,6 +1184,7 @@ fn takes_use(part: Part) -> bool {
             | Part::Crank(_)
             | Part::Millstone
             | Part::Depot
+            | Part::Deployer { .. }
             | Part::Basin
             | Part::Burner
             | Part::LitBurner
@@ -1366,6 +1404,7 @@ impl Game<'_> {
         self.tachyon_crushers();
         self.tachyon_clocks();
         self.tachyon_saws();
+        self.tachyon_deployers();
         // BasinBlockEntity.getHeatLevel: the block directly below each
         // basin, read before borrowing the world's random for the outputs.
         let basin_heat: HashMap<[i32; 3], burner::Heat> = OWNERS.with_borrow(|owners| {
@@ -1562,6 +1601,11 @@ impl Game<'_> {
                     work.insert(at, into);
                 }
             }
+            for (p, d) in &owner.deployers {
+                if let Some(h) = &d.held {
+                    held.insert(*p, vec![(h.item.clone(), h.count)]);
+                }
+            }
             for (p, chute) in &owner.chutes {
                 if !matches!(owner.index.parts.get(p), Some(Part::Chute(_, _))) {
                     continue;
@@ -1602,6 +1646,14 @@ impl Game<'_> {
                 .collect();
             if arms != owner.shown.arms {
                 owner.shown.arms = arms;
+                send = true;
+            }
+            let strokes: HashMap<[i32; 3], [i32; 2]> = (owner.deployers.iter())
+                .filter(|(p, _)| matches!(owner.index.parts.get(*p), Some(Part::Deployer { .. })))
+                .map(|(p, d)| (*p, [d.state as i32, d.timer]))
+                .collect();
+            if strokes != owner.shown.deployers {
+                owner.shown.deployers = strokes;
                 send = true;
             }
             if owner.mills_changed && owner.ticks % RESEND == 0 {
@@ -1729,6 +1781,12 @@ impl Game<'_> {
         // respawn interaction, even when the held item isn't fuel.
         if matches!(part, Some(Part::Burner | Part::LitBurner)) {
             self.tachyon_use_burner(pos, part == Some(Part::LitBurner));
+            return true;
+        }
+        if matches!(part, Some(Part::Deployer { .. })) {
+            let (dimension, root) = (self.dim.id(), self.save.root.clone());
+            OWNERS.with_borrow_mut(|owners| owners.entry(dimension).or_default().load(&root, dimension));
+            self.tachyon_use_deployer(pos);
             return true;
         }
         let sneaking = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft);
@@ -1955,7 +2013,13 @@ impl Game<'_> {
                     millstone::press_recipe(&h.item).is_some() || create.pressing(&h.item).is_some()
                 });
             let worked = || worker(&owner.index.parts, pos, |q| matches!(q, Part::Press(_)));
-            let input_too = part == Some(Part::Depot) && !(pressed && worked().is_some());
+            // BeltDeployerCallbacks holds an item a deployer two blocks up has a recipe for.
+            let above = [pos[0], pos[1] + 2, pos[2]];
+            let deployed = matches!(owner.index.parts.get(&above), Some(Part::Deployer { facing: Dir::Down, .. }))
+                && (owner.deployers.get(&above).and_then(|d| d.held.as_ref()))
+                    .zip(mill.input.as_ref())
+                    .is_some_and(|(held, input)| create.deploying(&input.item, &held.item).is_some());
+            let input_too = part == Some(Part::Depot) && !(pressed && worked().is_some()) && !deployed;
             let (one, input) = mill.take_one(input_too)?;
             if mill.is_empty() {
                 owner.mills.remove(&pos);
@@ -2064,6 +2128,7 @@ impl Game<'_> {
         let mut heads: Vec<([i32; 3], Part, f32, f32, bool)> = Vec::new();
         let mut trays: Vec<([i32; 3], Part, Vec<ItemStack>, bool)> = Vec::new();
         let mut arms: Vec<([i32; 3], f32, arm::Snapshot)> = Vec::new();
+        let mut strokes: HashMap<[i32; 3], ([i32; 2], bool)> = HashMap::new();
         self.tachyon_view(|index, shown| {
             for (pos, part) in &index.parts {
                 let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
@@ -2080,6 +2145,10 @@ impl Game<'_> {
                 }
                 let speed = shown.speeds.get(pos).copied().unwrap_or([0.0; 2]);
                 let create = kinds.create(self.world.block(pos[0], pos[1], pos[2]).0);
+                if matches!(part, Part::Deployer { .. }) {
+                    let stroke = shown.deployers.get(pos).copied().unwrap_or([0, 0]);
+                    strokes.insert(*pos, (stroke, shown.held.contains_key(pos)));
+                }
                 if *part == Part::Arm {
                     let arm = shown.arms.get(pos).cloned().unwrap_or_else(|| arm::Arm::default().snapshot(*pos));
                     arms.push((*pos, speed[0], arm));
@@ -2145,6 +2214,25 @@ impl Game<'_> {
                     * Mat4::from_translation(Vec3::splat(-0.5));
                 let state = self.tachyon_model(model);
                 self.submit_item_world(&state, pose, light, out);
+            }
+            // DeployerRenderer's pole and hand, out by its stroke.
+            if create && let Part::Deployer { facing, .. } = part {
+                let ([state, timer], holding) = strokes.get(&pos).copied().unwrap_or(([0, 0], false));
+                let state = match state {
+                    1 => deployer::State::Expanding,
+                    2 => deployer::State::Retracting,
+                    _ => deployer::State::Waiting,
+                };
+                let out_by = deployer::hand_offset(state, timer, alpha as f32, speed[0], holding);
+                let o = facing.offset().map(|c| c as f32 * out_by);
+                let pose = Mat4::from_translation(origin + Vec3::splat(0.5) + Vec3::new(o[0], o[1], o[2]))
+                    * point(facing)
+                    * point(Dir::South).inverse()
+                    * Mat4::from_translation(Vec3::splat(-0.5));
+                for model in deployer::arm_models(holding) {
+                    let state = self.tachyon_model(model);
+                    self.submit_item_world(&state, pose, light, out);
+                }
             }
             // SawRenderer's blade.
             if create && let Part::Saw { facing, along_first } = part {
@@ -2411,6 +2499,7 @@ impl Game<'_> {
             Part::Millstone => ("millstone", "Millstone"),
             Part::Saw { .. } => ("mechanical_saw", "Mechanical Saw"),
             Part::Drill(_) => ("mechanical_drill", "Mechanical Drill"),
+            Part::Deployer { .. } => ("deployer", "Deployer"),
             Part::Press(_) => ("mechanical_press", "Mechanical Press"),
             Part::Depot => ("depot", "Depot"),
             Part::Mixer => ("mechanical_mixer", "Mechanical Mixer"),
@@ -2559,6 +2648,7 @@ mod tests {
                 ([-5, 70, 9], "minecraft:raw_iron".to_owned()),
             ]),
             arms: HashMap::from([([8, 64, 2], arm.snapshot([8, 64, 2]))]),
+            deployers: HashMap::from([([9, 64, 2], [1, 500])]),
             chutes: HashMap::from([
                 ([3, 64, 2], [0.8, 0.6, 0.0]),
                 ([-3, 65, 2], [-0.5, -0.3, 3.0]),

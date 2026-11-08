@@ -136,6 +136,15 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   - Partikelnya memakai soul fire flame dan sesekali asap; nama proses tampil di kacamata dalam bahasa
     Inggris dan Indonesia.
   - Hasil cuci dan haunting dikocok per barang, seperti `RecipeApplier` Create.
+- **Deployer** (`tachyon_engine/deployer.rs`, 8 November 2026), mode use:
+  - klik kanan menukar item di tangan pemain dengan item deployer;
+  - timer Create: `clamp(|RPM| * 2, 8, 512)` dari 1000 per langkah, tunggu 10 langkah bila tak ada kerja;
+  - di jangkauan penuh (dua blok di depan): item di depot dikerjakan resep `create:deploying`, lalu
+    `item_application` yang bukan `_manual_only`, satu item per gerakan; hopper di bawah depot
+    menunggu sampai deployer selesai;
+  - selain itu memasang blok yang dipegang bila tempatnya kosong;
+  - tiang dan tangan bergerak sesuai langkahnya (payload kinetik versi 10);
+  - belum: mode punch, memakai item ke blok/entitas, filter, sabuk, durability alat.
 - **Mechanical drill** (`tachyon_engine/drill.rs`, 8 November 2026):
   - menghancurkan blok di depan kepalanya seperti gergaji samping (`BlockBreakingKineticBlockEntity`);
   - beban 4 per RPM, poros dari belakang;

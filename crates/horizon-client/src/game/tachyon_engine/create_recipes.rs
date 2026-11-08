@@ -43,6 +43,8 @@ pub(super) struct Recipes {
     pub compacting: Vec<Mixing>,
     /// An item used on a block in the world (`ItemApplicationRecipe`).
     pub application: Vec<Application>,
+    /// A deployer's (`DeployerApplicationRecipe`): its held item used on an item.
+    pub deploying: Vec<Application>,
 }
 
 /// `create:item_application`: `held` used on a block of `on` makes it
@@ -54,6 +56,8 @@ pub(super) struct Application {
     pub extra: Vec<Output>,
     /// `keep_held_item`: the held item isn't used up.
     pub keep: bool,
+    /// Not a `_manual_only` one (AllRecipeTypes.CAN_BE_AUTOMATED): a deployer may work it.
+    pub automated: bool,
 }
 
 /// What a recipe reader asks of the game.
@@ -79,6 +83,7 @@ impl Recipes {
             "mixing",
             "compacting",
             "item_application",
+            "deploying",
         ] {
             walk(&dir.join(kind), &mut files);
         }
@@ -90,7 +95,15 @@ impl Recipes {
             else {
                 continue;
             };
+            let applications = recipes.application.len();
             recipes.add(&recipe, game);
+            // A `_manual_only` application is by hand alone (AllRecipeTypes.CAN_BE_AUTOMATED).
+            let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if stem.ends_with("_manual_only") {
+                for r in &mut recipes.application[applications..] {
+                    r.automated = false;
+                }
+            }
         }
         recipes
     }
@@ -157,7 +170,7 @@ impl Recipes {
                     });
                 }
             }
-            "create:item_application" => {
+            "create:item_application" | "create:deploying" => {
                 let [on, held] = ingredients.as_slice() else {
                     return;
                 };
@@ -165,12 +178,18 @@ impl Recipes {
                 let Some(first) = outputs.next() else {
                     return;
                 };
-                self.application.push(Application {
+                let list = if kind == "create:deploying" {
+                    &mut self.deploying
+                } else {
+                    &mut self.application
+                };
+                list.push(Application {
                     on: on.clone(),
                     held: held.clone(),
                     result: first.item,
                     extra: outputs.collect(),
                     keep: recipe["keep_held_item"].as_bool().unwrap_or(false),
+                    automated: true,
                 });
             }
             _ => {}
@@ -181,6 +200,14 @@ impl Recipes {
     pub fn application(&self, block: &str, held: &str) -> Option<&Application> {
         (self.application.iter())
             .find(|r| r.on.iter().any(|i| i == block) && r.held.iter().any(|i| i == held))
+    }
+
+    /// `DeployerBlockEntity.getRecipe`: deploying first, then item application, neither
+    /// `_manual_only`, for the held item used on `input`.
+    pub fn deploying(&self, input: &str, held: &str) -> Option<&Application> {
+        (self.deploying.iter().chain(&self.application)).find(|r| {
+            r.automated && r.on.iter().any(|i| i == input) && r.held.iter().any(|i| i == held)
+        })
     }
 
     pub fn milling(&self, item: &str) -> Option<&Milling> {

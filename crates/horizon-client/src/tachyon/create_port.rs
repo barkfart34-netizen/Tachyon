@@ -61,6 +61,8 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     // DrillBlock's six facings (a DirectionalKineticBlock, andesite's 1.5);
     // `drill.rs` places it facing the player.
     ("mechanical_drill", "minecraft:waxed_lightning_rod", 1.5, "minecraft:stone"),
+    // DeployerBlock keeps Create's own states (facing, axis_along_first), as the saw.
+    ("deployer", "minecraft:polished_andesite", 1.5, "minecraft:stone"),
     // ArmBlock's floor-mounted arm; the engine draws its moving bodies.
     ("mechanical_arm", "minecraft:polished_andesite", 2.5, "minecraft:copper_block"),
     // A hollow block with a floor.
@@ -103,6 +105,7 @@ const NOT_OCCLUDING: &[&str] = &[
     "flywheel",
     "mechanical_saw",
     "mechanical_drill",
+    "deployer",
     "mechanical_arm",
     "millstone",
     "rotation_speed_controller",
@@ -247,7 +250,7 @@ const TURNING: &[&str] = &[
 ];
 
 /// The version of [`fix`]: a port fixed by an older one is fixed again.
-const VERSION: &str = "5";
+const VERSION: &str = "6";
 const STAMP: &str = ".tachyon-fix";
 
 /// Fixes a Create ported into `dir` (`horizon-mods/create`) by an older
@@ -400,6 +403,16 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         }
         // AllShapes.CASING_12PX, as the saw's: four pixels open on the head's side.
         if *block == "mechanical_drill" {
+            declaration["shapes"] = casing_12px();
+        }
+        // DirectionalAxisKineticBlock's states, as directionalAxisBlockProvider writes them.
+        if *block == "deployer" {
+            let facings = json!(["down", "up", "north", "south", "west", "east"]);
+            declaration["state_properties"] = json!({
+                "facing": {"type": "enum", "values": facings},
+                "axis_along_first": {"type": "boolean"},
+            });
+            declaration["default_state"] = json!({"facing": "up", "axis_along_first": "false"});
             declaration["shapes"] = casing_12px();
         }
         if *block == "mechanical_saw" {

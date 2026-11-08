@@ -214,6 +214,9 @@ pub enum Part {
     /// Create's mechanical drill (DrillBlock, a DirectionalKineticBlock): its head's facing, its
     /// shaft out of the back.
     Drill(Dir),
+    /// Create's deployer (DeployerBlock, a DirectionalAxisKineticBlock): its hand's facing
+    /// and whether its shaft runs along the first other axis (`deployer::shaft_axis`).
+    Deployer { facing: Dir, along_first: bool },
     /// Create's cuckoo clock: a shaft out of its back (the side given), and
     /// whether it is the mysterious one.
     Clock(Dir, bool),
@@ -295,6 +298,9 @@ impl Part {
             }
             Part::SpeedController(a) => a != Axis::Y && d.axis() == a,
             Part::Drill(facing) => d == facing.opposite(),
+            Part::Deployer { facing, along_first } => {
+                d.axis() == super::deployer::shaft_axis(facing, along_first)
+            }
             // Its pulleys' shafts, out of its sides.
             Part::Belt(a) => d.axis() != a && d.axis() != Axis::Y,
             Part::EncasedCog(_)
@@ -312,7 +318,7 @@ impl Part {
     pub fn impact(self) -> f32 {
         match self {
             // AllBlocks: CStress.setImpact(4.0) for both.
-            Part::Millstone | Part::Saw { .. } | Part::Drill(_) => 4.0,
+            Part::Millstone | Part::Saw { .. } | Part::Drill(_) | Part::Deployer { .. } => 4.0,
             Part::Press(_) => 8.0,
             Part::Mixer => 4.0,
             Part::Arm => 2.0,
