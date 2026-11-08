@@ -50,12 +50,13 @@ fn recipe(r: &NativeRecipe) -> m::Recipe {
         experience: r.experience,
         book_id: r.book_id,
         chances: Vec::new(),
+        note: String::new(),
     }
 }
 
 /// Tachyon: the millstone's, the press's and the mixer's recipes (the
-/// content engine's) whose items the tables know.
-fn processing(items: &[NativeItem]) -> Vec<m::Recipe> {
+/// content engine's), and Create's by its categories, whose items the tables know.
+fn processing(game: &Game<'_>, items: &[NativeItem]) -> Vec<m::Recipe> {
     let index: std::collections::HashMap<&str, u32> = (items.iter().enumerate())
         .map(|(i, it)| (it.id.as_str(), i as u32))
         .collect();
@@ -99,6 +100,38 @@ fn processing(items: &[NativeItem]) -> Vec<m::Recipe> {
             experience: 0.0,
             book_id: -1,
             chances,
+            note: String::new(),
+        });
+    }
+    for (category, inputs, time, outputs, note) in game.tachyon_create_shown() {
+        // Each slot its items the tables know (a tag's several, as JEI cycles them).
+        let slots: Vec<Vec<m::Ingredient>> = (inputs.iter())
+            .map(|(items, count)| items.iter().filter_map(|i| one(i, *count)).collect::<Vec<_>>())
+            .collect();
+        if slots.is_empty() || slots.iter().any(Vec::is_empty) {
+            continue;
+        }
+        let (mut results, mut chances) = (Vec::new(), Vec::new());
+        for (item, count, chance) in outputs {
+            if let Some(r) = one(&item, count) {
+                results.push(r);
+                chances.push(chance);
+            }
+        }
+        if results.is_empty() {
+            continue;
+        }
+        out.push(m::Recipe {
+            kind: m::Kind::Create(category.min(crate::game::tachyon_engine::CREATE_CATEGORIES - 1) as u8),
+            width: 1,
+            height: 1,
+            slots,
+            results,
+            cooking_time: time.round() as u32,
+            experience: 0.0,
+            book_id: -1,
+            chances,
+            note,
         });
     }
     out
@@ -153,7 +186,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
     match (tables, m::loaded()) {
         (Some(t), false) => {
             let mut recipes: Vec<m::Recipe> = t.recipes.iter().map(recipe).collect();
-            recipes.extend(processing(&t.items));
+            recipes.extend(processing(game, &t.items));
             let (viewer, out) = m::Viewer::new(t.items.iter().map(item).collect(), recipes);
             m::set_viewer(Some(viewer));
             apply(game, out);

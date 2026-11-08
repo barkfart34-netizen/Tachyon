@@ -27,7 +27,7 @@ pub const MAX_STACKS: usize = 64;
 /// A right click's gift in creative mode (cut to one stack by the game).
 pub const STACK: u32 = 99;
 /// The stations, in the order of their tabs, with each one's icon.
-pub const STATIONS: [&str; 12] = [
+pub const STATIONS: [&str; 21] = [
     "minecraft:crafting_table",
     "minecraft:furnace",
     "minecraft:blast_furnace",
@@ -41,6 +41,16 @@ pub const STATIONS: [&str; 12] = [
     "kinetica:mechanical_press",
     "kinetica:mechanical_mixer",
     "kinetica:encased_fan",
+    // Tachyon: Create's categories, as JEI shows them (CreateJEI), each by its machine.
+    "create:millstone",
+    "create:crushing_wheel",
+    "create:mechanical_press",
+    "create:mechanical_mixer",
+    "create:basin",
+    "create:encased_fan",
+    "minecraft:soul_campfire",
+    "create:mechanical_saw",
+    "create:andesite_casing",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,7 +73,24 @@ pub enum Kind {
     Mixing,
     /// Tachyon: an encased fan's, its air through water.
     Washing,
+    /// Tachyon: Create's, by its category (`tachyon_engine::CREATE_CATEGORIES`' order:
+    /// milling, crushing, pressing, mixing, compacting, washing, haunting, cutting, item
+    /// application).
+    Create(u8),
 }
+
+/// Create's categories' names, as JEI titles them.
+const CREATE_NAMES: [&str; 9] = [
+    "Milling",
+    "Crushing",
+    "Pressing",
+    "Mixing",
+    "Compacting",
+    "Bulk Washing",
+    "Bulk Haunting",
+    "Sawing",
+    "Item Application",
+];
 
 fn station(kind: Kind) -> usize {
     match kind {
@@ -79,6 +106,7 @@ fn station(kind: Kind) -> usize {
         Kind::Pressing => 9,
         Kind::Mixing => 10,
         Kind::Washing => 11,
+        Kind::Create(c) => 12 + usize::from(c).min(8),
     }
 }
 
@@ -111,6 +139,8 @@ pub struct Recipe {
     pub book_id: i32,
     /// Each result's chance, 0 to 1 (none: all certain).
     pub chances: Vec<f32>,
+    /// What else the page says of it: a basin's heat, a held item kept.
+    pub note: String,
 }
 
 /// An item as the panel shows it.
@@ -366,11 +396,23 @@ impl Viewer {
         // the air, the results past the first and their chances.
         let worked = || {
             let seconds = r.cooking_time as f32 / 20.0;
-            let mut note = if r.kind == Kind::Washing {
-                format!("{seconds} s in a fan's air through water")
-            } else {
-                format!("{seconds} s at 16 RPM")
+            let mut note = match r.kind {
+                Kind::Washing => format!("{seconds} s in a fan's air through water"),
+                Kind::Create(c) => {
+                    let name = CREATE_NAMES[usize::from(c).min(8)];
+                    match c {
+                        5 => format!("{name}: a fan's air through water"),
+                        6 => format!("{name}: a fan's air through soul fire"),
+                        8 => format!("{name}: used on it, by hand or a deployer"),
+                        _ if r.cooking_time == 0 => name.to_owned(),
+                        _ => format!("{name}, {} ticks of work", r.cooking_time),
+                    }
+                }
+                _ => format!("{seconds} s at 16 RPM"),
             };
+            if !r.note.is_empty() {
+                note.push_str(&format!(" ({})", r.note));
+            }
             for (i, s) in r.results.iter().enumerate().skip(1) {
                 let chance = r.chances.get(i).copied().unwrap_or(1.0);
                 let name = self.name(self.id(s));
@@ -405,7 +447,16 @@ impl Viewer {
             // The first result in its slot; the others, and their chances,
             // in the note. A millstone's work is a tick's at 16 RPM.
             Kind::Milling | Kind::Pressing | Kind::Washing => (Layout::Single, 1, 1, worked()),
-            Kind::Mixing => {
+            Kind::Create(c) if c < 3 || c > 4 => {
+                let n = slots.len() as u32;
+                slots.resize(n.max(1) as usize, Vec::new());
+                if n > 1 {
+                    (Layout::Grid, n, 1, worked())
+                } else {
+                    (Layout::Single, 1, 1, worked())
+                }
+            }
+            Kind::Mixing | Kind::Create(_) => {
                 let n = slots.len() as u32;
                 let width = match n {
                     0 | 1 => 1,
@@ -537,6 +588,7 @@ mod tests {
             experience: 0.0,
             book_id: 7,
             chances: Vec::new(),
+            note: String::new(),
         };
         let sticks = Recipe {
             kind: Kind::CraftingShaped,
@@ -557,6 +609,7 @@ mod tests {
             experience: 0.15,
             book_id: 9,
             chances: Vec::new(),
+            note: String::new(),
         };
         (items, vec![planks, sticks, charcoal])
     }
@@ -580,6 +633,53 @@ mod tests {
         assert_eq!(search(&mut v, "#logs"), 1);
         assert_eq!(search(&mut v, "@mine stick"), 1);
         assert_eq!(search(&mut v, "@other"), 0);
+    }
+
+    #[test]
+    fn create_recipes_get_a_tab_per_category_with_their_notes_as_jei() {
+        let (items, mut all) = tables();
+        let one = |item| Ingredient {
+            item,
+            count: 1,
+            components: String::new(),
+        };
+        // Milling an oak log: planks, and a stick half the time.
+        all.push(Recipe {
+            kind: Kind::Create(0),
+            width: 1,
+            height: 1,
+            slots: vec![vec![one(1)]],
+            results: vec![one(2), one(3)],
+            cooking_time: 50,
+            experience: 0.0,
+            book_id: -1,
+            chances: vec![1.0, 0.5],
+            note: String::new(),
+        });
+        // Mixing planks and sticks, heated.
+        all.push(Recipe {
+            kind: Kind::Create(3),
+            slots: vec![vec![one(2)], vec![one(3)]],
+            results: vec![one(4)],
+            chances: vec![1.0],
+            note: "Heated".into(),
+            ..all.last().unwrap().clone()
+        });
+        let (mut v, _) = Viewer::new(items, all);
+        let out = v.open(stack("minecraft:oak_planks"), true, &[]).unwrap();
+        let Out::Recipes { tabs, views, .. } = out else { panic!() };
+        let tabs: Vec<&str> = tabs.iter().map(|t| t.item.as_str()).collect();
+        assert_eq!(tabs, [STATIONS[0], "create:mechanical_mixer"]);
+        let out = v.open(stack("minecraft:oak_log"), true, &[]).unwrap();
+        let Out::Recipes { tabs, views: milled, .. } = out else { panic!() };
+        assert!(tabs.iter().any(|t| t.item == "create:millstone"));
+        let _ = views;
+        // The millstone's tab comes after the crafting and smelting ones.
+        let mut v2 = v;
+        let pages = v2.handle(Event::Tab(2), false, false, &[]);
+        let Out::Recipes { views, .. } = &pages[0] else { panic!() };
+        assert_eq!(views[0].note, "Milling, 50 ticks of work, +1 Stick 50%");
+        assert!(!milled.is_empty());
     }
 
     #[test]

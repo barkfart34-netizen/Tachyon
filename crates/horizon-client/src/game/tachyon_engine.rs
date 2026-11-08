@@ -698,6 +698,59 @@ pub(in crate::game) fn processing() -> [Vec<Processing>; 4] {
     [list(millstone::recipes()), list(millstone::pressing()), mixing, washing]
 }
 
+/// Create's recipe categories for the recipe viewer, as JEI shows them (Create's
+/// `CreateJEI`): milling, crushing, pressing, mixing, compacting, fan washing, fan
+/// haunting, cutting and item application, in that order.
+pub(in crate::game) const CREATE_CATEGORIES: usize = 9;
+
+/// A Create recipe for the viewer: its category (`CREATE_CATEGORIES`' order), each input
+/// slot's items (a tag's several) and count, its work in ticks, its outputs, and a note
+/// (heat needed, a held item kept).
+pub(in crate::game) type CreateShown = (usize, Vec<(Vec<String>, u32)>, f32, Vec<(String, u32, f32)>, String);
+
+impl Game<'_> {
+    /// Create's recipes the machines work (read from the Create the player fetched), for the
+    /// recipe viewer; none without Create.
+    pub(in crate::game) fn tachyon_create_shown(&self) -> Vec<CreateShown> {
+        let r = self.tachyon_create_recipes();
+        let outputs = |list: &[millstone::Output]| -> Vec<(String, u32, f32)> {
+            list.iter().map(|o| (o.item.clone(), o.count, o.chance)).collect()
+        };
+        let mut out = Vec::new();
+        let singles: [(usize, &Vec<millstone::Milling>); 6] = [
+            (0, &r.milling),
+            (1, &r.crushing),
+            (2, &r.pressing),
+            (5, &r.splashing),
+            (6, &r.haunting),
+            (7, &r.cutting),
+        ];
+        for (category, list) in singles {
+            for m in list {
+                out.push((category, vec![(vec![m.input.clone()], 1)], m.time, outputs(&m.outputs), String::new()));
+            }
+        }
+        for (category, list) in [(3, &r.mixing), (4, &r.compacting)] {
+            for m in list {
+                let heat = match m.heat_requirement {
+                    basin::HeatRequirement::None => "",
+                    basin::HeatRequirement::Heated => "Heated",
+                    basin::HeatRequirement::Superheated => "Superheated",
+                };
+                let inputs = m.inputs.iter().map(|i| (vec![i.item.clone()], i.count)).collect();
+                out.push((category, inputs, m.time, outputs(&m.outputs), heat.to_owned()));
+            }
+        }
+        for a in &r.application {
+            let mut made = vec![(a.result.clone(), 1, 1.0)];
+            made.extend(outputs(&a.extra));
+            let note = if a.keep { "Held item kept" } else { "" };
+            out.push((8, vec![(a.on.clone(), 1), (a.held.clone(), 1)], 0.0, made, note.to_owned()));
+        }
+        out
+    }
+}
+
 /// What a game shows of the parts: their speeds, the jammed ones, their
 /// networks' stress, the machines at work (a millstone, a press, a mixer:
 /// on what), what each depot, basin and chute holds, and the item in each
