@@ -29,6 +29,18 @@ pub struct Fetch {
     /// What comes out of the jar: these paths (a folder ends with `/`), beside
     /// its metadata (`pack.mcmeta`, `META-INF/*.toml`).
     pub take: &'static [&'static str],
+    /// A bundle's own mods (jar-in-jar, `META-INF/jarjar/`), each ported as a
+    /// mod of its own in this order, in place of `take` on the outer file.
+    pub inner: &'static [Inner],
+    /// A mod it needs ported first (fetched with it when it isn't).
+    pub needs: Option<&'static Fetch>,
+}
+
+/// One mod inside a bundle: its jar's path in the bundle and what comes out of it.
+#[derive(Debug, Clone, Copy)]
+pub struct Inner {
+    pub jar: &'static str,
+    pub take: &'static [&'static str],
 }
 
 /// Create 6.0.10 for Minecraft 1.21.1 (NeoForge): its blocks, items, recipes,
@@ -42,7 +54,42 @@ pub const CREATE: Fetch = Fetch {
     size: 19_123_767,
     sha512: "11cc8fc049d2f67f6548c7abfada6b82a3adb5c7ca410a742de04bbca76e03862c518721b88d806f6e6d768a4d68531fdb903a85859b25d1484d550cc7bafd4b",
     take: &["assets/create/", "data/create/", "data/c/", "data/minecraft/"],
+    inner: &[],
+    needs: None,
 };
+
+/// Create Aeronautics 1.3.2 for Minecraft 1.21.1 (NeoForge), its bundle: Create Simulated (physics
+/// contraptions' blocks), Create Aeronautics (flying ones) and Create Offroad (land vehicles), each
+/// ported as its own mod. Their blocks, items, recipes, textures, models and sounds; what moves them
+/// (Sable's physics) is not here yet. Its assets are its authors' (as Create's), its code MIT.
+pub const AERONAUTICS: Fetch = Fetch {
+    id: "aeronautics",
+    name: "Create Aeronautics",
+    modrinth: "create-aeronautics",
+    version: "1.3.2+mc1.21.1",
+    file: "create-aeronautics-bundled-1.21.1-1.3.2.jar",
+    size: 33_123_131,
+    sha512: "dc7e8e1148fa442243889ba29412207137e1bb86206e6c92bc0a589f1374a466e93de22bdbf14f753984d86c29308fbbdc0f14a4b9618b14c0ac1666a36b46f5",
+    take: &[],
+    inner: &[
+        Inner {
+            jar: "META-INF/jarjar/dev.simulated_team.simulated.simulated-neoforge-1.21.1-1.3.2.jar",
+            take: &["assets/simulated/", "data/simulated/", "data/c/", "data/minecraft/", "data/create/"],
+        },
+        Inner {
+            jar: "META-INF/jarjar/dev.eriksonn.aeronautics.aeronautics-neoforge-1.21.1-1.3.2.jar",
+            take: &["assets/aeronautics/", "data/aeronautics/", "data/c/", "data/minecraft/", "data/simulated/"],
+        },
+        Inner {
+            jar: "META-INF/jarjar/dev.ryanhcode.offroad.offroad-neoforge-1.21.1-1.3.2.jar",
+            take: &["assets/offroad/", "data/offroad/", "data/minecraft/", "data/create/"],
+        },
+    ],
+    needs: Some(&CREATE),
+};
+
+/// What the launchers offer to fetch, in order.
+pub const ALL: [Fetch; 2] = [CREATE, AERONAUTICS];
 
 const API: &str = "https://api.modrinth.com/v2";
 /// Where Modrinth keeps its files: a URL elsewhere is refused.
@@ -69,9 +116,38 @@ pub fn installed(f: &Fetch, home: &Path) -> bool {
 /// `report` hears what it is doing.
 pub fn get(f: &Fetch, home: &Path, cache: &Path, report: &dyn Fn(String)) -> Result<Imported, String> {
     fs::create_dir_all(cache).map_err(|e| format!("{}: {e}", cache.display()))?;
+    let mut first = None;
+    if let Some(needs) = f.needs
+        && !installed(needs, home)
+    {
+        report(format!("{} needs {} first", f.name, needs.name));
+        first = Some(get(needs, home, cache, report)?);
+    }
     let jar = cache.join(f.file);
     if !hash_of(&jar).is_some_and(|h| h == f.sha512) {
         download(f, &jar, report)?;
+    }
+    if !f.inner.is_empty() {
+        let mut notes: Vec<String> = first.iter().map(|i| i.note.clone()).collect();
+        let mut last = None;
+        for inner in f.inner {
+            let name = inner.jar.rsplit('/').next().unwrap_or(inner.jar);
+            report(format!("Taking {name}'s content out of {}", f.file));
+            let nested = cache.join(format!("{}-inner.jar", f.id));
+            let taken = cache.join(format!("{}-content.jar", f.id));
+            let result = extract(&jar, inner.jar, &nested)
+                .and_then(|()| take(&nested, &taken, inner.take))
+                .and_then(|()| import::import(&taken, name, home, report));
+            let _ = fs::remove_file(&nested);
+            let _ = fs::remove_file(&taken);
+            let imported = result?;
+            notes.push(imported.note.clone());
+            last = Some(imported);
+        }
+        let mut imported = last.ok_or("the bundle has no mods")?;
+        imported.name = f.name.to_owned();
+        imported.note = notes.join(" ");
+        return Ok(imported);
     }
     report(format!("Taking {}'s content out of its file", f.name));
     let taken = cache.join(format!("{}-content.jar", f.id));
@@ -185,6 +261,16 @@ fn taken(name: &str, take: &[&str]) -> bool {
     metadata || take.iter().any(|t| name.starts_with(t))
 }
 
+/// Writes to `out` the entry `name` of the jar `jar` (a bundle's own jar).
+fn extract(jar: &Path, name: &str, out: &Path) -> Result<(), String> {
+    let file = fs::File::open(jar).map_err(|e| format!("{}: {e}", jar.display()))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    let mut entry = zip.by_name(name).map_err(|e| format!("{name}: {e}"))?;
+    let mut target = fs::File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    std::io::copy(&mut entry, &mut target).map_err(|e| format!("{name}: {e}"))?;
+    Ok(())
+}
+
 /// Writes to `out` a jar of `jar`'s entries that come along.
 fn take(jar: &Path, out: &Path, take: &[&str]) -> Result<(), String> {
     let file = fs::File::open(jar).map_err(|e| format!("{}: {e}", jar.display()))?;
@@ -232,5 +318,23 @@ mod tests {
         assert_eq!(hex(&[0x0a, 0xff]), "0aff");
         assert_eq!(CREATE.sha512.len(), 128);
         assert!(CREATE.ask().contains("about 19 MB"));
+        assert_eq!(AERONAUTICS.sha512.len(), 128);
+        assert!(AERONAUTICS.sha512.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn a_bundle_takes_each_mod_on_its_own() {
+        assert!(AERONAUTICS.needs.is_some_and(|n| n.id == CREATE.id));
+        let ids: Vec<&str> = AERONAUTICS
+            .inner
+            .iter()
+            .map(|i| i.take[0].trim_start_matches("assets/").trim_end_matches('/'))
+            .collect();
+        assert_eq!(ids, ["simulated", "aeronautics", "offroad"]);
+        let simulated = AERONAUTICS.inner[0].take;
+        assert!(taken("assets/simulated/models/block/swivel_bearing.json", simulated));
+        assert!(taken("META-INF/neoforge.mods.toml", simulated));
+        assert!(!taken("dev/simulated_team/simulated/Simulated.class", simulated));
+        assert!(!taken("assets/aeronautics/lang/en_us.json", simulated));
     }
 }

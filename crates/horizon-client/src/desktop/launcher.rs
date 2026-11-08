@@ -194,7 +194,8 @@ pub struct Launcher {
     dropping: bool,
     importing: Option<Importing>,
     /// The player asked for Create: the download's question shows.
-    create_ask: bool,
+    /// A fetch (`fetch::ALL`) the player asked for, waiting for their yes.
+    fetch_ask: Option<usize>,
 }
 
 /// A colour between two, `t` from 0 to 1.
@@ -317,7 +318,7 @@ impl Launcher {
             done: false,
             dropping: false,
             importing: None,
-            create_ask: false,
+            fetch_ask: None,
         }
     }
 
@@ -355,7 +356,7 @@ impl Launcher {
 
     /// Gets Create from Modrinth into the selected installation (the player
     /// said yes), off the window's thread, as an import.
-    fn get_create(&mut self) {
+    fn get_fetch(&mut self, f: fetch::Fetch) {
         if self.importing.is_some() {
             self.note("Wait for the current import to finish.", true);
             return;
@@ -363,15 +364,15 @@ impl Launcher {
         let installation = self.store.installations[self.store.selected_index()].clone();
         let home = installation.folder(&self.paths.data);
         let cache = self.paths.data.join("cache");
-        log::info!("Tachyon launcher: getting Create into {}", home.display());
+        log::info!("Tachyon launcher: getting {} into {}", f.name, home.display());
         let line = Arc::new(std::sync::Mutex::new(format!(
-            "Getting Create for {}",
-            installation.name
+            "Getting {} for {}",
+            f.name, installation.name
         )));
         let said = line.clone();
         let work = std::thread::spawn(move || {
             let _ = std::fs::create_dir_all(&home);
-            fetch::get(&fetch::CREATE, &home, &cache, &|l| *said.lock().unwrap() = l)
+            fetch::get(&f, &home, &cache, &|l| *said.lock().unwrap() = l)
         });
         self.importing = Some(Importing { line, work });
     }
@@ -1676,52 +1677,53 @@ impl Launcher {
         y += 80.0;
         // Create, from its own file on Modrinth (its assets aren't Tachyon's
         // to carry), after the player says yes.
-        let create = fetch::CREATE;
         let home = self.store.installations[self.store.selected_index()].folder(&self.paths.data);
-        let have = fetch::installed(&create, &home);
-        let card = Rect::new(x, y, w, 64.0);
-        ui.c.rect(card, 14.0, hex(P.surface, 1.0));
-        let (title, detail) = if self.create_ask {
-            (
-                create.ask(),
-                "It is kept on this PC after, so it works offline; its code never runs.",
-            )
-        } else if have {
-            (
-                format!("Create is in {selected_name}"),
-                "Its blocks, items, recipes, textures and sounds came from its own file on Modrinth.",
-            )
-        } else {
-            (
-                format!("Get Create into {selected_name}"),
-                "Its blocks, items, recipes, textures and sounds come from its own file on Modrinth, not from Tachyon.",
-            )
-        };
-        let room = card.w - 40.0 - 220.0;
-        let title = ui.c.fit(&title, Face::Medium, 14.0, room);
-        ui.text(card.x + 20.0, card.y + 13.0, &title, Face::Medium, 14.0, hex(P.ink, 1.0));
-        let detail = ui.c.fit(detail, Face::Regular, 12.0, room);
-        ui.text(card.x + 20.0, card.y + 36.0, &detail, Face::Regular, 12.0, hex(P.muted, 1.0));
-        let free = self.importing.is_none();
-        let by = card.y + (card.h - 36.0) / 2.0;
-        if self.create_ask {
-            let cancel = Rect::new(card.right() - 16.0 - 90.0, by, 90.0, 36.0);
-            if self.button(ui, cancel, "Cancel", false, true) {
-                self.create_ask = false;
+        for (n, f) in fetch::ALL.into_iter().enumerate() {
+            let have = fetch::installed(&f, &home);
+            let asking = self.fetch_ask == Some(n);
+            let card = Rect::new(x, y, w, 64.0);
+            ui.c.rect(card, 14.0, hex(P.surface, 1.0));
+            let what = if f.inner.is_empty() {
+                "Its blocks, items, recipes, textures and sounds"
+            } else {
+                "Its blocks, items and recipes (what flies and drives comes later)"
+            };
+            let (title, detail) = if asking {
+                (f.ask(), "It is kept on this PC after, so it works offline; its code never runs.".to_owned())
+            } else if have {
+                (format!("{} is in {selected_name}", f.name), format!("{what} came from its own file on Modrinth."))
+            } else {
+                (
+                    format!("Get {} into {selected_name}", f.name),
+                    format!("{what} come from its own file on Modrinth, not from Tachyon."),
+                )
+            };
+            let room = card.w - 40.0 - 220.0;
+            let title = ui.c.fit(&title, Face::Medium, 14.0, room);
+            ui.text(card.x + 20.0, card.y + 13.0, &title, Face::Medium, 14.0, hex(P.ink, 1.0));
+            let detail = ui.c.fit(&detail, Face::Regular, 12.0, room);
+            ui.text(card.x + 20.0, card.y + 36.0, &detail, Face::Regular, 12.0, hex(P.muted, 1.0));
+            let free = self.importing.is_none();
+            let by = card.y + (card.h - 36.0) / 2.0;
+            if asking {
+                let cancel = Rect::new(card.right() - 16.0 - 90.0, by, 90.0, 36.0);
+                if self.button(ui, cancel, "Cancel", false, true) {
+                    self.fetch_ask = None;
+                }
+                let download = Rect::new(cancel.x - 8.0 - 110.0, by, 110.0, 36.0);
+                if self.button(ui, download, "Download", true, free) {
+                    self.fetch_ask = None;
+                    self.get_fetch(f);
+                }
+            } else {
+                let label = if have { "Get again" } else { "Get" };
+                let get = Rect::new(card.right() - 16.0 - 120.0, by, 120.0, 36.0);
+                if self.button(ui, get, label, true, free) {
+                    self.fetch_ask = Some(n);
+                }
             }
-            let download = Rect::new(cancel.x - 8.0 - 110.0, by, 110.0, 36.0);
-            if self.button(ui, download, "Download", true, free) {
-                self.create_ask = false;
-                self.get_create();
-            }
-        } else {
-            let label = if have { "Get again" } else { "Get Create" };
-            let get = Rect::new(card.right() - 16.0 - 120.0, by, 120.0, 36.0);
-            if self.button(ui, get, label, true, free) {
-                self.create_ask = true;
-            }
+            y += 80.0;
         }
-        y += 80.0;
         let now = store::now();
         let selected = self.store.selected_index();
         let installations = self.store.installations.clone();

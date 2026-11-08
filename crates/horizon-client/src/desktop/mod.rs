@@ -66,10 +66,12 @@ pub fn main() {
     if let Some(file) = std::env::var_os("TACHYON_IMPORT") {
         std::process::exit(import_file(Path::new(&file)));
     }
-    // And of getting Create from Modrinth (`TACHYON_FETCH=create`), as the
-    // Installations page's Download does.
-    if std::env::var("TACHYON_FETCH").as_deref() == Ok("create") {
-        std::process::exit(fetch_create());
+    // And of getting Create (`TACHYON_FETCH=create`) or Create Aeronautics
+    // (`=aeronautics`) from Modrinth, as the Installations page's Download does.
+    if let Ok(id) = std::env::var("TACHYON_FETCH")
+        && let Some(fetch) = crate::tachyon::fetch::ALL.into_iter().find(|f| f.id == id)
+    {
+        std::process::exit(fetch_mod(fetch));
     }
     let paths = Paths::new();
     let _ = std::fs::create_dir_all(&paths.data);
@@ -163,14 +165,13 @@ fn import_file(file: &Path) -> i32 {
     code
 }
 
-/// Gets Create from Modrinth into the game folder `HORIZON_HOME` (its file
+/// Gets `fetch` from Modrinth into the game folder `HORIZON_HOME` (its file
 /// kept in the folder's `cache`), saying how it went in
 /// `tachyon-import.txt`. Returns the exit code.
-fn fetch_create() -> i32 {
+fn fetch_mod(fetch: crate::tachyon::fetch::Fetch) -> i32 {
     let home = logging::game_home();
     let _ = std::fs::create_dir_all(&home);
     let cache = home.join("cache");
-    let fetch = crate::tachyon::fetch::CREATE;
     let result = crate::tachyon::fetch::get(&fetch, &home, &cache, &|line| println!("{line}"));
     let (text, code) = match result {
         Ok(imported) => (imported.note, 0),
