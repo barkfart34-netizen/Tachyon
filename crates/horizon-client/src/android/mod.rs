@@ -122,7 +122,6 @@ pub fn main(app: AndroidApp) {
     if let Err(e) = event_loop.run_app(&mut shell) {
         log::error!("Tachyon: the event loop stopped: {e}");
     }
-    horizon_client::discord_presence::stop();
     if let Some(error) = shell.error.take() {
         log::error!("Horizon: {error}");
         horizon_client::crash::report_error(&home, "client", &*error);

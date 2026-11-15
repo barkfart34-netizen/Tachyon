@@ -466,7 +466,6 @@ impl AndroidGame {
         let options = Options::from_args(args.into_iter())?.ok_or("no options")?;
         horizon_threads::put_helpers_behind();
         horizon_threads::favour_current();
-        horizon_client::heartbeat::start();
         let started = Instant::now();
         let vanilla_root = options.resources.clone();
         fetch_bedrock_textures(vanilla_root.clone());
@@ -576,7 +575,7 @@ impl AndroidGame {
             })
         });
         Ok(Self {
-            app: loading_app(options, settings, vanilla_root, None, started)?,
+            app: resource_loader::loading_app(options, settings, vanilla_root, None, started)?,
             home,
             contacts: HashMap::new(),
             buttons: Vec::new(),

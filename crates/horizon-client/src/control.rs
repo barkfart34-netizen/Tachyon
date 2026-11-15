@@ -878,6 +878,24 @@ impl FrameStats {
             },
         })
     }
+    /// Each recorded frame's total time, in milliseconds.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn frame_millis(&self) -> &[f32] {
+        &self.millis
+    }
+
+    /// Each recorded frame's CPU time, in milliseconds.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn cpu_millis(&self) -> &[f32] {
+        &self.cpu
+    }
+
+    /// Each recorded frame's GPU time, in milliseconds.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn gpu_millis(&self) -> &[f32] {
+        &self.gpu
+    }
+
     /// Each recorded frame's CPU time per phase (`PHASES`), in milliseconds.
     pub fn phase_millis(&self) -> &[[f32; PHASES.len()]] {
         &self.phases
