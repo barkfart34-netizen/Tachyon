@@ -13,23 +13,23 @@ pub const SOURCE: &str = "github.com/Rxuser2/Tachyon";
 /// built in (the modpack's, from `tachyon/content`).
 pub const CONTENT: &str = "tachyon-mods";
 
-/// Deep space and Cherenkov blue: the launcher's palette, in the design
+/// Obsidian matte and burnt copper: the launcher's palette, in the design
 /// system's roles (`horizon_theme::Palette`).
 pub const P: Palette = Palette {
-    page: 0x070a14,
-    plate_soft: 0x0f1526,
-    plate: 0x172038,
-    surface: 0x0e1424,
-    rule: 0x1b2440,
-    ink: 0xeaf2ff,
-    ink_soft: 0xbdd0ec,
-    muted: 0x7b88a6,
-    accent: 0x38d6ff,
-    on_accent: 0x03111b,
-    danger: 0xff6b6b,
-    success: 0x3ddc97,
+    page: 0x0b0b0e,
+    plate_soft: 0x17171d,
+    plate: 0x202028,
+    surface: 0x111115,
+    rule: 0x24242d,
+    ink: 0xf2f2f5,
+    ink_soft: 0xa6a6b2,
+    muted: 0x6f6f7b,
+    accent: 0xe07a3d,
+    on_accent: 0x120a05,
+    danger: 0xe05555,
+    success: 0x3ddc84,
     dark: true,
 };
 
-/// The streak behind the wordmark: from the accent to violet.
-pub const STREAK: [u32; 2] = [0x38d6ff, 0x7c5cff];
+/// The copper highlight bar: warm burnt orange fading into deep ember.
+pub const STREAK: [u32; 2] = [0xe07a3d, 0xb85224];

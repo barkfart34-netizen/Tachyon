@@ -53,13 +53,17 @@ fn vs(@location(0) pos: vec2f, @location(1) local: vec2f, @location(2) uv: vec2f
 
 @fragment
 fn fs(in: Out) -> @location(0) vec4f {
-    if (in.shape.w < 0.0) {
-        return in.color * textureSample(atlas, atlas_sampler, in.uv);
-    }
     let r = min(in.shape.z, min(in.shape.x, in.shape.y));
     let q = abs(in.local) - in.shape.xy + vec2f(r);
     let d = length(max(q, vec2f(0.0))) + min(max(q.x, q.y), 0.0) - r;
     var a = clamp(0.5 - d, 0.0, 1.0);
+    if (in.shape.w < 0.0) {
+        let tex = in.color * textureSample(atlas, atlas_sampler, in.uv);
+        if (in.shape.z > 0.0) {
+            return vec4f(tex.rgb, tex.a * a);
+        }
+        return tex;
+    }
     if (in.shape.w > 0.0) {
         a = a * clamp(0.5 + d + in.shape.w, 0.0, 1.0);
     }
@@ -300,15 +304,61 @@ impl Canvas<'_> {
     /// A part of `image` (`src`: left, top, right, bottom from 0 to 1) in `r`,
     /// multiplied by `color`.
     pub fn image(&mut self, image: Image, r: Rect, src: [f32; 4], color: [f32; 4]) {
+        self.image_rounded(image, r, src, 0.0, color);
+    }
+    /// A part of `image` in `r` with corners rounded by `radius` dp.
+    pub fn image_rounded(
+        &mut self,
+        image: Image,
+        r: Rect,
+        src: [f32; 4],
+        radius: f32,
+        color: [f32; 4],
+    ) {
+        let uv = Self::image_uv(image, src);
+        self.quad(r, uv, color, [0.0, 0.0, radius * self.scale, -1.0]);
+    }
+    /// A slice of `image` in `slice`, clipped to the rounded box `frame`.
+    pub fn image_in_frame(
+        &mut self,
+        image: Image,
+        slice: Rect,
+        src: [f32; 4],
+        frame: Rect,
+        radius: f32,
+        color: [f32; 4],
+    ) {
+        let s = self.scale;
+        let uv = Self::image_uv(image, src);
+        let (x0, y0, x1, y1) = (slice.x * s, slice.y * s, slice.right() * s, slice.bottom() * s);
+        let (fx, fy) = ((frame.x + frame.w / 2.0) * s, (frame.y + frame.h / 2.0) * s);
+        let shape = [frame.w * s / 2.0, frame.h * s / 2.0, radius * s, -1.0];
+        let corners = [
+            ([x0, y0], [x0 - fx, y0 - fy], [uv[0], uv[1]]),
+            ([x1, y0], [x1 - fx, y0 - fy], [uv[2], uv[1]]),
+            ([x1, y1], [x1 - fx, y1 - fy], [uv[2], uv[3]]),
+            ([x0, y1], [x0 - fx, y1 - fy], [uv[0], uv[3]]),
+        ];
+        for i in [0, 1, 2, 0, 2, 3] {
+            let (pos, local, uv) = corners[i];
+            self.vertices.push(Vertex {
+                pos,
+                local,
+                uv,
+                color,
+                shape,
+            });
+        }
+    }
+    fn image_uv(image: Image, src: [f32; 4]) -> [f32; 4] {
         let [x, y, w, h] = image.at.map(|v| v as f32);
         let a = ATLAS as f32;
-        let uv = [
+        [
             (x + src[0] * w) / a,
             (y + src[1] * h) / a,
             (x + src[2] * w) / a,
             (y + src[3] * h) / a,
-        ];
-        self.quad(r, uv, color, [0.0, 0.0, 0.0, -1.0]);
+        ]
     }
     /// A ring `width` dp wide just inside `r`'s rounded edge.
     pub fn ring(&mut self, r: Rect, radius: f32, width: f32, color: [f32; 4]) {

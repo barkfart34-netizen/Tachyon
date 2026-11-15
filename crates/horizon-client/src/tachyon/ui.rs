@@ -121,8 +121,8 @@ impl<'c, 'a> Ui<'c, 'a> {
         );
     }
 
-    /// A pill button: the accent for the screen's one main action, a soft
-    /// plate otherwise. A disabled one draws faded and never fires.
+    /// A crisp rounded button: burnt copper for the screen's main action,
+    /// obsidian plate with hairline border otherwise.
     pub fn button(&mut self, r: Rect, label: &str, primary: bool, enabled: bool) -> bool {
         let pressed = enabled && self.pressed(r);
         let alpha = if !enabled {
@@ -132,15 +132,18 @@ impl<'c, 'a> Ui<'c, 'a> {
         } else {
             1.0
         };
-        let (fill, text) = if primary {
-            (hex(P.accent, alpha), hex(P.on_accent, 1.0))
+        let radius = 9.0f32.min(r.h / 2.0);
+        let (fill, text, border) = if !enabled {
+            (hex(P.plate_soft, 0.85), hex(P.muted, 0.8), Some(hex(P.rule, 0.7)))
+        } else if primary {
+            (hex(P.accent, alpha), hex(P.on_accent, 1.0), None)
         } else {
-            (
-                hex(P.plate, alpha),
-                hex(P.ink, if enabled { 1.0 } else { 0.5 }),
-            )
+            (hex(P.plate_soft, alpha), hex(P.ink, 1.0), Some(hex(P.rule, 0.95)))
         };
-        self.c.rect(r, r.h / 2.0, fill);
+        self.c.rect(r, radius, fill);
+        if let Some(ring_color) = border {
+            self.c.ring(r, radius, 1.0, ring_color);
+        }
         self.centred(r, label, Face::Medium, horizon_theme::UI.px, text);
         enabled && self.tapped(r)
     }
@@ -167,9 +170,12 @@ impl<'c, 'a> Ui<'c, 'a> {
             if on {
                 hex(P.accent, 1.0)
             } else {
-                hex(P.plate, 1.0)
+                hex(P.plate_soft, 1.0)
             },
         );
+        if !on {
+            self.c.ring(r, h / 2.0, 1.0, hex(P.rule, 1.0));
+        }
         let knob = h - 6.0;
         let x = if on {
             r.right() - knob - 3.0
@@ -182,7 +188,7 @@ impl<'c, 'a> Ui<'c, 'a> {
             if on {
                 hex(P.on_accent, 1.0)
             } else {
-                hex(P.muted, 1.0)
+                hex(P.ink_soft, 1.0)
             },
         );
         self.tapped(Rect::new(row.x, row.y, row.w, row.h))
