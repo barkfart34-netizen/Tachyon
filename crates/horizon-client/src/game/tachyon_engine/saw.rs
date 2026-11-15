@@ -372,7 +372,9 @@ impl super::super::Game<'_> {
                 b.progress = progress;
                 b.wait = wait;
                 let at = target.map(|c| f64::from(c) + 0.5);
-                self.native_level_play_sound(&facts_hit_sound(&name), at, 4, 0.25, 1.0);
+                if let Some(level) = self.native_level(dimension) {
+                    self.native_level_play_sound(level, &facts_hit_sound(&name), at, 4, 0.25, 1.0);
+                }
             }
             if b.progress >= 10 {
                 self.tachyon_saw_fell(target, saw && is_log(&name));

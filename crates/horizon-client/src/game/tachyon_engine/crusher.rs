@@ -721,10 +721,14 @@ mod tests {
             previous: at,
             velocity: horizon_core::geometry::Vec3::ZERO,
             on_ground: true,
+            fall_distance: 0.0,
             age: 0,
             pickup_delay: 0,
             bob_offset: 0.0,
             ticks: 0,
+            random: horizon_core::random::EntityRandom::own(
+                horizon_core::random::LegacyRandom::new(0),
+            ),
         }];
         // A living occupant takes the gap: an item waits, without being lost.
         owner.crushing_entities.insert([1, 0, 0], Living::Mob(42));

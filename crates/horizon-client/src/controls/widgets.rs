@@ -47,12 +47,13 @@ impl<A: Clone> Hits<A> {
     }
 }
 
-pub(super) const PLATE: u32 = color::hex(horizon_theme::DARK.surface, 240);
-pub(super) const RAISED: u32 = color::hex(horizon_theme::DARK.plate, 255);
-pub(super) const TEXT: u32 = color::TEXT;
-pub(super) const MUTED: u32 = color::MUTED;
-pub(super) const ACCENT: u32 = color::ACCENT;
-pub(super) const ON_ACCENT: u32 = color::ON_ACCENT;
+// Keep layer independence from horizon-theme in horizon-client-lib using DARK token values.
+pub(super) const PLATE: u32 = color::hex(0x16181f, 240);
+pub(super) const RAISED: u32 = color::hex(0x20222c, 255);
+pub(super) const TEXT: u32 = color::hex(0xecedf3, 255);
+pub(super) const MUTED: u32 = color::hex(0xc5c7d1, 255);
+pub(super) const ACCENT: u32 = color::hex(0x9a86ff, 255);
+pub(super) const ON_ACCENT: u32 = color::hex(0x0d0e13, 255);
 
 pub(super) fn plate(ui: &mut Ui, r: Rect, radius: f32, colour: u32) {
     ui.rounded_px(

@@ -287,7 +287,9 @@ impl super::super::Game<'_> {
                 d.held = Some(held).filter(|h| h.count > 1).map(|h| Held { count: h.count - 1, ..h });
             }
             let at = target.map(|c| f64::from(c) + 0.5);
-            self.native_level_play_sound("minecraft:entity.item.pickup", at, 4, 0.25, 0.75);
+            if let Some(level) = self.native_level(dimension) {
+                self.native_level_play_sound(level, "minecraft:entity.item.pickup", at, 4, 0.25, 0.75);
+            }
             return;
         }
         if let Some(state) = self.tachyon_deployer_block(&held.item, target)

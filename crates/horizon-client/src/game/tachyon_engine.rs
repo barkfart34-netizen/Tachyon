@@ -3152,13 +3152,17 @@ mod tests {
             ..Shown::default()
         };
         let mut data = encode(&shown);
-        *data.last_mut().unwrap() = b'!';
+        // Corrupt the last byte of the arm JSON payload (followed by deployers + hoses counts).
+        let arm_end = data.len() - 9;
+        data[arm_end] = b'!';
         assert!(decode(&data).is_none());
         let mut data = encode(&Shown::default());
-        let count = data.len() - 4;
-        data[count..].copy_from_slice(&1u32.to_le_bytes());
+        let count = data.len() - 12;
+        data.truncate(count);
+        data.extend_from_slice(&1u32.to_le_bytes());
         data.extend_from_slice(&[0; 12]);
         data.extend_from_slice(&u32::MAX.to_le_bytes());
+        data.extend_from_slice(&[0; 8]);
         assert!(decode(&data).is_none());
     }
 

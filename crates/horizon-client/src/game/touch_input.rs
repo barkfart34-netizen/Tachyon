@@ -400,10 +400,6 @@ impl Game<'_> {
         self.touch_aim = point;
     }
 
-    pub(super) fn input_move(&self) -> Option<[f32; 2]> {
-        self.touch_input.movement.filter(|_| self.touch_playing()).or_else(|| self.pad_move())
-    }
-
     pub(super) fn input_from(
         &mut self,
         source: Source,

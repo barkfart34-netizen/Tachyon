@@ -420,14 +420,16 @@ impl super::super::Game<'_> {
                 }
             };
             let at = pos.map(|c| f64::from(c) + 0.5);
-            for x in &s.sounds {
-                // SoundSource 4 is `block`.
-                self.native_level_play_sound(x.event, at, 4, x.volume, x.pitch);
-            }
-            if s.smoke {
-                use horizon_client::particles::{ParticleOptions, ParticleType};
-                let smoke = ParticleOptions::simple(ParticleType::LargeSmoke);
-                self.native_level_send_particles(&smoke, None, at, [0.3; 3], 0.0, 1);
+            if let Some(level) = self.native_level(dimension) {
+                for x in &s.sounds {
+                    // SoundSource 4 is `block`.
+                    self.native_level_play_sound(level, x.event, at, 4, x.volume, x.pitch);
+                }
+                if s.smoke {
+                    use horizon_client::particles::{ParticleOptions, ParticleType};
+                    let smoke = ParticleOptions::simple(ParticleType::LargeSmoke);
+                    self.native_level_send_particles(level, &smoke, None, at, [0.3; 3], 0.0, 1);
+                }
             }
             if s.explode
                 && let Some(air) = self.pack.assets.registry.default_state("minecraft:air")

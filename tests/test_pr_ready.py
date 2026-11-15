@@ -1,11 +1,14 @@
 import argparse
 import datetime
+import io
 import json
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -24,8 +27,72 @@ POSIX_BASH = BASH is not None and not (
     os.name == "nt" and os.path.dirname(os.path.normcase(BASH)).endswith(os.path.normcase(r"\system32")))
 
 
-def args(host="local", quick=False):
-    return argparse.Namespace(host=host, quick=quick)
+def args(host="local", quick=False, harnesses=False):
+    return argparse.Namespace(host=host, quick=quick, harnesses=harnesses)
+
+
+class GitChangedPathsTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.git("init")
+        for key, value in (("core.quotePath", "true"), ("core.autocrlf", "false"),
+                           ("core.hooksPath", str(self.root / "no-hooks")), ("commit.gpgsign", "false")):
+            self.git("config", key, value)
+        for module in (pr_ready, pr_ready.parity):
+            patcher = mock.patch.object(module, "ROOT", self.root)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def git(self, *arguments):
+        return subprocess.run(["git", *arguments], cwd=self.root, capture_output=True,
+                              text=True, encoding="utf-8", check=True).stdout
+
+    def write(self, path, text):
+        destination = self.root / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(text, encoding="utf-8", newline="\n")
+
+    def commit(self):
+        self.git("add", ".")
+        self.git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "base")
+
+    def test_unicode_paths_select_checks_and_keep_line_counts(self):
+        tracked = "crates/horizon-core/src/caf\u00e9 edit.rs"
+        untracked = "crates/horizon-core/src/\u65b0 file.rs"
+        self.write(tracked, "first\n")
+        self.commit()
+        self.write(tracked, "first\nsecond\n")
+        self.write(untracked, "new\nfile\n")
+        changed = pr_ready.parity.changed_files("HEAD")
+        self.assertEqual(changed, {tracked, untracked})
+        self.assertEqual(pr_ready.line_counts("HEAD", changed), {tracked: (1, 0), untracked: (2, 0)})
+        self.assertTrue(all(pr_ready.workspace_rust(path) for path in changed))
+        self.assertEqual(pr_ready.touched_crates(changed, PACKAGES), ["horizon-core"])
+
+    def test_renamed_rust_source_keeps_both_paths_and_counts(self):
+        before, after = "crates/horizon-core/src/moved.rs", "docs/moved.md"
+        self.write(before, "fn moved() {\n}\n")
+        self.commit()
+        (self.root / "docs").mkdir()
+        self.git("mv", before, after)
+        changed = pr_ready.parity.changed_files("HEAD")
+        self.assertEqual(changed, {before, after})
+        self.assertEqual(pr_ready.line_counts("HEAD", changed), {before: (0, 2), after: (2, 0)})
+        self.assertEqual(pr_ready.touched_crates(changed, PACKAGES), ["horizon-core"])
+
+    @unittest.skipIf(os.name == "nt", "Windows filenames cannot contain tabs or newlines")
+    def test_tabs_and_newlines_remain_in_paths(self):
+        tracked = "crates/horizon-core/src/tab\tfile.rs"
+        untracked = "crates/horizon-core/src/line\r\nfile.rs"
+        self.write(tracked, "first\n")
+        self.commit()
+        self.write(tracked, "first\nsecond\n")
+        self.write(untracked, "new\n")
+        changed = pr_ready.parity.changed_files("HEAD")
+        self.assertEqual(changed, {tracked, untracked})
+        self.assertEqual(pr_ready.line_counts("HEAD", changed), {tracked: (1, 0), untracked: (1, 0)})
 
 
 class PrReadyTests(unittest.TestCase):
@@ -133,6 +200,37 @@ class PrReadyTests(unittest.TestCase):
         by_name = {step.name: step for step in steps}
         for name in ("launcher rustfmt", "launcher clippy", "launcher tests"):
             self.assertIsNone(by_name[name].skip)
+
+    @unittest.skipUnless(os.name == "nt", "the Windows runner's own jobs")
+    def test_a_windows_check_ends_what_it_left_running(self):
+        """A check that exits leaving a child that holds its output: the run goes on, and the child is ended."""
+        leaving = ("import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)']);"
+                   " print('left one')")
+        step = pr_ready.Step("leaving", f"python3 -c \"{leaving}\"")
+        started = time.monotonic()
+        pr_ready.run_windows([step], verbose=False)
+        self.assertLess(time.monotonic() - started, 60)
+        self.assertEqual((step.status, step.output.strip()), ("pass", "left one"))
+
+    @unittest.skipUnless(shutil.which("cargo"), "needs cargo")
+    def test_windows_launcher_checks_include_binary_tests(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            launcher = root / "launcher"
+            (launcher / "src").mkdir(parents=True)
+            (launcher / "Cargo.toml").write_text(
+                '[package]\nname = "launcher-check-fixture"\nversion = "0.1.0"\nedition = "2021"\n[workspace]\n')
+            (launcher / "src/lib.rs").write_text('#[test]\nfn library_passes() {}\n')
+            (launcher / "src/main.rs").write_text(
+                'fn main() {}\n#[test]\nfn binary_fails() { panic!("launcher binary test ran"); }\n')
+            with mock.patch.object(pr_ready, "ROOT", root), \
+                    mock.patch.dict(os.environ, {"CARGO_TARGET_DIR": str(root / "target")}):
+                subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=launcher, check=True,
+                               capture_output=True)
+                step = pr_ready.Step("launcher tests", "cargo test --locked --lib --bins")
+                pr_ready.run_windows([step], verbose=False)
+            self.assertEqual(step.status, "fail")
+            self.assertIn("launcher binary test ran", step.output)
 
     @unittest.skipUnless(POSIX_BASH, "needs a bash that is not WSL's")
     def test_the_launcher_fallback_asks_for_a_feature_the_launcher_has(self):
@@ -262,9 +360,9 @@ class PrReadyTests(unittest.TestCase):
                                                   "docs/native-client.md"}, 120), [])
         self.assertEqual(pr_ready.scope_warnings({"crates/horizon-theme/src/lib.rs", "launcher/src/theme.rs"}, 10), [])
         warnings = pr_ready.scope_warnings({"crates/horizon-client/src/game.rs", "launcher/src/main.rs",
-                                            ".github/workflows/ci.yml"}, 900)
+                                            ".github/workflows/ci.yml"}, 3200)
         self.assertEqual(len(warnings), 2)
-        self.assertIn("900 lines of code: over 500", warnings[0])
+        self.assertIn("3200 lines of code: over 3000", warnings[0])
         self.assertEqual(warnings[1], "mixes CI, game, launcher")
 
     def test_documentation_and_tests_are_not_counted_in_the_size(self):
@@ -274,6 +372,57 @@ class PrReadyTests(unittest.TestCase):
         self.assertFalse(pr_ready.reviewed("tests/test_pr_ready.py"))
         self.assertFalse(pr_ready.reviewed("tools/test_food_parity.py"))
         self.assertFalse(pr_ready.reviewed("crates/horizon-core/tests/jmath.rs"))
+
+    def size_skipped(self, before, after):
+        """(moved, inline tests) for files given as {path: text} before and after, through a -U0 diff."""
+        import difflib
+        diff = ""
+        for path in sorted(set(before) | set(after)):
+            body = list(difflib.unified_diff(before.get(path, "").splitlines(), after.get(path, "").splitlines(),
+                                             lineterm="", n=0))[2:]
+            diff += f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n" + "\n".join(body) + "\n"
+        return pr_ready.skipped_lines(diff, lambda path: before.get(path), lambda path: after.get(path))
+
+    FUNCTION = "".join(f"    let value_{n} = compute({n});\n" for n in range(48))
+    FUNCTION = "fn heavy() {\n" + FUNCTION + "}\n"
+
+    def test_moving_a_function_between_files_counts_nothing(self):
+        before = {"crates/a/src/lib.rs": "fn keep() {}\n" + self.FUNCTION, "crates/b/src/lib.rs": "fn other() {}\n"}
+        after = {"crates/a/src/lib.rs": "fn keep() {}\n", "crates/b/src/lib.rs": "fn other() {}\n" + self.FUNCTION}
+        self.assertEqual(self.size_skipped(before, after), (100, 0))
+
+    def test_a_move_with_an_edit_counts_the_edit(self):
+        before = {"a.rs": "fn keep() {}\n" + self.FUNCTION, "b.rs": ""}
+        edited = self.FUNCTION.replace("compute(10)", "compute(11)").replace("compute(30)", "compute(31)")
+        after = {"a.rs": "fn keep() {}\n", "b.rs": edited}
+        moved, tests = self.size_skipped(before, after)
+        total = 2 * len(self.FUNCTION.splitlines())
+        self.assertEqual(tests, 0)
+        self.assertEqual(total - moved, 4)  # the two edited lines, once removed and once added
+
+    def test_short_runs_are_not_moves(self):
+        before = {"a.rs": "fn one() {}\nfn two() {}\n", "b.rs": ""}
+        after = {"a.rs": "", "b.rs": "fn one() {}\nfn two() {}\n"}
+        self.assertEqual(self.size_skipped(before, after), (0, 0))
+
+    def test_an_added_inline_test_module_is_not_counted(self):
+        source = ("fn real() -> u32 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n"
+                  "    #[test]\n    fn it_works() {\n        assert_eq!(real(), 1);\n    }\n}\n")
+        moved, tests = self.size_skipped({"src/lib.rs": ""}, {"src/lib.rs": source})
+        self.assertEqual((moved, tests), (0, 9))  # 13 lines minus `fn real` (3) and the blank line
+
+    def test_braces_in_strings_and_comments_stay_inside_the_test_module(self):
+        source = ('fn real() {}\n#[cfg(test)]\nmod tests {\n    // a stray } in a comment\n'
+                  '    /* and { another */\n    const BRACE: &str = "}}";\n    const RAW: &str = r#"} " }"#;\n'
+                  "    const CHAR: char = '}';\n    fn lifetime<'a>(x: &'a str) {}\n}\nfn after() {}\n")
+        self.assertEqual(pr_ready.test_module_ranges(source), [(2, 10)])
+        self.assertEqual(pr_ready.test_module_ranges("#[cfg(test)]\nmod tests;\nfn a() {}\n"), [])
+        self.assertEqual(pr_ready.test_module_ranges("#[cfg(all(test, unix))]\npub mod t {\n}\n"), [(1, 3)])
+
+    def test_a_removed_inline_test_module_is_not_counted(self):
+        before = "fn real() {}\n#[cfg(test)]\nmod tests {\n    fn a() {}\n    fn b() {}\n}\n"
+        moved, tests = self.size_skipped({"src/lib.rs": before}, {"src/lib.rs": "fn real() {}\n"})
+        self.assertEqual((moved, tests), (0, 5))
 
     def test_cargo_lock_changes_only_with_a_manifest(self):
         self.assertIsNone(pr_ready.lock_problem({"crates/horizon-core/src/lib.rs"}))
@@ -312,9 +461,29 @@ class PrReadyTests(unittest.TestCase):
         self.assertEqual(by_name["launcher clippy"].status, "skip")
         self.assertIsNone(by_name["clippy"].status)
         with mock.patch.object(pr_ready, "affected_here", return_value=["food"]):
-            steps = pr_ready.plan(args(host="macmini"), "origin/main", changed, {"horizon-world": "crates/horizon-world"}, {"horizon-world"}, {})
+            steps = pr_ready.plan(args(host="macmini", harnesses=True), "origin/main", changed, {"horizon-world": "crates/horizon-world"}, {"horizon-world"}, {})
         self.assertIn("--changed-files", steps[-1].command)
         self.assertIn("crates/horizon-world/src/food.rs", steps[-1].command)
+
+    def test_harnesses_run_only_where_ci_s_parity_job_would(self):
+        packages = {"horizon-world": "crates/horizon-world"}
+        code = {"crates/horizon-world/src/food.rs"}
+        self.assertFalse(pr_ready.runs_parity(code))
+        for path in ("tools/test_food_parity.py", "tools/parity.py", "tools/lab.py", "tools/parity_hosts.json",
+                     "mods/horizon/src/test/java/dev/horizonlab/parity/VanillaFoodOracle.java",
+                     "crates/horizon-world/examples/food_probe.rs", "crates/horizon-client/src/game/sculk_fixture.rs",
+                     ".github/workflows/parity-main.yml"):
+            with self.subTest(path=path):
+                self.assertTrue(pr_ready.runs_parity(code | {path}))
+        with mock.patch.object(pr_ready, "affected_here", return_value=["food", "light"]):
+            steps = pr_ready.plan(args(host="macmini"), "origin/main", code, packages, {"horizon-world"}, {})
+            self.assertEqual(steps[-1].status, "list")
+            self.assertIsNone(steps[-1].command)
+            self.assertIn("2 affected, left to parity-main on main", steps[-1].detail)
+            self.assertIn("--harnesses runs them here", steps[-1].detail)
+            steps = pr_ready.plan(args(host="macmini"), "origin/main", code | {"tools/test_food_parity.py"}, packages,
+                                  {"horizon-world"}, {})
+            self.assertIn("--changed-files", steps[-1].command)
 
     def test_ci_s_rust_follows_the_six_week_train(self):
         self.assertEqual(pr_ready.ci_rust(datetime.date(2025, 2, 20)), 85)
@@ -355,6 +524,26 @@ class PrReadyTests(unittest.TestCase):
                                                  "their current inputs.\nNothing to run: every harness passed."),
                          "no harness affected")
         self.assertEqual(pr_ready.duration(125), "2 min 5 s")
+
+    def test_unittest_summary_keeps_skips_and_expected_failures(self):
+        class Outcomes(unittest.TestCase):
+            def test_pass(self):
+                self.assertTrue(True)
+
+            @unittest.skip("fixture platform is unavailable")
+            def test_skip(self):
+                self.fail("must not run")
+
+            @unittest.expectedFailure
+            def test_expected_failure(self):
+                self.fail("known fixture failure")
+
+        stream = io.StringIO()
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(Outcomes)
+        result = unittest.TextTestRunner(stream=stream).run(suite)
+        self.assertTrue(result.wasSuccessful())
+        self.assertEqual(pr_ready.unittest_passed(stream.getvalue()),
+                         "3 run, OK (skipped=1, expected failures=1)")
 
     def test_python_checks_run_beside_cargo_and_harnesses_after_it(self):
         steps = pr_ready.plan(args(), "origin/main", {"crates/horizon-core/src/lib.rs"}, PACKAGES, LIBRARIES,

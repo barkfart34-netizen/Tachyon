@@ -42,7 +42,22 @@ pub(crate) fn set_preference(dir: &Path, key: &str, value: Option<&str>) {
 /// The dark palette (`horizon_theme::DARK`) in the HUD's colour encoding, plus the
 /// translucent plates the overlays draw over the game.
 pub mod color {
-    use horizon_theme::DARK as P;
+    struct Dark {
+        page: u32,
+        ink: u32,
+        ink_soft: u32,
+        rule: u32,
+        accent: u32,
+        on_accent: u32,
+    }
+    const P: Dark = Dark {
+        page: 0x0d0e13,
+        ink: 0xecedf3,
+        ink_soft: 0xc5c7d1,
+        rule: 0x24262f,
+        accent: 0x9a86ff,
+        on_accent: 0x0d0e13,
+    };
     pub const fn hex(c: u32, a: u8) -> u32 {
         (a as u32) << 24 | (c & 0xff) << 16 | (c >> 8 & 0xff) << 8 | (c >> 16 & 0xff)
     }
@@ -71,14 +86,14 @@ pub mod color {
 pub type Color = u32;
 
 /// The launcher's type scale and shapes (`horizon_theme`), in dp.
-pub(crate) const SMALL: f32 = horizon_theme::CAPTION.px;
-pub(crate) const BODY: f32 = horizon_theme::LABEL.px;
+pub(crate) const SMALL: f32 = 12.0;
+pub(crate) const BODY: f32 = 13.0;
 /// The boot screen's wordmark (`DISPLAY`) and console lines (`MICRO`).
-pub(crate) const DISPLAY: f32 = horizon_theme::DISPLAY.px;
-pub(crate) const MICRO: f32 = horizon_theme::MICRO.px;
+pub(crate) const DISPLAY: f32 = 44.0;
+pub(crate) const MICRO: f32 = 11.0;
 /// Fields; plates (hover rows, selection); pills (buttons, segments).
-pub(crate) const RADIUS: f32 = horizon_theme::RADIUS;
-pub(crate) const RADIUS_PLATE: f32 = horizon_theme::RADIUS_PLATE;
+pub(crate) const RADIUS: f32 = 8.0;
+pub(crate) const RADIUS_PLATE: f32 = 12.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Face {
@@ -148,20 +163,34 @@ pub enum Icon {
     Share,
 }
 
+#[cfg(not(test))]
+const TEST_FONTS: Option<horizon_client_render::menu_style::Fonts> = None;
+#[cfg(test)]
+const TEST_FONTS: Option<horizon_client_render::menu_style::Fonts> =
+    Some(horizon_client_render::menu_style::Fonts {
+        regular: horizon_theme::fonts::GEIST_REGULAR,
+        medium: horizon_theme::fonts::GEIST_MEDIUM,
+        semibold: horizon_theme::fonts::GEIST_SEMIBOLD,
+        mono: horizon_theme::fonts::GEIST_MONO,
+    });
+
 struct Fonts {
     faces: [FontRef<'static>; 4],
 }
 impl Fonts {
-    fn load() -> Self {
+    fn load() -> Option<Self> {
+        let given = horizon_client_render::menu_style::get()
+            .fonts
+            .or(TEST_FONTS)?;
         let f = |b: &'static [u8]| FontRef::try_from_slice(b).expect("bundled font");
-        Self {
+        Some(Self {
             faces: [
-                f(horizon_theme::fonts::GEIST_REGULAR),
-                f(horizon_theme::fonts::GEIST_MEDIUM),
-                f(horizon_theme::fonts::GEIST_SEMIBOLD),
-                f(horizon_theme::fonts::GEIST_MONO),
+                f(given.regular),
+                f(given.medium),
+                f(given.semibold),
+                f(given.mono),
             ],
-        }
+        })
     }
     fn face(&self, f: Face) -> &FontRef<'static> {
         &self.faces[f as usize]
@@ -190,7 +219,7 @@ struct Cached {
 }
 /// Glyphs and corner masks rasterized into the atlas region `horizon/ui-text`.
 struct Cache {
-    fonts: Fonts,
+    fonts: Option<Fonts>,
     entries: HashMap<Key, Cached>,
     images: HashMap<String, Rect>,
     shelf: (u32, u32, u32),
@@ -593,9 +622,16 @@ impl Cache {
         if let Some(c) = self.entries.get(&key) {
             return *c;
         }
-        let scale = self.fonts.scale(face, f32::from(size) / 4.0);
+        let Some(fonts) = &self.fonts else {
+            return Cached {
+                rect: None,
+                left: 0.0,
+                top: 0.0,
+            };
+        };
+        let scale = fonts.scale(face, f32::from(size) / 4.0);
         let glyph = id.with_scale_and_position(scale, ab_glyph::point(0.0, 0.0));
-        let made = match self.fonts.face(face).outline_glyph(glyph) {
+        let made = match fonts.face(face).outline_glyph(glyph) {
             Some(outline) => {
                 let b = outline.px_bounds();
                 let (w, h) = (b.width() as u32, b.height() as u32);
@@ -841,8 +877,11 @@ impl<'a> Ui<'a> {
         let px = (size * self.density * 4.0).round() / 4.0;
         let max_px = width * self.density;
         with_cache(self.atlas, |cache| {
-            let font = cache.fonts.face(face);
-            let scaled = font.as_scaled(cache.fonts.scale(face, px));
+            let Some(fonts) = &cache.fonts else {
+                return text.to_owned();
+            };
+            let font = fonts.face(face);
+            let scaled = font.as_scaled(fonts.scale(face, px));
             let mut total = 0.0;
             let mut prev = None;
             for ch in text.chars() {
@@ -1408,8 +1447,11 @@ impl<'a> Ui<'a> {
     pub fn measure(&self, face: Face, size: f32, text: &str) -> f32 {
         let px = (size * self.density * 4.0).round() / 4.0;
         with_cache(self.atlas, |c| {
-            let font = c.fonts.face(face);
-            let scaled = font.as_scaled(c.fonts.scale(face, px));
+            let Some(fonts) = &c.fonts else {
+                return 0.0;
+            };
+            let font = fonts.face(face);
+            let scaled = font.as_scaled(fonts.scale(face, px));
             let mut w = 0.0;
             let mut prev = None;
             for ch in text.chars() {
@@ -1448,9 +1490,12 @@ impl<'a> Ui<'a> {
         let mut quads = with_cache(atlas, |c| std::mem::take(&mut c.glyph_scratch));
         quads.clear();
         let width = with_cache(atlas, |c| {
-            let scale = c.fonts.scale(face, px);
+            let Some(fonts) = &c.fonts else {
+                return 0.0;
+            };
+            let scale = fonts.scale(face, px);
             let (ascent, descent) = {
-                let f = c.fonts.face(face).as_scaled(scale);
+                let f = fonts.face(face).as_scaled(scale);
                 (f.ascent(), f.descent())
             };
             let baseline = y0 + ((box_px - (ascent - descent)) / 2.0 + ascent).round();
@@ -1458,7 +1503,8 @@ impl<'a> Ui<'a> {
             let mut prev = None;
             for ch in text.chars() {
                 let (id, advance, kern) = {
-                    let font = c.fonts.face(face);
+                    let fonts = c.fonts.as_ref().expect("checked fonts");
+                    let font = fonts.face(face);
                     let id = font.glyph_id(ch);
                     let f = font.as_scaled(scale);
                     (id, f.h_advance(id), prev.map_or(0.0, |p| f.kern(p, id)))
@@ -2767,7 +2813,12 @@ mod tests {
         let atlas = HudAtlas::build(Path::new("/nonexistent/horizon-test-assets")).unwrap();
         reset_atlas();
         let draw = |cache: &mut Cache| {
-            let glyph = cache.fonts.face(Face::Regular).glyph_id('A');
+            let glyph = cache
+                .fonts
+                .as_ref()
+                .expect("test fonts")
+                .face(Face::Regular)
+                .glyph_id('A');
             assert!(
                 cache
                     .glyph(&atlas, Face::Regular, glyph, 16.0)

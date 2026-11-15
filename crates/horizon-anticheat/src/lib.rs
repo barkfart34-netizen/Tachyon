@@ -2,9 +2,10 @@
 //! `server.toml`, each player's violation levels, and the rules of the checks. The server's hub
 //! (`horizon_client::lan`) feeds it what players send and carries out what it decides.
 //!
-//! It is on by default, and so is every check, but only the checks a vanilla client can't trip act on
-//! their own (`combat`); the others log only until they have shown no false positive with real
-//! players (their `setback`, `alert` and `kick` are 0). `enabled = false` turns the anticheat, or one
+//! It is on by default, and so is every check, but only the checks that have shown no false positive
+//! act on their own: `combat`, which a vanilla client can't trip, and `ground`, which players who
+//! weren't cheating never took near its thresholds on the official server; the others log only until
+//! they have (their `setback`, `alert` and `kick` are 0). `enabled = false` turns the anticheat, or one
 //! check, off. A check that fails *flags* the player: its violation level (VL) rises by the flag's
 //! weight and falls back by `decay` a second. From `setback` on, the move or action is cancelled (the
 //! player is sent back where the server last had them); from `alert` on, online operators and the
@@ -21,7 +22,6 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 pub mod combat;
-pub mod prediction;
 pub mod timer;
 
 /// What one check's violation level leads to.
@@ -91,7 +91,8 @@ macro_rules! checks {
             pub enabled: bool,
             /// Tell online operators of an alert in their chat (the console and the log always are).
             pub alerts: bool,
-            /// The permission level a player needs to see alerts.
+            /// The permission level a player needs to see alerts, 0 to 4 (an operator's level is at
+            /// most 4).
             pub alert_level: u8,
             /// Every flag, one line each, relative to the server's folder; empty: no file.
             pub log: String,
@@ -162,8 +163,8 @@ checks! {
 
     /// Prediction: each move played again from the client's own inputs with vanilla's movement code,
     /// and compared (speed, step, fly, jesus...). Each player's client ticks are recorded
-    /// (`prediction::Record`), with a ping a tick to place what the server changes, and played again
-    /// (horizon-client's `lan::prediction`). A move that lands farther than `tolerance` from the
+    /// (horizon-client's `lan::prediction::record`), with a ping a tick to place what the server changes,
+    /// and played again (`lan::prediction`). A move that lands farther than `tolerance` from the
     /// replay flags, by how far it lands (one `tolerance` off weighs 1, at most 5 a tick), and the
     /// setback puts the player back where its moves last agreed. A tick near what the replay can't
     /// play yet (another entity, a block change or abilities the client hadn't seen, a moving piston,
@@ -187,7 +188,7 @@ checks! {
 pub const CHECKS: usize = Check::ALL.len();
 
 impl Config {
-    /// The `[anticheat]` section of a whole `server.toml`; the default (off) when it has none.
+    /// The `[anticheat]` section of a whole `server.toml`; the default (on) when it has none.
     pub fn from_server_toml(text: &str) -> Result<Self, String> {
         #[derive(Deserialize)]
         struct File {
@@ -207,8 +208,14 @@ impl Config {
         Ok(file.anticheat)
     }
 
-    /// Thresholds can't be negative.
+    /// Thresholds can't be negative, and neither can the timer's milliseconds. `alert_level` is a
+    /// permission level, 0 to 4.
     pub fn check(&self) -> Result<(), String> {
+        // No player's level is above 4 (`ops.json` and `op-permission-level` are read as 0 to 4),
+        // so a higher one would tell no operator, without a word.
+        if self.alert_level > 4 {
+            return Err("anticheat: alert_level is a permission level from 0 to 4".into());
+        }
         for &c in Check::ALL {
             let a = self.actions(c);
             if [a.setback, a.alert, a.kick, a.decay]
@@ -220,6 +227,18 @@ impl Config {
                     c.name()
                 ));
             }
+        }
+        // A negative tolerance flags a client on time every tick, and so does a cap below minus the
+        // tolerance (the balance rests at the cap); NaN never flags, or never caps the balance. No
+        // negative number of milliseconds means anything, so all are refused.
+        if [self.timer.tolerance_ms, self.timer.max_lag_ms]
+            .iter()
+            .any(|v| !v.is_finite() || *v < 0.0)
+        {
+            return Err(
+                "anticheat.timer: tolerance_ms and max_lag_ms are numbers of milliseconds from 0 up"
+                    .into(),
+            );
         }
         let tolerance = self.prediction.tolerance;
         if !tolerance.is_finite() || tolerance <= 0.0 {
@@ -279,15 +298,6 @@ pub struct Player {
     pub timer: timer::Balance,
     /// The server tick and height where the ground last held the player.
     pub ground: Option<(u64, f64)>,
-    /// The client ticks the prediction plays again (only while it runs).
-    pub record: Option<Box<prediction::Record>>,
-    /// Sprinting as the client's own commands left it (ServerboundPlayerCommandPacket's
-    /// START_SPRINTING and STOP_SPRINTING: LocalPlayer.wasSprinting), which the record's ticks take.
-    /// Not the server's player: a hit with extra knockback stops its sprint
-    /// (Player.causeExtraKnockback), the client's own `Player.attack` doesn't (a mob's `hurtClient`
-    /// is false), and once the server's flag reaches it LocalPlayer.aiStep starts the sprint again
-    /// while the sprint key is held, with nothing to say: wasSprinting never changed.
-    pub sprinting: bool,
     /// The attacks of the client tick being heard.
     pub attacks: combat::Attacks,
 }
@@ -365,10 +375,68 @@ mod tests {
         assert!(!Config::from_server_toml(off).unwrap().runs(Check::Timer));
     }
 
+    /// Each check's own table, found by the check's name, turns that check off and sets its
+    /// thresholds, and leaves every other check as it was.
+    #[test]
+    fn each_checks_table_is_its_own() {
+        for &check in Check::ALL {
+            let text = format!("[anticheat.{}]\nenabled = false\nkick = 7\n", check.name());
+            let c = Config::from_server_toml(&text).unwrap();
+            for &other in Check::ALL {
+                let (runs, kick) = (c.runs(other), c.actions(other).kick);
+                if other == check {
+                    assert!(!runs && kick == 7.0, "{}", check.name());
+                } else {
+                    let default = Config::default().actions(other).kick;
+                    assert!(
+                        runs && kick == default,
+                        "{} off: {}",
+                        check.name(),
+                        other.name()
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn refuses_unknown_keys_and_negative_levels() {
         assert!(Config::from_server_toml("[anticheat]\nenable = true\n").is_err());
         assert!(Config::from_server_toml("[anticheat.timer]\nkick = -1\n").is_err());
+    }
+
+    /// `alert_level` 5 or more would tell no operator: a player's permission level is at most 4.
+    #[test]
+    fn refuses_an_alert_level_above_4() {
+        for bad in [5, 255] {
+            let text = format!("[anticheat]\nalert_level = {bad}\n");
+            let e = Config::from_server_toml(&text).expect_err(&text);
+            assert!(e.starts_with("anticheat: alert_level"), "{bad}: {e}");
+        }
+        for good in [0, 4] {
+            let text = format!("[anticheat]\nalert_level = {good}\n");
+            assert_eq!(Config::from_server_toml(&text).unwrap().alert_level, good);
+        }
+    }
+
+    /// A negative `tolerance_ms` flags a client on time every tick, and so does a `max_lag_ms` below
+    /// `-tolerance_ms` (the balance rests at the cap); a NaN turns the check (or its cap) off without a
+    /// word. Every negative or non-finite value is refused, as a negative threshold is.
+    #[test]
+    fn refuses_timer_settings_that_are_not_milliseconds_from_0_up() {
+        for bad in [
+            "tolerance_ms = -1",
+            "tolerance_ms = nan",
+            "tolerance_ms = inf",
+            "max_lag_ms = -1",
+            "max_lag_ms = nan",
+        ] {
+            let text = format!("[anticheat.timer]\n{bad}\n");
+            let e = Config::from_server_toml(&text).expect_err(bad);
+            assert!(e.starts_with("anticheat.timer:"), "{bad}: {e}");
+        }
+        let edge = "[anticheat.timer]\ntolerance_ms = 0\nmax_lag_ms = 0\n";
+        assert!(Config::from_server_toml(edge).is_ok());
     }
 
     #[test]
@@ -416,11 +484,49 @@ mod tests {
         assert_eq!(s.kick("d", Check::Ground, 1), (1, true));
     }
 
+    /// The counts are kept across restarts while `server.toml` may change: a player already past a
+    /// `ban_after` that was lowered, or set on a check that never banned, is banned at its next kick.
+    #[test]
+    fn a_player_past_a_lowered_ban_after_is_banned_at_the_next_kick() {
+        let mut s = Strikes::default();
+        assert_eq!(s.kick("a", Check::Combat, 3), (1, false));
+        assert_eq!(s.kick("a", Check::Combat, 3), (2, false));
+        // `ban_after = 3` lowered to 1.
+        assert_eq!(s.kick("a", Check::Combat, 1), (3, true));
+        for _ in 0..4 {
+            s.kick("b", Check::Timer, 0);
+        }
+        // `timer` given `ban_after = 2` after four kicks that never banned.
+        assert_eq!(s.kick("b", Check::Timer, 2), (5, true));
+        assert_eq!(s.kick("b", Check::Timer, 2), (1, false));
+    }
+
     #[test]
     fn zero_turns_an_action_off() {
         let mut c = on();
         c.timer.kick = 0.0;
         let mut p = Player::default();
         assert!(!p.flag(&c, Check::Timer, 1000.0, 1).kick);
+    }
+
+    /// Every check's `setback`, `alert`, `kick` and `decay` must be a number from 0 up: a negative,
+    /// NaN or infinite one is refused with an error naming the check, as the section's other
+    /// mistakes are; 0 is allowed (the action off, or no decay).
+    #[test]
+    fn every_checks_thresholds_and_decay_are_numbers_from_0_up() {
+        for &check in Check::ALL {
+            for key in ["setback", "alert", "kick", "decay"] {
+                for bad in ["-1", "nan", "inf"] {
+                    let text = format!("[anticheat.{}]\n{key} = {bad}\n", check.name());
+                    let e = Config::from_server_toml(&text).expect_err(&text);
+                    assert!(
+                        e.starts_with(&format!("anticheat.{}:", check.name())),
+                        "{text}: {e}"
+                    );
+                }
+                let zero = format!("[anticheat.{}]\n{key} = 0\n", check.name());
+                assert!(Config::from_server_toml(&zero).is_ok(), "{zero}");
+            }
+        }
     }
 }

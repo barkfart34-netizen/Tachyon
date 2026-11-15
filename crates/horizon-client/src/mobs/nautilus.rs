@@ -7,7 +7,7 @@ use super::{
     Mob, MobEvent, MobWorld, Species, Who,
     anim::{Poses, State},
     control::{LookKind, MoveKind, Operation},
-    goals::{Breed, Cx, Goal, LOOK, LookAtPlayer, MOVE, Panic, Stroll, Tempt, goal_clone},
+    goals::{Breed, Cx, Goal, LOOK, MOVE, Panic, Stroll, Tempt, goal_clone},
     keyframes::Animation,
     nav::NavKind,
 };
@@ -24,6 +24,7 @@ use std::collections::HashMap;
 const DASH_COOLDOWN: i32 = 40;
 const TIME_BETWEEN_ATTACKS: i32 = 80;
 const ANGER_DURATION: i32 = 400;
+const ATTACK_TARGET_COOLDOWN: &str = "minecraft:attack_target_cooldown";
 /// `ZombieNautilusVariants`: the variant keys in index order.
 pub const VARIANTS: [&str; 2] = ["temperate", "warm"];
 
@@ -56,7 +57,6 @@ pub fn register(m: &mut Mob) {
         g.add(1, t);
         g.add(2, Charge::new(0.5));
         g.add(3, Stroll::swimming(1.0, 1));
-        g.add(3, LookAtPlayer::new(6.0));
     } else {
         g.add(0, Panic::new(1.6));
         g.add(1, Breed::new(0.4));
@@ -65,13 +65,13 @@ pub fn register(m: &mut Mob) {
         g.add(2, t);
         g.add(3, Charge::new(0.6));
         g.add(4, Stroll::swimming(1.0, 1));
-        g.add(4, LookAtPlayer::new(6.0));
     }
 }
 /// `finalizeSpawn`: `NautilusAi.initMemories` (2400 to 3600 ticks before it
 /// first looks for prey) and the zombie's variant by biome.
-pub fn finalize(m: &mut Mob, warm_ocean: bool) {
-    m.extra.counter = 2400 + m.random.next_int_bound(1201).unwrap_or(0);
+pub fn finalize(m: &mut Mob, warm_ocean: bool, r: &mut impl RandomSource) {
+    m.extra.counter = 2400 + r.next_int_bound(1201).unwrap_or(0);
+    m.extra.nautilus_attack_cooldown_ttl = Some(i64::MAX);
     if zombie(m) {
         m.extra.variant = u8::from(warm_ocean);
     }
@@ -87,6 +87,11 @@ pub fn is_food(m: &Mob, item: &str, taming: &[String]) -> bool {
     } else {
         m.kind.food.iter().any(|t| t == item)
     }
+}
+/// `TamableAnimal.feed`'s heal: twice the food's nutrition, or 1 for an item
+/// without a food component (a fish bucket).
+pub fn feed_heal(nutrition: Option<i32>) -> f32 {
+    nutrition.map_or(1.0, |n| 2.0 * n as f32)
 }
 /// The ambient, hurt and death sounds by age and whether it is under water.
 pub fn sounds(m: &Mob) -> [&'static str; 3] {
@@ -279,7 +284,7 @@ fn check_restriction(m: &mut Mob) {
 pub fn ai_step(
     m: &mut Mob,
     w: &MobWorld,
-    level_random: &mut horizon_core::random::LegacyRandom,
+    level_random: &mut horizon_core::random::LevelRandom,
     events: &mut Vec<MobEvent>,
 ) {
     // customServerAiStep: the home is kept before the rest of the step.
@@ -315,9 +320,18 @@ pub fn ai_step(
     if m.fluids.in_water {
         bubbles(m, events);
     }
-    // CountDownCooldownTicks and the ANGRY_AT expiry.
+    // Brain's saved slot lifetime is independent of the existing attack counter.
+    tick_attack_memory(m);
+    // CountDownCooldownTicks and the ANGRY_AT expiry. Keep the legacy
+    // counter/target policy, including after the saved slot expires.
     if m.extra.counter > 0 {
         m.extra.counter -= 1;
+        if m.extra.nautilus_attack_cooldown_ttl.is_some() {
+            // CountDownCooldownTicks.tick writes with Brain.setMemory (permanent).
+            m.extra.nautilus_attack_cooldown_ttl = Some(i64::MAX);
+        }
+    } else {
+        m.extra.nautilus_attack_cooldown_ttl = None;
     }
     if m.extra.counter2 > 0 {
         m.extra.counter2 -= 1;
@@ -327,6 +341,16 @@ pub fn ai_step(
     }
     if m.ai.target.is_none() && m.alive() && !m.no_ai {
         m.ai.target = find_target(m, w, level_random);
+    }
+}
+/// `MemorySlot.tick`: expire before decrementing a finite saved lifetime.
+/// The existing NoAI gate controls this class step; this does not replace
+/// the legacy integer attack counter or its selection policy.
+fn tick_attack_memory(m: &mut Mob) {
+    if let Some(ttl) = m.extra.nautilus_attack_cooldown_ttl
+        && ttl != i64::MAX
+    {
+        m.extra.nautilus_attack_cooldown_ttl = if ttl <= 0 { None } else { Some(ttl - 1) };
     }
 }
 /// `spawnBubbles`: more as it swims faster, from behind its mouth.
@@ -383,7 +407,7 @@ pub fn aggravated(m: &Mob) -> bool {
 fn find_target(
     m: &mut Mob,
     w: &MobWorld,
-    level_random: &mut horizon_core::random::LegacyRandom,
+    level_random: &mut horizon_core::random::LevelRandom,
 ) -> Option<Who> {
     if m.extra.in_love > 0 || !m.fluids.in_water || m.is_baby() || m.extra.tame {
         return None;
@@ -402,6 +426,7 @@ fn find_target(
     }
     // The cooldown and the coin come from the level's random (`level.getRandom()`).
     m.extra.counter = 2400 + level_random.next_int_bound(1201).unwrap_or(0);
+    m.extra.nautilus_attack_cooldown_ttl = Some(i64::MAX);
     if level_random.next_float() < 0.5 {
         return None;
     }
@@ -550,6 +575,7 @@ impl Goal for Charge {
                 x: f64::from(horizon_core::geometry::trig::sin(yaw)),
                 z: -f64::from(horizon_core::geometry::trig::cos(yaw)),
                 source: super::Damage::mob(m.id, from),
+                apply_blocking: None,
             });
             m.velocity = Vec3::new(m.velocity.x * 0.6, m.velocity.y, m.velocity.z * 0.6);
         }
@@ -632,15 +658,16 @@ pub fn to_nbt(m: &Mob, map: &mut horizon_world::nbt::Compound) {
         }
     }
     map.insert("equipment".into(), Tag::Compound(equipment));
+    let memory = m.extra.nautilus_attack_cooldown_ttl.map(|ttl| {
+        let mut fields = vec![("value", Tag::Int(m.extra.counter))];
+        if ttl != i64::MAX {
+            fields.push(("ttl", Tag::Long(ttl)));
+        }
+        (ATTACK_TARGET_COOLDOWN, Tag::compound(fields))
+    });
     map.insert(
         "Brain".into(),
-        Tag::compound([(
-            "memories",
-            Tag::compound([(
-                "minecraft:attack_target_cooldown",
-                Tag::compound([("value", Tag::Int(m.extra.counter))]),
-            )]),
-        )]),
+        Tag::compound([("memories", Tag::compound(memory))]),
     );
 }
 /// `TamableAnimal.readAdditionalSaveData`: Sitting is independent of Owner.
@@ -648,7 +675,7 @@ pub fn from_nbt(m: &mut Mob, tag: &horizon_world::nbt::Tag) {
     use horizon_world::nbt::Tag;
     m.extra.owner = crate::save::uuid_from_tag(tag.get("Owner"));
     m.extra.tame = m.extra.owner.is_some();
-    m.extra.sitting = crate::entity_nbt::flag(tag, "Sitting");
+    crate::mobs::tame::restore_sitting(m, crate::entity_nbt::flag(tag, "Sitting"));
     if let Some(Tag::String(v)) = tag.get("variant") {
         let v = v.to_string().unwrap_or_default();
         m.extra.variant = u8::from(v.trim_start_matches("minecraft:") == "warm");
@@ -658,13 +685,17 @@ pub fn from_nbt(m: &mut Mob, tag: &horizon_world::nbt::Tag) {
         .and_then(|e| e.get("saddle"))
         .and_then(crate::save::item_from_nbt);
     m.set_saddle(saddle);
-    if let Some(Tag::Int(v)) = tag
+    let memory = tag
         .get("Brain")
         .and_then(|b| b.get("memories"))
-        .and_then(|b| b.get("minecraft:attack_target_cooldown"))
-        .and_then(|b| b.get("value"))
-    {
-        m.extra.counter = *v;
+        .and_then(|b| b.get(ATTACK_TARGET_COOLDOWN));
+    if let Some(Tag::Int(value)) = memory.and_then(|m| m.get("value")) {
+        m.extra.counter = *value;
+        m.extra.nautilus_attack_cooldown_ttl =
+            Some(crate::save::number(memory.and_then(|m| m.get("ttl"))).unwrap_or(i64::MAX));
+    } else {
+        m.extra.counter = 0;
+        m.extra.nautilus_attack_cooldown_ttl = None;
     }
 }
 
@@ -714,6 +745,26 @@ mod tests {
         }
     }
 
+    /// `NautilusAi` and `ZombieNautilusAi` have no `LookAtPlayerGoal`: the
+    /// idle activity's walk from a look target never runs (no sensor writes
+    /// `LOOK_TARGET`), so a nautilus never turns to stare at a player.
+    #[test]
+    fn neither_brain_looks_at_a_player() {
+        for (id, species) in [
+            ("minecraft:nautilus", Species::Nautilus),
+            ("minecraft:zombie_nautilus", Species::ZombieNautilus),
+        ] {
+            let mut kind = (*crate::mobs::sensor_scan_tests::kind()).clone();
+            kind.id = id.into();
+            kind.species = species;
+            let mut m = Mob::new(1, Arc::new(kind), Vec3::ZERO, 0.0);
+            register(&mut m);
+            // The stroll is there, so the list is the brain's own.
+            assert!(m.ai.goals.has("RandomSwimming"), "{id} strolls");
+            assert!(!m.ai.goals.has("LookAtPlayer"), "{id} looks at players");
+        }
+    }
+
     /// `ChargeAttack.dealKnockBack` is `causeExtraKnockback`: `LivingEntity.knockback`
     /// on the target, away from (sin(yaw), -cos(yaw)), not a raw push of its motion.
     #[test]
@@ -731,7 +782,7 @@ mod tests {
             );
             m.ai.target = Some(Who::Player);
             let mut goal = Charge::new(0.5);
-            let mut lr = horizon_core::random::LegacyRandom::new(1);
+            let mut lr = crate::mobs::world::level_random(1);
             let mut cx = Cx {
                 w: &w,
                 lr: &mut lr,
@@ -865,7 +916,7 @@ mod hostile_target_tests {
                 .map(|seed| {
                     let mut m = Mob::new(1, kind.clone(), Vec3::new(0.5, 62.0, 0.5), 270.0);
                     m.fluids.in_water = true;
-                    let mut level = horizon_core::random::LegacyRandom::new(seed);
+                    let mut level = crate::mobs::world::level_random(seed);
                     find_target(&mut m, w, &mut level)
                 })
                 .collect();
@@ -890,5 +941,227 @@ mod hostile_target_tests {
         assert!(open.iter().all(|t| t.is_none() || *t == Some(Who::Mob(2))));
         assert!(walled.iter().all(Option::is_none), "{walled:?}");
         assert!(beyond.iter().all(Option::is_none), "{beyond:?}");
+    }
+}
+
+#[cfg(test)]
+mod cooldown_memory_tests {
+    use super::*;
+    use horizon_world::nbt::Tag;
+    use std::sync::Arc;
+
+    const MEMORY: &str = "minecraft:attack_target_cooldown";
+    fn raw(id: &str, state: Option<(i32, Option<i64>)>, no_ai: bool) -> Tag {
+        let memory = state.map(|(value, ttl)| {
+            let mut entries = vec![("value", Tag::Int(value))];
+            if let Some(ttl) = ttl {
+                entries.push(("ttl", Tag::Long(ttl)));
+            }
+            Tag::compound(entries)
+        });
+        let memories = Tag::compound(memory.into_iter().map(|m| (MEMORY, m)));
+        let mut fields = vec![
+            ("id", Tag::String(id.into())),
+            (
+                "Pos",
+                Tag::List(vec![
+                    Tag::Double(4.5f64.to_bits()),
+                    Tag::Double(3.0f64.to_bits()),
+                    Tag::Double(4.5f64.to_bits()),
+                ]),
+            ),
+            ("NoAI", Tag::Byte(i8::from(no_ai))),
+            ("NoGravity", Tag::Byte(1)),
+            ("Health", Tag::Float(10.0f32.to_bits())),
+            ("PersistenceRequired", Tag::Byte(1)),
+            ("Brain", Tag::compound([("memories", memories)])),
+        ];
+        if !no_ai {
+            fields.push(("Owner", Tag::IntArray(vec![1, 2, 3, 4])));
+        }
+        Tag::compound(fields)
+    }
+    fn memory(tag: &Tag) -> Option<&Tag> {
+        tag.get("Brain")?.get("memories")?.get(MEMORY)
+    }
+    fn expected(state: Option<(i32, Option<i64>)>) -> Option<Tag> {
+        state.map(|(value, ttl)| {
+            let mut entries = vec![("value", Tag::Int(value))];
+            if let Some(ttl) = ttl.filter(|&ttl| ttl != i64::MAX) {
+                entries.push(("ttl", Tag::Long(ttl)));
+            }
+            Tag::compound(entries)
+        })
+    }
+    fn saved(m: &Mob, stale: Option<&Tag>) -> Tag {
+        crate::entity_nbt::mob_to_nbt(m, [140, 1, 0, 7], stale, None, |_| None)
+    }
+    #[test]
+    fn decoded_cooldown_presence_ttl_and_model_mutation_save_without_raw() {
+        let mut failures = Vec::new();
+        for (id, species) in [
+            ("minecraft:nautilus", Species::Nautilus),
+            ("minecraft:zombie_nautilus", Species::ZombieNautilus),
+        ] {
+            let mut kind = (*crate::mobs::sensor_scan_tests::kind()).clone();
+            kind.id = id.into();
+            kind.species = species;
+            let types = std::collections::HashMap::from([(id.to_owned(), Arc::new(kind))]);
+            for state in [
+                None,
+                Some((0, None)),
+                Some((37, None)),
+                Some((37, Some(5))),
+                Some((37, Some(i64::MAX))),
+            ] {
+                let tag = raw(id, state, true);
+                let mut m = crate::entity_nbt::mob_from_nbt(&tag, &types, 7, None)
+                    .expect("actual class decode");
+                assert_eq!(m.species(), species);
+                assert!(m.no_ai && m.no_gravity && m.alive());
+                assert_eq!(m.health, 10.0);
+                assert_eq!(m.extra.counter, state.map_or(0, |s| s.0));
+                for source in [None, Some(&tag)] {
+                    let out = saved(&m, source);
+                    if memory(&out).cloned() != expected(state) {
+                        failures.push(format!(
+                            "{id} {state:?} raw={} saved={:?}",
+                            source.is_some(),
+                            memory(&out)
+                        ));
+                    }
+                }
+                if memory(&saved(&m.clone(), None)).cloned() != expected(state) {
+                    failures.push(format!("{id} cloned model lost memory presence/lifetime"));
+                }
+                if state.is_some() {
+                    m.extra.counter = 41; // The live value changes; the raw compound still holds the old value.
+                    let want = state.map(|(_, ttl)| (41, ttl));
+                    if memory(&saved(&m, Some(&tag))).cloned() != expected(want) {
+                        failures.push(format!("{id} stale raw value/TTL replaced modeled state"));
+                    }
+                }
+                // A later valid empty memory map clears the class memory, not merely its value.
+                from_nbt(&mut m, &raw(id, None, true));
+                if memory(&saved(&m, Some(&tag))).is_some() {
+                    failures.push(format!("{id} valid empty map retained stale memory"));
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "saved nautilus cooldown state mismatches: {failures:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs actual prepared mob data; must execute, not skip"]
+    fn actual_mob_ticks_retain_noai_lifetime_and_apply_active_memory_boundaries() {
+        let root = std::path::PathBuf::from(
+            std::env::var_os("HORIZON_TEST_RESOURCES").expect("actual prepared resources"),
+        );
+        let mut failures = Vec::new();
+        let ran = crate::mobs::world::with_resource_test_world(
+            &root,
+            &[],
+            true,
+            true,
+            |world, registry| {
+                let water = registry.default_state("minecraft:water").unwrap();
+                let stone = registry.default_state("minecraft:stone").unwrap();
+                world
+                    .chunks
+                    .insert((0, 0), Arc::new(crate::chunk::Chunk::empty(0, 0)));
+                for x in 0..16 {
+                    for z in 0..16 {
+                        world.set(x, 0, z, stone).unwrap();
+                        for y in 1..6 {
+                            world.set(x, y, z, water).unwrap();
+                        }
+                    }
+                }
+            },
+            |world, types| {
+                let types: std::collections::HashMap<_, _> = types
+                    .types
+                    .iter()
+                    .map(|(id, kind)| (id.clone(), Arc::new(kind.clone())))
+                    .collect();
+                for id in ["minecraft:nautilus", "minecraft:zombie_nautilus"] {
+                    for (no_ai, state) in [
+                        (true, None),
+                        (true, Some((0, None))),
+                        (true, Some((37, None))),
+                        (true, Some((37, Some(5)))),
+                        (true, Some((37, Some(i64::MAX)))),
+                        (false, Some((37, Some(5)))),
+                        (false, Some((37, Some(1)))),
+                        (false, Some((37, Some(0)))),
+                    ] {
+                        let tag = raw(id, state, no_ai);
+                        let mut m = crate::entity_nbt::mob_from_nbt(&tag, &types, 7, None).unwrap();
+                        m.attrs.speed = 0.0;
+                        let mut level_random = crate::mobs::world::level_random(140);
+                        let mut events = Vec::new();
+                        for elapsed in 0..=6 {
+                            if elapsed > 0 {
+                                let mut w = world.clone();
+                                w.game_time += elapsed;
+                                assert!(m.tick(&w, &mut level_random, &mut events));
+                                assert!(m.fluids.in_water && m.fluids.eye_in_water);
+                                assert!(m.ai.target.is_none(), "safe no-attack control");
+                                assert!(
+                                    !events.iter().any(|e| matches!(
+                                        e,
+                                        MobEvent::AttackPlayer(..) | MobEvent::AttackMob { .. }
+                                    )),
+                                    "no attack fixture"
+                                );
+                            }
+                            assert_eq!(m.health, 10.0);
+                            assert_eq!(m.no_ai, no_ai);
+                            assert!(m.no_gravity);
+                            let want = if no_ai || elapsed == 0 {
+                                state
+                            } else if state.unwrap().1 == Some(0) {
+                                None
+                            } else {
+                                Some((37 - elapsed as i32, None))
+                            };
+                            if memory(&saved(&m, None)).cloned() != expected(want) {
+                                failures.push(format!(
+                                    "{id} NoAI={no_ai} {state:?} tick={elapsed}: {:?}",
+                                    memory(&saved(&m, None))
+                                ));
+                            }
+                        }
+                    }
+                }
+            },
+        );
+        assert!(ran, "actual prepared world route must execute");
+        assert!(
+            failures.is_empty(),
+            "nautilus cooldown tick/save mismatches: {failures:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod feed_heal_tests {
+    use super::feed_heal;
+
+    #[test]
+    fn heals_twice_the_nutrition_of_vanilla_foods() {
+        // Foods.java: cod 2, pufferfish 1, cooked cod 5, cooked salmon 6.
+        assert_eq!(feed_heal(Some(2)), 4.0);
+        assert_eq!(feed_heal(Some(1)), 2.0);
+        assert_eq!(feed_heal(Some(5)), 10.0);
+        assert_eq!(feed_heal(Some(6)), 12.0);
+    }
+
+    #[test]
+    fn item_without_food_component_heals_one() {
+        assert_eq!(feed_heal(None), 1.0);
     }
 }

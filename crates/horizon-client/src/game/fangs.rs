@@ -4,7 +4,7 @@ use super::Game;
 use horizon_client::mobs::{Part, Species, anim::Poses};
 use horizon_client::particles::{ParticleOptions, ParticleType};
 use horizon_core::geometry::Vec3;
-use horizon_core::random::{LegacyRandom, RandomSource};
+use horizon_core::random::{EntityRandom, RandomSource};
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -17,7 +17,7 @@ pub(super) struct Fangs {
     pub owner: u32,
     pub started: bool,
     /// `Entity.random`. The attack sound's pitch is its first draw.
-    random: LegacyRandom,
+    random: EntityRandom,
 }
 /// `EvokerFangs.handleEntityEvent`: `nextFloat() * 0.2 + 0.85`.
 pub(super) fn fang_attack_pitch(random: &mut impl RandomSource) -> f32 {
@@ -132,6 +132,7 @@ impl Game<'_> {
 
     /// `EvokerFangs.tick`.
     pub(super) fn tick_fangs(&mut self) {
+        horizon_threads::work::clear_work();
         let mut list = std::mem::take(&mut self.fangs.list);
         list.retain_mut(|f| {
             f.warmup = f.warmup.wrapping_sub(1);
@@ -230,17 +231,33 @@ impl Game<'_> {
         } else {
             Vec::new()
         };
-        for m in &mut self.mobs {
-            let ally = allies.contains(&m.id);
-            if m.id != f.owner && !ally && m.alive() && m.bounds().intersects(b) {
-                m.damage(
+        for index in 0..self.mobs.len() {
+            let m = &mut self.mobs[index];
+            let id = m.id;
+            if id != f.owner
+                && !allies.contains(&id)
+                && m.alive()
+                && m.bounds().intersects(b)
+                && m.damage(
                     6.0,
                     horizon_client::mobs::Damage {
-                        kind: horizon_client::mobs::DamageKind::Magic,
+                        kind: if owner.is_some() {
+                            horizon_client::mobs::DamageKind::IndirectMagic
+                        } else {
+                            horizon_client::mobs::DamageKind::Magic
+                        },
                         attacker: owner.map(horizon_client::mobs::Who::Mob),
                         from: Some(f.pos),
                         attacker_species: None,
                     },
+                )
+                && owner.is_some()
+            {
+                self.mob_post_attack(
+                    id,
+                    owner.map(horizon_client::mobs::Who::Mob),
+                    Some("minecraft:evoker_fangs"),
+                    Some("minecraft:indirect_magic"),
                 );
             }
         }

@@ -4,6 +4,7 @@
 // No console window behind the launcher or the game: both log to files.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+#[path = "desktop/mod.rs"]
 mod desktop;
 // The launchers' shared parts; some only the Android one uses.
 #[allow(dead_code)]

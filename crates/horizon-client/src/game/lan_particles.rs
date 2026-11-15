@@ -10,7 +10,10 @@ use horizon_core::{
     random::RandomSource,
 };
 use horizon_protocol::{
-    entity_data::{MOD_PARTICLE_ID, Particle, ParticleData, PositionSource},
+    entity_data::{
+        LEGACY_AMBIENT_ENTITY_EFFECT_PARTICLE_ID, LEGACY_ENTITY_EFFECT_PARTICLE_ID,
+        MOD_PARTICLE_ID, Particle, ParticleData, PositionSource,
+    },
     packets::play::{self, Clientbound as C},
 };
 use horizon_world::registry::BlockStateId;
@@ -104,6 +107,17 @@ fn rgb_int(c: [f32; 3]) -> i32 {
 }
 fn rgb(c: [f32; 4]) -> [f32; 3] {
     [c[0], c[1], c[2]]
+}
+fn legacy_effect_options(particle: &Particle) -> Option<ParticleOptions> {
+    let ambient = match particle.id {
+        LEGACY_ENTITY_EFFECT_PARTICLE_ID => false,
+        LEGACY_AMBIENT_ENTITY_EFFECT_PARTICLE_ID => true,
+        _ => return None,
+    };
+    Some(ParticleOptions {
+        legacy_entity_effect: Some(ambient),
+        ..ParticleOptions::simple(ParticleType::EntityEffect)
+    })
 }
 
 /// `ServerLevel.sendParticles` of one soul particle moving by `velocity`
@@ -284,7 +298,8 @@ impl Game<'_> {
             ];
             if let Some((sprite, tint)) = self.particle_sprite(state, block) {
                 self.particles.send_particles(
-                    &ParticleOptions::block(ParticleType::Block, sprite, tint),
+                    &ParticleOptions::block(ParticleType::Block, sprite, tint)
+                        .with_source(&self.res.facts().get(state).name),
                     at,
                     [0.0; 3],
                     speed,
@@ -422,7 +437,7 @@ impl Game<'_> {
             T::Effect | T::InstantEffect => {
                 Some(ParticleData::ColorPower(rgb_int(rgb(c)), options.scale))
             }
-            T::EntityEffect | T::TintedLeaves => Some(ParticleData::Color(
+            T::EntityEffect | T::TintedLeaves | T::Flash => Some(ParticleData::Color(
                 (((c[3].clamp(0.0, 1.0) * 255.0).round() as i32) << 24) | rgb_int(rgb(c)),
             )),
             T::DragonBreath | T::SculkCharge => Some(ParticleData::Scalar(options.scale)),
@@ -442,6 +457,13 @@ impl Game<'_> {
         Some(Particle { id, data })
     }
 
+    /// This window plays on an older release's server through the adapter.
+    fn older_server(&self) -> bool {
+        self.remote.as_ref().is_some_and(|r| {
+            r.session.server_version() != horizon_protocol::adapter::ServerVersion::Current
+        })
+    }
+
     /// The options a server's particle stands for (None for a type or data
     /// this client doesn't draw).
     pub(super) fn received_particle(
@@ -449,6 +471,11 @@ impl Game<'_> {
         p: &Particle,
         at: [f64; 3],
     ) -> Option<ParticleOptions> {
+        // The adapter's markers mean something only on an older server's connection: a
+        // 26.3 server's ids and durations are read as they are.
+        if let Some(options) = legacy_effect_options(p).filter(|_| self.older_server()) {
+            return Some(options);
+        }
         if p.id == MOD_PARTICLE_ID
             && let Some(ParticleData::Mod(name)) = &p.data
         {
@@ -466,10 +493,12 @@ impl Game<'_> {
             None => ParticleOptions::simple(ty),
             Some(ParticleData::State(s)) => {
                 let pos = at.map(|v| v.floor() as i32);
+                let state = BlockStateId(*s as u32);
                 let (sprite, tint) = self
-                    .particle_sprite(BlockStateId(*s as u32), pos)
+                    .particle_sprite(state, pos)
                     .unwrap_or_else(|| ("block/stone".into(), 0xFFFFFF));
                 ParticleOptions::block(ty, sprite, tint)
+                    .with_source(&self.res.facts().get(state).name)
             }
             Some(ParticleData::ColorScale(c, scale)) => {
                 ParticleOptions::dust(rgb(rgba(*c)), *scale)
@@ -494,9 +523,10 @@ impl Game<'_> {
             Some(ParticleData::GeyserBase(water_blocks, burst_impulse_base)) => {
                 ParticleOptions::geyser_base(ty, *water_blocks, *burst_impulse_base)
             }
-            Some(ParticleData::Trail(target, color, duration)) => {
-                ParticleOptions::trail(*target, *color as u32 & 0xFF_FFFF, *duration)
-            }
+            Some(ParticleData::Trail(target, color, duration)) => ParticleOptions {
+                legacy_trail_lifetime: *duration == -1 && self.older_server(),
+                ..ParticleOptions::trail(*target, *color as u32 & 0xFF_FFFF, *duration)
+            },
             Some(ParticleData::Vibration { source, ticks }) => ParticleOptions::vibration(
                 source.clone(),
                 self.vibration_destination(source)?,
@@ -541,7 +571,7 @@ impl Game<'_> {
             return;
         };
         // Combat feel Legacy draws a hit as 1.8.9 did: no sweep, no damage hearts.
-        if self.settings.extras.pvp.combat.hides_particle(options.ty) {
+        if self.pvp_hides_particle(options.ty) {
             return;
         }
         let (d, s) = (p.dist.map(f64::from), p.max_speed.map(f64::from));
@@ -870,6 +900,32 @@ mod tests {
     use horizon_core::random::LegacyRandom;
     use horizon_protocol::packets::play;
 
+    #[test]
+    fn legacy_effect_markers_select_providers_without_a_registry_lookup() {
+        for (id, ambient) in [
+            (LEGACY_ENTITY_EFFECT_PARTICLE_ID, false),
+            (LEGACY_AMBIENT_ENTITY_EFFECT_PARTICLE_ID, true),
+        ] {
+            let options = legacy_effect_options(&Particle { id, data: None }).unwrap();
+            assert_eq!(options.ty, ParticleType::EntityEffect);
+            assert_eq!(options.legacy_entity_effect, Some(ambient));
+        }
+        assert!(
+            legacy_effect_options(&Particle {
+                id: MOD_PARTICLE_ID,
+                data: None
+            })
+            .is_none()
+        );
+        assert!(
+            legacy_effect_options(&Particle {
+                id: 28,
+                data: Some(ParticleData::Color(-1))
+            })
+            .is_none()
+        );
+    }
+
     /// The Nether's evaporation smoke (ALTERNATIVE, dist 1, speed 0) lands
     /// inside the block from its corner and stands still; DEFAULT spreads
     /// both ways.
@@ -978,6 +1034,7 @@ mod tests {
                     latency: std::sync::Arc::new(std::sync::atomic::AtomicI32::new(0)),
                     address: format!("127.0.0.1:{}", 25565 + conn).parse().unwrap(),
                     expected: false,
+                    configured: Default::default(),
                 },
                 1,
                 at,
@@ -1077,6 +1134,30 @@ mod tests {
         assert_eq!(
             particle.data,
             Some(ParticleData::Vibration { source, ticks: 7 })
+        );
+    }
+
+    /// `ParticleTypes.STREAM_CODEC` for `ColorParticleOption` (`flash`, with
+    /// `entity_effect` and `tinted_leaves`): the colour as its ARGB int.
+    #[test]
+    fn flash_particles_carry_their_colour_to_guests() {
+        let (hub, rx_near, rx_far) = test_hub("FlashTest", {
+            // `Particle::read` reads a flash's colour from its pinned id, 52.
+            let mut names = vec!["minecraft:empty".to_string(); 52];
+            names.push("minecraft:flash".to_string());
+            names
+        });
+
+        let at = [0.0, 64.0, 0.0];
+        let options = ParticleOptions::colored(ParticleType::Flash, [1.0, 0.0, 0.0, 1.0]);
+        send_hub_level_particles(&hub, &options, at, [0.0; 3], 0.0, 1, None);
+
+        assert!(rx_far.try_recv().is_err(), "only players within 32 blocks");
+        let p = level_particles(&rx_near);
+        assert_eq!(p.particle.id, 52);
+        assert_eq!(
+            p.particle.data,
+            Some(ParticleData::Color(0xFFFF_0000u32 as i32))
         );
     }
 }

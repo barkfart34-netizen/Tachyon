@@ -14,8 +14,12 @@ use horizon_client::{
     },
     patrol::{GameplayAttributes, Member, PatrolLevel, PatrolSpawner},
     raid::{self, Action, BarName, RaidLevel, RaidPlayer, RaiderInfo, RaiderType, Raids, Spawn},
+    random_source,
 };
-use horizon_core::{geometry::Vec3, random::RandomSource};
+use horizon_core::{
+    geometry::Vec3,
+    random::{LegacyRandom, LevelRandom, RandomSource},
+};
 use horizon_world::nbt::Tag;
 use std::collections::{HashMap, HashSet};
 
@@ -25,7 +29,7 @@ pub(super) struct Raiding {
     patrol: PatrolSpawner,
     siege: Siege,
     /// The raids of the dimension the player is in, and that dimension.
-    raids: Raids,
+    pub(super) raids: Raids,
     loaded: Option<Dim>,
     /// `ServerPlayer.raidOmenPosition` (`raid_omen_position`), read from the
     /// player data on first use.
@@ -103,8 +107,10 @@ impl RaidLevel for Lvl<'_, '_> {
     fn surface_height(&self, x: i32, z: i32) -> i32 {
         self.game.surface_height(x, z)
     }
+    /// `ServerLevel.isPositionEntityTicking`: a loaded chunk whose entities
+    /// tick (`canPositionTick`) in entity ticking range, not merely loaded.
     fn is_position_entity_ticking(&self, p: [i32; 3]) -> bool {
-        self.has_chunk_at(p)
+        self.has_chunk_at(p) && self.game.tickets.levels().entity_ticking_at(p[0], p[2])
     }
     fn ravager_can_spawn(&self, [x, y, z]: [i32; 3]) -> bool {
         let g = self.game;
@@ -113,14 +119,18 @@ impl RaidLevel for Lvl<'_, '_> {
             || w.block_name(x, y - 1, z) == "minecraft:snow"
                 && g.res.facts().is_air(g.world.block(x, y, z))
     }
-    fn player(&self) -> Option<RaidPlayer> {
-        // The first player in the level: a server has no player of its own.
-        let p = self.game.level_players().into_iter().next()?;
-        Some(RaidPlayer {
-            position: [p.position.x, p.position.y, p.position.z],
-            block: block_of(p.position),
-            alive: p.alive,
-        })
+    fn players(&self) -> Vec<RaidPlayer> {
+        // The players of the level in place: a server has none of its own.
+        self.game
+            .level_players()
+            .into_iter()
+            .map(|p| RaidPlayer {
+                uuid: p.uuid,
+                position: [p.position.x, p.position.y, p.position.z],
+                block: block_of(p.position),
+                alive: p.alive,
+            })
+            .collect()
     }
 }
 
@@ -131,6 +141,9 @@ struct PatrolCx<'a, 'g, 'h> {
     can_spawn: &'h dyn Fn(&Game, [i32; 3]) -> bool,
 }
 impl SpawnLevel for PatrolCx<'_, '_, '_> {
+    fn within_world_border(&self, x: i32, z: i32) -> bool {
+        self.level.within_world_border(x, z)
+    }
     fn state(&self, x: i32, y: i32, z: i32) -> horizon_world::registry::BlockStateId {
         self.level.state(x, y, z)
     }
@@ -167,8 +180,8 @@ impl SpawnLevel for PatrolCx<'_, '_, '_> {
     fn peaceful(&self) -> bool {
         self.level.peaceful()
     }
-    fn dimension(&self) -> spawn_rules::Dimension {
-        self.level.dimension()
+    fn dimension_type(&self) -> &horizon_world::dimension_type::DimensionFacts {
+        self.level.dimension_type()
     }
     fn surface_slime_chance(&self, x: i32, y: i32, z: i32) -> f32 {
         self.level.surface_slime_chance(x, y, z)
@@ -185,7 +198,7 @@ impl PatrolLevel for PatrolCx<'_, '_, '_> {
         self.level.game.ui.rules.bool("spawn_patrols")
     }
     fn bright_outside(&self) -> bool {
-        self.level.game.dim == Dim::Overworld && self.level.game.sky_darken() < 4
+        !self.level.game.dimension_type().has_fixed_time && self.level.game.sky_darken() < 4
     }
     /// `PatrolSpawner.tick` picks from `level.players()`: the local player
     /// and every guest in the level.
@@ -278,7 +291,9 @@ impl Game<'_> {
         self.raiding.loaded = Some(self.dim);
         self.raiding.bar_hurts.clear();
         self.raiding.homes.clear();
-        let seed = self.world.random.next_long();
+        // Each loaded raid's own random: the Raid constructor's
+        // `RandomSource.create()`, not the level's.
+        let seed = random_source::unique_seed();
         self.raiding.raids = match horizon_client::save::read_dat(&self.raids_path(self.dim))
             .and_then(|tag| tag.get("data").cloned())
         {
@@ -369,7 +384,7 @@ impl Game<'_> {
                     .clone()
             })
             .unwrap_or_default();
-        attributes.value(key, self.dim.id(), &biome, self.world.day_time)
+        attributes.value(key, &self.dimension_type().id, &biome, self.world.day_time)
     }
 
     /// `BadOmenMobEffect` and `RaidOmenMobEffect.applyEffectTick` for the
@@ -409,11 +424,15 @@ impl Game<'_> {
             _ => OmenTick::Continue,
         }
     }
-    /// The Raid Omen sound when the effect is first added.
+    /// The Raid Omen sound when the effect is first added
+    /// (`MobEffect.onEffectAdded`: at the player's feet).
     pub(super) fn raid_omen_added(&mut self) {
-        let eye = self.eye_position().unwrap_or_default();
+        let Some(p) = self.player.as_ref() else {
+            return;
+        };
+        let at = [p.position.x, p.position.y, p.position.z];
         self.audio
-            .play("minecraft:event.mob_effect.raid_omen", Some(eye), 1.0, 1.0);
+            .play("minecraft:event.mob_effect.raid_omen", Some(at), 1.0, 1.0);
     }
     /// `Raids.createOrExtendRaid`: not for spectators, with the `raids` rule
     /// and where raids may start; the raid centres on the occupied village
@@ -427,7 +446,8 @@ impl Game<'_> {
         }
         self.load_raids();
         let center = raid::raid_center(at, &self.village_pois());
-        let seed = self.world.random.next_long();
+        // The new raid's own random: `RandomSource.create()`, not the level's.
+        let seed = random_source::unique_seed();
         let difficulty = self.difficulty_id();
         let (id, triggered) = self
             .raiding
@@ -443,9 +463,6 @@ impl Game<'_> {
     /// `ServerLevel.getRaidAt`.
     pub(super) fn raiding_nearby(&self, at: [i32; 3]) -> Option<i32> {
         self.raiding.raids.nearby(at).map(|(id, _)| id)
-    }
-    pub(super) fn raid_started(&self, id: i32) -> bool {
-        self.raiding.raids.get(id).is_some_and(|r| r.started)
     }
     /// `/raid start`: a raid in the local village at the given omen level.
     pub(super) fn raid_command_create(&mut self, at: [i32; 3], omen_level: i32) -> bool {
@@ -486,13 +503,14 @@ impl Game<'_> {
         };
         let members: Vec<&Mob> = self.raid_members(id).collect();
         let health: f32 = members.iter().fold(0.0, |a, m| a + m.health);
+        // Java's string concatenation of the floats: `20.0`, not `20`.
         format!(
             "Num groups spawned: {} Raid omen level: {} Num mobs: {} Raid health: {} / {}",
             r.groups_spawned,
             r.omen_level,
             members.len(),
-            health,
-            r.total_health
+            horizon_client::snbt::java_float(health),
+            horizon_client::snbt::java_float(r.total_health)
         )
     }
     /// A raid's members (`groupRaiderMap`): the living raiders it counts.
@@ -804,7 +822,7 @@ impl Game<'_> {
             at[2].floor() as i32,
         );
         let difficulty = self.local_difficulty(at);
-        spawning::finalize(&mut mob, &facts, &difficulty);
+        spawning::finalize(&mut mob, &facts, &difficulty, &mut self.world.random);
         raider::finalize(&mut mob, reason);
         let id = mob.id;
         self.mobs.push(mob);
@@ -1174,18 +1192,25 @@ impl Game<'_> {
         self.particles_around_mob(id, "splash", horizon_client::particles::Burst::VILLAGER);
     }
 
-    /// The raid bar a living player at `at` is in (`Raid.getPlayers`): red,
-    /// notched in tens. The name is the translate component the client draws.
-    pub(super) fn raid_boss_at(&self, at: [f64; 3], alive: bool) -> Option<(i32, Tag, f32)> {
-        if !alive || self.dim != Dim::Overworld {
-            return None;
+    /// The raid bars a player `uuid` is in (`Raid.getPlayers`): red, notched
+    /// in tens. The set is the one `updatePlayers` cached on the last 20-tick
+    /// beat, so a viewer joins or leaves it up to 19 ticks late, alive or not
+    /// (`validPlayer`'s `isAlive` is only read on a beat). The name is the
+    /// translate component the client draws.
+    pub(super) fn raid_bars_at(&self, uuid: u128) -> Vec<(i32, Tag, f32)> {
+        if self.dim != Dim::Overworld {
+            return Vec::new();
         }
-        let block = block_of(Vec3::new(at[0], at[1], at[2]));
-        let (id, raid) = self.raiding.raids.nearby(block)?;
-        if !raid.bar.visible || raid.is_stopped() {
-            return None;
-        }
-        Some((id, raid_name_tag(raid.bar.name), raid.bar.progress))
+        self.raiding
+            .raids
+            .ids()
+            .into_iter()
+            .filter_map(|id| self.raiding.raids.get(id).map(|raid| (id, raid)))
+            .filter(|(_, raid)| {
+                raid.bar.players.contains(&uuid) && raid.bar.visible && !raid.is_stopped()
+            })
+            .map(|(id, raid)| (id, raid_name_tag(raid.bar.name), raid.bar.progress))
+            .collect()
     }
     /// A firework a villager launches to celebrate (`CelebrateVillagersSurvivedRaid`).
     pub(super) fn villager_firework(&mut self, at: [f64; 3], color: usize, flight: u8) {
@@ -1200,7 +1225,12 @@ impl Game<'_> {
                 twinkle: false,
             }],
         ));
-        let rocket = self.new_rocket(Vec3::new(at[0], at[1], at[2]), &stack, false);
+        let rocket = self.new_rocket(
+            Vec3::new(at[0], at[1], at[2]),
+            &stack,
+            false,
+            &mut random_source::entity(),
+        );
         self.rockets.push(rocket);
     }
     /// `BehaviorUtils.throwItem`: a hero's gift tossed toward the player.
@@ -1270,7 +1300,7 @@ impl Game<'_> {
         let enemies = self.ui.rules.bool("spawn_mobs") && self.ui.rules.bool("spawn_monsters");
         let mut random = std::mem::replace(
             &mut self.world.random,
-            horizon_core::random::LegacyRandom::new(0),
+            LevelRandom::for_level(LegacyRandom::new(0)),
         );
         let mut members: Vec<Member> = Vec::new();
         let mut spawner = std::mem::take(&mut self.raiding.patrol);
@@ -1280,15 +1310,14 @@ impl Game<'_> {
                 centers: self.village_centers(),
                 can_spawn: &biome_ok,
             };
-            let mut spawn =
-                |l: &PatrolCx, m: Member, _: &mut horizon_core::random::LegacyRandom| {
-                    // EntityType.create makes no monsters in peaceful.
-                    if l.level.game.difficulty_id() == 0 {
-                        return false;
-                    }
-                    members.push(m);
-                    true
-                };
+            let mut spawn = |l: &PatrolCx, m: Member, _: &mut horizon_core::random::LevelRandom| {
+                // EntityType.create makes no monsters in peaceful.
+                if l.level.game.difficulty_id() == 0 {
+                    return false;
+                }
+                members.push(m);
+                true
+            };
             spawner.tick(&level, enemies, &mut random, &mut spawn);
         }
         self.raiding.patrol = spawner;
@@ -1418,7 +1447,7 @@ impl Game<'_> {
     ) -> Option<[f64; 3]> {
         let mut random = std::mem::replace(
             &mut self.world.random,
-            horizon_core::random::LegacyRandom::new(0),
+            LevelRandom::for_level(LegacyRandom::new(0)),
         );
         let mut found = None;
         for _ in 0..10 {
@@ -1462,10 +1491,12 @@ impl Game<'_> {
         let new = self.potions.effects.get("bad_omen").is_none();
         self.potions.effects.add(effect);
         let eye = self.eye_position().unwrap_or_default();
-        // MobEffect.onEffectAdded: Bad Omen's sound when it is new.
-        if new {
+        // MobEffect.onEffectAdded: Bad Omen's sound when it is new, at the
+        // player's feet.
+        if new && let Some(p) = self.player.as_ref() {
+            let at = [p.position.x, p.position.y, p.position.z];
             self.audio
-                .play("minecraft:event.mob_effect.bad_omen", Some(eye), 1.0, 1.0);
+                .play("minecraft:event.mob_effect.bad_omen", Some(at), 1.0, 1.0);
         }
         self.audio
             .play("minecraft:item.ominous_bottle.dispose", Some(eye), 1.0, 1.0);
@@ -1617,3 +1648,44 @@ impl Game<'_> {
 #[cfg(test)]
 #[path = "raids/tests/bed_loss.rs"]
 mod bed_loss_tests;
+
+#[cfg(test)]
+#[path = "raids/tests/bar_players.rs"]
+mod bar_players_tests;
+
+#[cfg(test)]
+mod entity_ticking_tests {
+    use super::{Lvl, RaidLevel};
+    use crate::game::native_machines::tests::server_game;
+    use horizon_client::{chunk::Chunk, ticket_levels::Sources};
+    use std::{collections::HashSet, sync::Arc};
+
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn a_wave_spawns_only_where_entities_tick() {
+        let mut game = server_game();
+        game.world
+            .chunks
+            .insert((6, 0), Arc::new(Chunk::empty(6, 0)));
+        // A player in chunk (0, 0) with a simulation distance of 5: chunk
+        // (6, 0) is loaded but its entities do not tick.
+        game.tickets.update(Some(Sources {
+            players: vec![(0, 0)],
+            view_distance: 10,
+            simulation_distance: 5,
+            ..Sources::default()
+        }));
+        let centers = HashSet::new();
+        let level = Lvl {
+            game: &game,
+            difficulty: 2,
+            centers: &centers,
+        };
+        assert!(level.is_position_entity_ticking([8, 64, 8]));
+        assert!(!level.is_position_entity_ticking([6 * 16 + 8, 64, 8]));
+        assert!(
+            !level.is_position_entity_ticking([-40, 64, 8]),
+            "not loaded"
+        );
+    }
+}

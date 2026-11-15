@@ -1,6 +1,8 @@
-//! Embeds Tachyon's icon (`packaging/icons/tachyon.ico`) in the Windows executables, as icon
-//! resource 1: Explorer and the task bar show it, and the window takes it as its icon.
-//! The optional Segment Heap manifest is embedded in the same resource compilation.
+//! Generates the native mod API, and gives the Windows executables Tachyon's icon
+//! (`packaging/icons/tachyon.ico`) and 8 MB stack (`packaging/windows/exe.rs`).
+#[path = "../../packaging/windows/exe.rs"]
+#[allow(dead_code)]
+mod windows_exe;
 fn main() {
     let root =
         std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
@@ -64,7 +66,33 @@ fn main() {
         if cfg!(windows) && target_env == "gnu" {
             unsafe { std::env::set_var("CARGO_MANIFEST_DIR", original_manifest_dir) };
         }
-        result.expect("embedding Horizon's icon in Windows resources");
+        result.expect("embedding Tachyon's icon in Windows resources");
+    }
+    // A workspace horizon-mixins changed holds native mods, whichever tool ran it (the launcher,
+    // or a mod's own script with no `native-mods.json` beside its game): `HORIZON_MIXIN_MODS`
+    // names them for `game::mods::built_with_native_mods`. Watched only once it exists: a
+    // bundle applied in place also edits `game/`, which `generate` watches.
+    let stage = root.join(horizon_mod_api_gen::MIXINS_STAGE);
+    if stage.is_file() {
+        println!("cargo:rerun-if-changed={}", stage.display());
+    }
+    let staged = horizon_mod_api_gen::staged_mods(&root);
+    if !staged.is_empty() {
+        println!("cargo:rustc-env=HORIZON_MIXIN_MODS={}", staged.join(","));
+    }
+    // Whether a native mod can run in a mob's turn (`game/creatures/mob_islands.rs`). The
+    // launcher adds trait packages to the workspace's members.
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join("Cargo.toml").display()
+    );
+    for dir in ["native-api", "native-crates"] {
+        if root.join(dir).is_dir() {
+            println!("cargo:rerun-if-changed={}", root.join(dir).display());
+        }
+    }
+    if let Some(found) = horizon_mod_api_gen::mob_turn(&root) {
+        println!("cargo:rustc-env=HORIZON_MOB_TURN={found}");
     }
 }
 
@@ -77,29 +105,26 @@ fn resource_path(path: &std::path::Path, target_env: &str) -> Result<String, Str
             path.display()
         )
     });
-    #[cfg(windows)]
-    let path = {
-        let path_string = path.to_string_lossy();
-        if target_env == "gnu"
-            && (!path_string.is_ascii() || path_string.chars().any(char::is_whitespace))
-        {
-            short_windows_path(&path).map_err(|error| {
-                format!(
-                    "GNU windres needs an ASCII Windows resource path for {}: {error}",
-                    path.display()
-                )
-            })?
-        } else {
-            path
-        }
-    };
-    #[cfg(not(windows))]
-    let _ = target_env;
-    Ok(path.to_string_lossy().replace('\\', "/"))
+    windows_path(path, target_env)
+}
+
+#[cfg(not(windows))]
+fn windows_path(path: std::path::PathBuf, _target_env: &str) -> Result<String, String> {
+    Ok(path.to_string_lossy().into_owned())
 }
 
 #[cfg(windows)]
-fn short_windows_path(path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+fn windows_path(path: std::path::PathBuf, target_env: &str) -> Result<String, String> {
+    let s = path.to_string_lossy();
+    let trimmed = s.strip_prefix(r"\\?\").unwrap_or(&s);
+    if target_env != "gnu" || trimmed.is_ascii() && !trimmed.chars().any(char::is_whitespace) {
+        return Ok(trimmed.to_owned());
+    }
+    short_path(trimmed)
+}
+
+#[cfg(windows)]
+fn short_path(path: &str) -> Result<String, String> {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
     #[link(name = "kernel32")]
@@ -107,20 +132,26 @@ fn short_windows_path(path: &std::path::Path) -> std::io::Result<std::path::Path
         fn GetShortPathNameW(input: *const u16, output: *mut u16, capacity: u32) -> u32;
     }
 
-    let input: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let input: Vec<u16> = std::ffi::OsStr::new(path)
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
     let mut output = vec![0u16; 32_768];
     let length =
         unsafe { GetShortPathNameW(input.as_ptr(), output.as_mut_ptr(), output.len() as u32) };
     if length == 0 || length as usize >= output.len() {
-        return Err(std::io::Error::last_os_error());
-    }
-    let short_path = std::ffi::OsString::from_wide(&output[..length as usize]);
-    let short_path_string = short_path.to_string_lossy();
-    if !short_path_string.is_ascii() || short_path_string.chars().any(char::is_whitespace) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "the volume has no ASCII 8.3 path for this file",
+        return Err(format!(
+            "GNU windres needs an ASCII Windows resource path for {path}: {}",
+            std::io::Error::last_os_error()
         ));
     }
-    Ok(short_path.into())
+    let short_path = std::ffi::OsString::from_wide(&output[..length as usize])
+        .to_string_lossy()
+        .into_owned();
+    if !short_path.is_ascii() || short_path.chars().any(char::is_whitespace) {
+        return Err(format!(
+            "GNU windres needs an ASCII Windows resource path for {path}: the volume has no ASCII 8.3 path for this file"
+        ));
+    }
+    Ok(short_path)
 }

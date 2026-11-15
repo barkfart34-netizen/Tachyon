@@ -452,7 +452,7 @@ fn stars(batch: &mut HudBatch, atlas: &HudAtlas, w: f32, h: f32, seconds: f32) {
 
 pub(in crate::game) fn early_gui() -> UiResources {
     UiResources {
-        atlas: HudAtlas::loading(),
+        atlas: HudAtlas::loading_with(Some(horizon_theme::fonts::GEIST_MONO)),
         panorama: Arc::new(horizon_client::gfx::panorama::Faces::colour([0; 4])),
     }
 }
@@ -720,6 +720,7 @@ fn line(batch: &mut HudBatch, atlas: &HudAtlas, text: &str, x: f32, y: f32, widt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::resource_load::STAGE_LINES;
 
     #[test]
     fn log_ring_keeps_the_last_five_steps_in_order() {
@@ -761,7 +762,7 @@ mod tests {
         let trace: Trace = Arc::new(Mutex::new(Status::default()));
         let progress = Progress {
             trace: Some(trace.clone()),
-            ..Progress::with(&crate::game::STAGE_LINES)
+            ..Progress::with(&STAGE_LINES)
         };
         let worker = progress.clone();
         for stage in 0..=9 {
@@ -909,7 +910,7 @@ mod tests {
 
     #[test]
     fn early_font_needs_no_game_assets_and_trims_unicode_at_a_byte_boundary() {
-        let atlas = HudAtlas::loading();
+        let atlas = HudAtlas::loading_with(Some(horizon_theme::fonts::GEIST_MONO));
         assert_eq!(atlas.pixels.len(), (atlas.width * atlas.height * 4) as usize);
         assert!(atlas.glyph('T').is_some());
         let text = "Créate";
@@ -922,9 +923,9 @@ mod tests {
     fn cached_labels_refresh_on_progress_and_resize() {
         let progress = Progress {
             trace: Some(Arc::new(Mutex::new(Status::default()))),
-            ..Progress::with(&crate::game::STAGE_LINES)
+            ..Progress::with(&STAGE_LINES)
         };
-        let atlas = HudAtlas::loading();
+        let atlas = HudAtlas::loading_with(Some(horizon_theme::fonts::GEIST_MONO));
         let mut screen = Screen::new(Instant::now());
         screen.sampled = Some(Instant::now() + Duration::from_secs(3600));
         let mut batch = HudBatch::new([640, 480]);
@@ -949,8 +950,8 @@ mod tests {
 
     #[test]
     fn skipped_frames_retain_glyphs_until_submission_and_forget_an_old_atlas() {
-        let atlas = HudAtlas::loading();
-        let progress = Progress::with(&crate::game::STAGE_LINES);
+        let atlas = HudAtlas::loading_with(Some(horizon_theme::fonts::GEIST_MONO));
+        let progress = Progress::with(&STAGE_LINES);
         let mut screen = Screen::new(Instant::now());
         // Keep this glyph test independent of process-memory readings.
         screen.sampled = Some(Instant::now() + Duration::from_secs(3600));

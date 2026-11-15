@@ -366,7 +366,7 @@ impl Keyboard {
         ];
         let line: Vec<String> = hints
             .iter()
-            .map(|(b, what)| format!("{} {what}", b.label(glyphs)))
+            .map(|(b, what)| format!("{} {what}", glyph_label(*b, glyphs)))
             .collect();
         ui.text_centered(
             Face::Regular,
@@ -376,6 +376,41 @@ impl Keyboard {
             color::MUTED,
             &line.join("   "),
         );
+    }
+}
+
+fn glyph_label(button: Button, style: GlyphStyle) -> &'static str {
+    match style {
+        GlyphStyle::PlayStation => match button {
+            Button::South => "×",
+            Button::East => "○",
+            Button::West => "□",
+            Button::North => "△",
+            Button::LeftTrigger => "L2",
+            Button::RightBumper => "R1",
+            Button::Start => "Options",
+            _ => "",
+        },
+        GlyphStyle::Nintendo => match button {
+            Button::South => "B",
+            Button::East => "A",
+            Button::West => "Y",
+            Button::North => "X",
+            Button::LeftTrigger => "ZL",
+            Button::RightBumper => "R",
+            Button::Start => "+",
+            _ => "",
+        },
+        GlyphStyle::Xbox | GlyphStyle::Auto => match button {
+            Button::South => "A",
+            Button::East => "B",
+            Button::West => "X",
+            Button::North => "Y",
+            Button::LeftTrigger => "LT",
+            Button::RightBumper => "RB",
+            Button::Start => "Menu",
+            _ => "",
+        },
     }
 }
 
