@@ -235,14 +235,6 @@ jobs:
           cp "$home/tachyon-import.txt" "$GITHUB_WORKSPACE/snapshots/aeronautics-import.txt" || true
           exit $code
 
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: tachyon-launcher
-          path: snapshots
-          retention-days: 7
-          if-no-files-found: warn
-
       - name: Publish a release
         if: github.ref == 'refs/heads/main'
         shell: bash
@@ -253,3 +245,12 @@ jobs:
           --repo "${{ github.repository }}" --target "${{ github.sha }}" --latest=false
           --title "Tachyon for Windows #${{ github.run_number }}"
           --notes "Tachyon untuk Windows (x64, DirectX 12 / Vulkan), profil ${{ env.PROFILE }}, dari commit ${{ github.sha }}. Ekstrak zip, jalankan Tachyon.exe, tambahkan akun offline (cukup nama), lalu PLAY. Folder resources harus tetap di samping Tachyon.exe. Untuk pribadi, jangan dibagikan."
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: tachyon-launcher
+          path: snapshots
+          retention-days: 7
+          if-no-files-found: warn
