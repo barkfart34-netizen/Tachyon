@@ -365,6 +365,21 @@ impl Canvas<'_> {
         let s = self.scale;
         self.quad(r, [0.0; 4], color, [0.0, 0.0, radius * s, width * s]);
     }
+    /// Soft multi-step ambient glow around `r`.
+    pub fn glow(&mut self, r: Rect, radius: f32, color: [f32; 4], spread: f32) {
+        if color[3] <= 0.0 || spread <= 0.0 {
+            return;
+        }
+        for (scale, weight) in [(1.0, 0.16), (0.55, 0.30), (0.22, 0.50)] {
+            let pad = spread * scale;
+            let expanded = Rect::new(r.x - pad, r.y - pad, r.w + pad * 2.0, r.h + pad * 2.0);
+            self.rect(
+                expanded,
+                radius + pad,
+                [color[0], color[1], color[2], color[3] * weight],
+            );
+        }
+    }
     /// A plate shaded from `top` to `bottom`, its corners rounded by `radius` dp.
     pub fn gradient(&mut self, r: Rect, radius: f32, top: [f32; 4], bottom: [f32; 4]) {
         self.shaded(r, radius, [top, top, bottom, bottom]);

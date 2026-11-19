@@ -2,7 +2,7 @@
 //! type does the work, lists instead of cards, one accent for the main action.
 //! Immediate mode: a frame lays out and draws every widget, and a widget that
 //! a finger tapped this frame says so.
-use super::brand::P;
+use super::brand::{P, SPECULAR};
 use super::draw::{Canvas, Face, Rect, hex};
 
 pub const GUTTER: f32 = 24.0;
@@ -121,8 +121,8 @@ impl<'c, 'a> Ui<'c, 'a> {
         );
     }
 
-    /// A crisp rounded button: burnt copper for the screen's main action,
-    /// obsidian plate with hairline border otherwise.
+    /// A crisp rounded button: Cherenkov cyan for the screen's main action,
+    /// deep-space plate with hairline specular border otherwise.
     pub fn button(&mut self, r: Rect, label: &str, primary: bool, enabled: bool) -> bool {
         let pressed = enabled && self.pressed(r);
         let alpha = if !enabled {
@@ -134,11 +134,23 @@ impl<'c, 'a> Ui<'c, 'a> {
         };
         let radius = 9.0f32.min(r.h / 2.0);
         let (fill, text, border) = if !enabled {
-            (hex(P.plate_soft, 0.85), hex(P.muted, 0.8), Some(hex(P.rule, 0.7)))
+            (
+                hex(0x0b101e, 0.85),
+                hex(0x526180, 0.9),
+                Some(hex(P.rule, 0.65)),
+            )
         } else if primary {
-            (hex(P.accent, alpha), hex(P.on_accent, 1.0), None)
+            (
+                hex(P.accent, alpha),
+                hex(P.on_accent, 1.0),
+                Some(hex(0x9cecff, 0.35 * alpha)),
+            )
         } else {
-            (hex(P.plate_soft, alpha), hex(P.ink, 1.0), Some(hex(P.rule, 0.95)))
+            (
+                hex(P.plate_soft, alpha),
+                hex(P.ink, 1.0),
+                Some(hex(SPECULAR, 0.95)),
+            )
         };
         self.c.rect(r, radius, fill);
         if let Some(ring_color) = border {
@@ -174,7 +186,7 @@ impl<'c, 'a> Ui<'c, 'a> {
             },
         );
         if !on {
-            self.c.ring(r, h / 2.0, 1.0, hex(P.rule, 1.0));
+            self.c.ring(r, h / 2.0, 1.0, hex(SPECULAR, 1.0));
         }
         let knob = h - 6.0;
         let x = if on {
@@ -188,7 +200,7 @@ impl<'c, 'a> Ui<'c, 'a> {
             if on {
                 hex(P.on_accent, 1.0)
             } else {
-                hex(P.ink_soft, 1.0)
+                hex(P.ink_soft, 0.9)
             },
         );
         self.tapped(Rect::new(row.x, row.y, row.w, row.h))
@@ -199,6 +211,31 @@ impl<'c, 'a> Ui<'c, 'a> {
     /// under it, the rule below. Returns the area right of the text for the
     /// row's control.
     pub fn row(&mut self, r: Rect, index: usize, name: &str, detail: &str, control: f32) -> Rect {
+        self.row_inner(r, index, name, detail, control, true)
+    }
+
+    /// Same numbered row without the trailing bottom divider (for the last row
+    /// inside a bordered card).
+    pub fn row_ruleless(
+        &mut self,
+        r: Rect,
+        index: usize,
+        name: &str,
+        detail: &str,
+        control: f32,
+    ) -> Rect {
+        self.row_inner(r, index, name, detail, control, false)
+    }
+
+    fn row_inner(
+        &mut self,
+        r: Rect,
+        index: usize,
+        name: &str,
+        detail: &str,
+        control: f32,
+        draw_rule: bool,
+    ) -> Rect {
         let index_text = format!("{index:02}");
         self.c.text(
             r.x,
@@ -238,7 +275,9 @@ impl<'c, 'a> Ui<'c, 'a> {
                 .text(x, y, &line, Face::Regular, detail_size, hex(P.muted, 1.0));
             y += detail_h;
         }
-        self.c.rule(r.x, r.bottom(), r.w, hex(P.rule, 1.0));
+        if draw_rule {
+            self.c.rule(r.x, r.bottom(), r.w, hex(P.rule, 1.0));
+        }
         Rect::new(r.right() - control, r.y, control, r.h)
     }
 
