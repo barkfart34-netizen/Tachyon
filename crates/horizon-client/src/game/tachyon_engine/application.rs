@@ -20,15 +20,21 @@ fn encased(block: &str, held: &str) -> Option<&'static str> {
     })
 }
 
+pub(super) struct ApplyPlan {
+    pub(super) state: horizon_world::registry::BlockStateId,
+    pub(super) keep: bool,
+    bracket: Option<String>,
+    extra: Vec<(String, u32, f32)>,
+}
+
 impl super::super::Game<'_> {
-    pub(in crate::game) fn tachyon_apply(
-        &mut self,
+    pub(super) fn tachyon_apply_plan(
+        &self,
         stack: &ItemStack,
         pos: [i32; 3],
-        claimed: &mut bool,
-    ) {
-        if *claimed || !self.may_build() || self.block_action_restricted(pos) {
-            return;
+    ) -> Option<ApplyPlan> {
+        if !self.may_build() || self.block_action_restricted(pos) {
+            return None;
         }
         let held = stack.item.to_string();
         let block = self.native_block(pos);
@@ -40,12 +46,10 @@ impl super::super::Game<'_> {
             Some(result) => (result.to_owned(), Vec::new(), false),
             None => {
                 if !block.starts_with("minecraft:") && !block.starts_with("create:") {
-                    return;
+                    return None;
                 }
                 let recipes = self.tachyon_create_recipes();
-                let Some(recipe) = recipes.application(&block, &held) else {
-                    return;
-                };
+                let recipe = recipes.application(&block, &held)?;
                 let extra: Vec<(String, u32, f32)> = recipe
                     .extra
                     .iter()
@@ -56,7 +60,7 @@ impl super::super::Game<'_> {
         };
         let registry = &self.pack.assets.registry;
         let old = self.world.block(pos[0], pos[1], pos[2]);
-        let placed = registry.default_state(&result).and_then(|default| {
+        let state = registry.default_state(&result).and_then(|default| {
             let mut next = registry.state(default)?.clone();
             if let Some(before) = registry.state(old) {
                 for (key, value) in before.properties.iter() {
@@ -71,26 +75,40 @@ impl super::super::Game<'_> {
                 }
             }
             registry.id(&next)
-        });
-        let Some(id) = placed else { return };
+        })?;
+        Some(ApplyPlan { state, keep, bracket, extra })
+    }
+
+    pub(in crate::game) fn tachyon_apply(
+        &mut self,
+        stack: &ItemStack,
+        pos: [i32; 3],
+        claimed: &mut bool,
+    ) {
+        if *claimed {
+            return;
+        }
+        let Some(plan) = self.tachyon_apply_plan(stack, pos) else {
+            return;
+        };
         let dimension = self.native_dimension();
-        if !self.native_set_block(dimension, pos, id, 3) {
+        if !self.native_set_block(dimension, pos, plan.state, 3) {
             return;
         }
         *claimed = true;
         if self.creative {
             return;
         }
-        if !keep {
-            self.native_take_items(&held, 1);
+        if !plan.keep {
+            self.native_take_items(&stack.item, 1);
         }
-        if let Some(item) = bracket.and_then(|b| {
+        if let Some(item) = plan.bracket.and_then(|b| {
             let material = b.split('_').next()?.to_owned();
             Some(format!("create:{material}_bracket"))
         }) {
             self.native_give_items(&item, 1);
         }
-        for (item, count, chance) in extra {
+        for (item, count, chance) in plan.extra {
             if chance >= 1.0 || self.tachyon_roll() < chance {
                 self.native_give_items(&item, count);
             }

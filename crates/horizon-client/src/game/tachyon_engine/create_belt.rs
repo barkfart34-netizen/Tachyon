@@ -91,17 +91,40 @@ pub(super) fn pulley(part: &str) -> bool {
 }
 
 thread_local! {
-    /// The first shaft a belt connector was used on.
-    static FIRST: std::cell::Cell<Option<[i32; 3]>> = const { std::cell::Cell::new(None) };
+    /// The first shaft a belt connector was used on, per side (server/remote) and acting player UUID.
+    static FIRST: std::cell::RefCell<std::collections::HashMap<(bool, [i32; 4]), [i32; 3]>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+fn first_shaft(remote: bool, player: [i32; 4]) -> Option<[i32; 3]> {
+    FIRST.with_borrow(|m| m.get(&(remote, player)).copied())
+}
+
+fn set_first_shaft(remote: bool, player: [i32; 4], pos: Option<[i32; 3]>) {
+    FIRST.with_borrow_mut(|m| match pos {
+        Some(p) => {
+            m.insert((remote, player), p);
+        }
+        None => {
+            m.remove(&(remote, player));
+        }
+    });
+}
+
+pub(super) enum BeltPlan {
+    Ignored,
+    Message(Option<String>),
+    Place(Vec<([i32; 3], horizon_world::registry::BlockStateId)>),
 }
 
 impl super::super::Game<'_> {
-    /// A belt connector used on a shaft: the first chosen, or the belt laid to the second.
-    pub(in crate::game) fn tachyon_belt_connector_use(&mut self, stack: &ItemStack, pos: [i32; 3], claimed: &mut bool) {
-        if *claimed || &*stack.item != CONNECTOR || !self.may_build() {
-            return;
+    pub(super) fn tachyon_belt_connector_plan(&mut self, stack: &ItemStack, pos: [i32; 3]) -> BeltPlan {
+        if &*stack.item != CONNECTOR || !self.may_build() {
+            return BeltPlan::Ignored;
         }
-        let sneaking = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft);
+        let remote = self.remote.is_some();
+        let sneaking = self.tachyon_sneaking();
+        let player = self.acting_player_uuid();
         let shaft_axis = |g: &Self, p: [i32; 3]| -> Option<Axis> {
             (g.native_block(p) == "create:shaft")
                 .then(|| g.native_block_property(p, "axis"))
@@ -110,24 +133,19 @@ impl super::super::Game<'_> {
         };
         let Some(axis) = shaft_axis(self, pos) else {
             if sneaking {
-                FIRST.set(None);
+                set_first_shaft(remote, player, None);
             }
-            return;
+            return BeltPlan::Ignored;
         };
-        *claimed = true;
-        let first = FIRST.get();
+        let first = first_shaft(remote, player);
         if sneaking || first.is_none() || first == Some(pos) {
-            FIRST.set((!sneaking).then_some(pos));
-            if !sneaking {
-                self.native_chat("Belt: now use it on the second shaft");
-            }
-            return;
+            set_first_shaft(remote, player, (!sneaking).then_some(pos));
+            return BeltPlan::Message((!sneaking).then(|| "Belt: now use it on the second shaft".to_owned()));
         }
-        FIRST.set(None);
+        set_first_shaft(remote, player, None);
         let first = first.unwrap_or(pos);
         let Some(first_axis) = shaft_axis(self, first) else {
-            self.native_chat("Belt: the first shaft is gone");
-            return;
+            return BeltPlan::Message(Some("Belt: the first shaft is gone".to_owned()));
         };
         let free = |p: [i32; 3]| {
             let state = self.world.block(p[0], p[1], p[2]);
@@ -136,25 +154,46 @@ impl super::super::Game<'_> {
         };
         let (facing, blocks) = match plan(first, pos, first_axis, axis, free) {
             Ok(plan) => plan,
-            Err(why) => {
-                self.native_chat(&format!("Belt: {why}"));
-                return;
-            }
+            Err(why) => return BeltPlan::Message(Some(format!("Belt: {why}"))),
         };
         let registry = self.pack.assets.registry;
-        let dimension = self.native_dimension();
+        let mut out = Vec::with_capacity(blocks.len());
         for (p, part) in blocks {
             let Some(mut state) = registry.default_state(BELT).and_then(|s| registry.state(s)).cloned() else {
-                return;
+                return BeltPlan::Message(None);
             };
             state.properties.insert("facing".into(), facing.name().into());
             state.properties.insert("part".into(), part.into());
             state.properties.insert("slope".into(), "horizontal".into());
-            let Ok(id) = registry.resolve(&state) else { return };
-            self.native_set_block(dimension, p, id, 3);
+            let Ok(id) = registry.resolve(&state) else { return BeltPlan::Message(None) };
+            out.push((p, id));
         }
-        if !self.creative {
-            self.tachyon_spend_held(1);
+        BeltPlan::Place(out)
+    }
+
+    /// A belt connector used on a shaft: the first chosen, or the belt laid to the second.
+    pub(in crate::game) fn tachyon_belt_connector_use(&mut self, stack: &ItemStack, pos: [i32; 3], claimed: &mut bool) {
+        if *claimed {
+            return;
+        }
+        match self.tachyon_belt_connector_plan(stack, pos) {
+            BeltPlan::Ignored => {}
+            BeltPlan::Message(msg) => {
+                *claimed = true;
+                if let Some(msg) = msg {
+                    self.native_chat(&msg);
+                }
+            }
+            BeltPlan::Place(blocks) => {
+                *claimed = true;
+                let dimension = self.native_dimension();
+                for (p, id) in blocks {
+                    self.native_set_block(dimension, p, id, 3);
+                }
+                if !self.creative {
+                    self.tachyon_spend_held(1);
+                }
+            }
         }
     }
 
@@ -234,5 +273,25 @@ mod tests {
         assert!(plan([0, 0, 0], [0, 0, 4], Axis::X, Axis::X, |p| p != [0, 0, 2]).is_err());
         assert_eq!(partials("end")[1], "create:block/belt/end_bottom");
         assert!(pulley("start") && !pulley("middle"));
+    }
+
+    #[test]
+    fn first_shaft_is_isolated_per_player_and_side() {
+        let p1 = [0, 0, 0, 1];
+        let p2 = [0, 0, 0, 2];
+        set_first_shaft(true, p1, None);
+        set_first_shaft(true, p2, None);
+        set_first_shaft(false, p1, None);
+
+        set_first_shaft(true, p1, Some([1, 64, 1]));
+        set_first_shaft(true, p2, Some([9, 64, 9]));
+        assert_eq!(first_shaft(true, p1), Some([1, 64, 1]));
+        assert_eq!(first_shaft(true, p2), Some([9, 64, 9]));
+        assert_eq!(first_shaft(false, p1), None);
+
+        set_first_shaft(true, p1, None);
+        assert_eq!(first_shaft(true, p1), None);
+        assert_eq!(first_shaft(true, p2), Some([9, 64, 9]));
+        set_first_shaft(true, p2, None);
     }
 }

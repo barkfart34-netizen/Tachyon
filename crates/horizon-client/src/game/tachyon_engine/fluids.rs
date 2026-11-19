@@ -269,6 +269,50 @@ pub(super) enum Space {
     Blocked,
 }
 
+/// Outcome of right-clicking a Create tank or spout with a held item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TankAction {
+    SetFluid(&'static str),
+    PourBucket { fluid: &'static str },
+    TakeBucket { full: &'static str, drain: bool },
+}
+
+/// Computes what using `held_item` on `part` holding `tank` would do without mutating state.
+pub(super) fn plan_tank_use(
+    part: Part,
+    tank: Option<&Tank>,
+    held_item: &str,
+    creative: bool,
+) -> Option<TankAction> {
+    if part == Part::CreativeTank {
+        if let Some(fluid) = fluid_of_bucket(held_item) {
+            return Some(TankAction::SetFluid(fluid));
+        }
+        if held_item == "minecraft:bucket" {
+            let full = tank.and_then(|t| bucket_of(&t.fluid))?;
+            return Some(TankAction::TakeBucket { full, drain: false });
+        }
+        return None;
+    }
+    if let Some(fluid) = fluid_of_bucket(held_item) {
+        let cap = capacity(part);
+        if tank.is_some_and(|t| t.amount + BUCKET > cap || (t.amount > 0 && t.fluid != fluid)) {
+            return None;
+        }
+        return Some(TankAction::PourBucket { fluid });
+    }
+    if held_item == "minecraft:bucket" {
+        let full = tank
+            .filter(|t| t.amount >= BUCKET)
+            .and_then(|t| bucket_of(&t.fluid))?;
+        return Some(TankAction::TakeBucket {
+            full,
+            drain: !creative,
+        });
+    }
+    None
+}
+
 impl super::super::Game<'_> {
     /// What is at `p` for an open pipe end.
     fn tachyon_space(&self, p: [i32; 3]) -> Space {
@@ -690,62 +734,49 @@ impl super::super::Game<'_> {
         let Some(held) = self.held().map(|s| s.item.to_string()) else {
             return false;
         };
-        if part == Part::CreativeTank {
-            if let Some(fluid) = fluid_of_bucket(&held) {
-                super::OWNERS.with_borrow_mut(|owners| {
-                    if let Some(o) = owners.get_mut(dimension) {
-                        o.tanks.insert(pos, Tank { fluid: fluid.to_owned(), amount: BUCKET });
-                        o.mills_changed = true;
-                    }
-                });
-                return true;
+        let creative = self.creative;
+        let action = super::OWNERS.with_borrow_mut(|owners| {
+            let o = owners.get_mut(dimension)?;
+            let tank = o.tanks.get(&pos);
+            let act = plan_tank_use(part, tank, &held, creative)?;
+            match act {
+                TankAction::SetFluid(fluid) => {
+                    o.tanks.insert(
+                        pos,
+                        Tank {
+                            fluid: fluid.to_owned(),
+                            amount: BUCKET,
+                        },
+                    );
+                    o.mills_changed = true;
+                }
+                TankAction::PourBucket { fluid } => {
+                    o.tanks.entry(pos).or_default().fill(fluid, BUCKET, capacity(part));
+                    o.mills_changed = true;
+                }
+                TankAction::TakeBucket { drain: true, .. } => {
+                    o.tanks.get_mut(&pos)?.drain(BUCKET);
+                    o.mills_changed = true;
+                }
+                TankAction::TakeBucket { drain: false, .. } => {}
             }
-            if held == "minecraft:bucket" {
-                let full = super::OWNERS.with_borrow(|owners| {
-                    owners.get(dimension).and_then(|o| o.tanks.get(&pos)).and_then(|t| bucket_of(&t.fluid))
-                });
-                if let Some(full) = full {
+            Some(act)
+        });
+        match action {
+            Some(TankAction::SetFluid(_)) => true,
+            Some(TankAction::PourBucket { .. }) => {
+                if !creative {
                     self.tachyon_spend_held(1);
-                    self.give_or_drop(ItemStack::new(full, 1));
-                    return true;
+                    self.give_or_drop(ItemStack::new("minecraft:bucket", 1));
                 }
+                true
             }
-            return false;
-        }
-        if let Some(fluid) = fluid_of_bucket(&held) {
-            let took = super::OWNERS.with_borrow_mut(|owners| {
-                let o = owners.get_mut(dimension)?;
-                let t = o.tanks.entry(pos).or_default();
-                let cap = capacity(part);
-                if t.amount + BUCKET > cap || (t.amount > 0 && t.fluid != fluid) {
-                    return None;
-                }
-                t.fill(fluid, BUCKET, cap);
-                o.mills_changed = true;
-                Some(())
-            });
-            if took.is_some() && !self.creative {
-                self.tachyon_spend_held(1);
-                self.give_or_drop(ItemStack::new("minecraft:bucket", 1));
+            Some(TankAction::TakeBucket { full, .. }) => {
+                self.filled_result(ItemStack::new(full, 1));
+                true
             }
-            return took.is_some();
+            None => false,
         }
-        if held == "minecraft:bucket" {
-            let got = super::OWNERS.with_borrow_mut(|owners| {
-                let o = owners.get_mut(dimension)?;
-                let t = o.tanks.get_mut(&pos)?;
-                let full = bucket_of(&t.fluid).filter(|_| t.amount >= BUCKET)?;
-                t.drain(BUCKET);
-                o.mills_changed = true;
-                Some(full)
-            });
-            if let Some(full) = got {
-                self.tachyon_spend_held(1);
-                self.give_or_drop(ItemStack::new(full, 1));
-                return true;
-            }
-        }
-        false
     }
 
     /// A bucket used on a basin: a full one pours into its fluids, an empty one takes a
@@ -770,8 +801,7 @@ impl super::super::Game<'_> {
             && let Some(fluid) = basin.bucket_out()
             && let Some(full) = bucket_of(&fluid)
         {
-            self.tachyon_spend_held(1);
-            self.give_or_drop(ItemStack::new(full, 1));
+            self.filled_result(ItemStack::new(full, 1));
             return true;
         }
         false
@@ -1031,5 +1061,29 @@ mod tests {
         assert_eq!(fluid_of_bucket("create:honey_bucket"), Some("create:honey"));
         assert_eq!(tagged("c:honey"), vec!["create:honey"]);
         assert_eq!(tagged("c:milk"), vec!["minecraft:milk"]);
+    }
+
+    #[test]
+    fn tank_use_does_not_swallow_blocks_or_drain_in_creative_mode() {
+        let mut t = Tank { fluid: "minecraft:water".into(), amount: 2 * BUCKET };
+        assert_eq!(plan_tank_use(Part::Tank, Some(&t), "create:fluid_pipe", false), None);
+        assert_eq!(plan_tank_use(Part::Spout, Some(&t), "minecraft:stone", false), None);
+        assert_eq!(plan_tank_use(Part::CreativeTank, Some(&t), "create:fluid_pipe", true), None);
+        assert_eq!(plan_tank_use(Part::CreativeTank, None, "minecraft:bucket", false), None);
+
+        assert_eq!(
+            plan_tank_use(Part::Tank, Some(&t), "minecraft:bucket", true),
+            Some(TankAction::TakeBucket { full: "minecraft:water_bucket", drain: false })
+        );
+        assert_eq!(
+            plan_tank_use(Part::CreativeTank, Some(&t), "minecraft:bucket", false),
+            Some(TankAction::TakeBucket { full: "minecraft:water_bucket", drain: false })
+        );
+        assert_eq!(
+            plan_tank_use(Part::Tank, Some(&t), "minecraft:bucket", false),
+            Some(TankAction::TakeBucket { full: "minecraft:water_bucket", drain: true })
+        );
+        t.amount = capacity(Part::Tank);
+        assert_eq!(plan_tank_use(Part::Tank, Some(&t), "minecraft:water_bucket", false), None);
     }
 }

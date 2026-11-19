@@ -1715,10 +1715,27 @@ impl Game<'_> {
             let mut chutes = HashMap::new();
             for (p, mill) in &mut owner.mills {
                 let part = owner.index.parts.get(p).copied();
-                if matches!(part, Some(Part::Depot | Part::Drain))
-                    && let Some(h) = mill.outputs.first().or(mill.input.as_ref())
-                {
-                    held.insert(*p, vec![(h.item.clone(), h.count)]);
+                match part {
+                    Some(Part::Depot | Part::Drain) => {
+                        if let Some(h) = mill.outputs.first().or(mill.input.as_ref()) {
+                            held.insert(*p, vec![(h.item.clone(), h.count)]);
+                        }
+                    }
+                    Some(Part::Millstone) => {
+                        let mut stacks = Vec::new();
+                        if let Some(h) = &mill.input {
+                            stacks.push((h.item.clone(), h.count));
+                        } else if !mill.outputs.is_empty() {
+                            stacks.push((String::new(), 0));
+                        }
+                        if let Some(h) = mill.outputs.first() {
+                            stacks.push((h.item.clone(), h.count));
+                        }
+                        if !stacks.is_empty() {
+                            held.insert(*p, stacks);
+                        }
+                    }
+                    _ => {}
                 }
                 let Some(item) = mill.input.as_ref().map(|h| h.item.clone()) else {
                     // An empty depot: the next stack begins a press's cycle
@@ -1811,6 +1828,11 @@ impl Game<'_> {
             for (p, t) in &owner.tanks {
                 if t.amount > 0 {
                     held.insert(*p, vec![(fluids::stack_name(&t.fluid), t.amount)]);
+                }
+            }
+            for (p, b) in &owner.burners {
+                if owner.index.parts.get(p) == Some(&Part::Burner) && b.is_feed_locked() {
+                    held.insert(*p, vec![("locked".to_owned(), 1)]);
                 }
             }
             for (p, d) in &owner.deployers {
@@ -1983,11 +2005,81 @@ impl Game<'_> {
         }
         v.normalize_or_zero()
     }
+}
 
-    /// The player used the block at `pos` (the world's owner, before the
-    /// block's own use): a creative motor's speed changes, a hand crank
-    /// turns a moment (sneaking, the other way), a millstone takes the held
-    /// stack or gives what it ground. Whether it was Tachyon's to use.
+pub(super) fn tachyon_pick_block_item(block: &str) -> Option<&'static str> {
+    match block {
+        "create:belt" => Some("create:belt_connector"),
+        "create:powered_shaft" => Some("create:shaft"),
+        "create:metal_girder_encased_shaft" => Some("create:metal_girder"),
+        "create:water_wheel_structure" => Some("create:large_water_wheel"),
+        "create:lit_blaze_burner" => Some("create:blaze_burner"),
+        _ => None,
+    }
+}
+
+pub(super) fn belt_accepts_item(item: &str, is_block_item: bool) -> bool {
+    !matches!(item, "create:wrench" | "create:belt_connector") && !is_block_item
+}
+
+pub(super) fn funnel_accepts_use(held_item: Option<&str>) -> bool {
+    held_item.is_none_or(|item| item == "create:wrench")
+}
+
+pub(super) fn suppresses_vanilla_use(name: &str, part: Option<Part>) -> bool {
+    matches!(
+        name,
+        "create:smart_fluid_pipe"
+            | "create:steam_engine"
+            | "create:blaze_burner"
+            | "create:lit_blaze_burner"
+            | "create:basin"
+            | "create:depot"
+    ) || part.is_some_and(takes_use)
+}
+
+impl Game<'_> {
+    pub(super) fn tachyon_sneaking(&self) -> bool {
+        if self.remote.is_some() {
+            self.remote_shift_down()
+        } else {
+            self.keys.held(super::Mapping::Sneak)
+        }
+    }
+
+    fn tachyon_belt_takes(&self, stack: &ItemStack) -> bool {
+        belt_accepts_item(
+            &stack.item,
+            self.res.items().get(&stack.item).is_some_and(|i| i.block.is_some()),
+        )
+    }
+
+    /// Pick-block item resolution for itemless Create blocks.
+    pub(super) fn tachyon_block_clone_item(&self, block: &str, stack: &mut Option<ItemStack>) {
+        if stack.is_some() {
+            return;
+        }
+        if let Some(item) = tachyon_pick_block_item(block)
+            && self.res.items().get(item).is_some()
+        {
+            *stack = Some(ItemStack::new(item, 1));
+        }
+    }
+
+    /// Whether vanilla fallback block interactions (`Composter`, `RespawnAnchor`,
+    /// `Grindstone`, `EndPortalFrame`, `use_item_on_branch`) must be skipped at `pos`
+    /// when `tachyon_use` returned false to let block placement succeed.
+    pub(super) fn tachyon_suppresses_vanilla_use(&self, pos: [i32; 3]) -> bool {
+        let state = self.world.block(pos[0], pos[1], pos[2]);
+        let name = &*self.res.facts().get(state).name;
+        let part = self.tachyon_kinds().and_then(|k| k.part(state.0));
+        suppresses_vanilla_use(name, part)
+    }
+
+    /// A player used the block at `pos`: a hand crank turns for a moment,
+    /// a creative motor steps its speed (or turns round when sneaking), a
+    /// millstone or depot takes the held stack or gives what it ground.
+    /// Returns true only when an interaction actually occurred.
     pub(super) fn tachyon_use(&mut self, pos: [i32; 3]) -> bool {
         if self.remote.is_some() {
             return false;
@@ -2000,25 +2092,20 @@ impl Game<'_> {
         if !part.is_some_and(takes_use) {
             return false;
         }
-        // Burners take their own uses, never their template's charging or
-        // respawn interaction, even when the held item isn't fuel.
         if matches!(part, Some(Part::Burner | Part::LitBurner)) {
-            self.tachyon_use_burner(pos, part == Some(Part::LitBurner));
-            return true;
+            return self.tachyon_use_burner(pos, part == Some(Part::LitBurner));
         }
         if let Some(p @ (Part::Tank | Part::CreativeTank | Part::Spout)) = part {
             let (dimension, root) = (self.dim.id(), self.save.root.clone());
             OWNERS.with_borrow_mut(|owners| owners.entry(dimension).or_default().load(&root, dimension));
-            self.tachyon_use_tank(pos, p);
-            return true;
+            return self.tachyon_use_tank(pos, p);
         }
         if matches!(part, Some(Part::Deployer { .. })) {
             let (dimension, root) = (self.dim.id(), self.save.root.clone());
             OWNERS.with_borrow_mut(|owners| owners.entry(dimension).or_default().load(&root, dimension));
-            self.tachyon_use_deployer(pos);
-            return true;
+            return self.tachyon_use_deployer(pos);
         }
-        let sneaking = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft);
+        let sneaking = self.keys.held(super::Mapping::Sneak);
         if let Some(Part::Link(_)) = part {
             return self.tachyon_use_link(pos, sneaking);
         }
@@ -2027,18 +2114,22 @@ impl Game<'_> {
         }
         let dimension = self.dim.id();
         let root = self.save.root.clone();
-        // A belt: the held stack onto it, to be carried.
+        // A belt: the held non-block stack onto it, to be carried.
         if let Some(Part::Belt(_)) = part {
-            if let Some(stack) = self.held().cloned() {
-                let n = stack.count;
-                let at = [0usize, 1, 2].map(|i| f64::from(pos[i]) + 0.5);
-                self.spawn_item(stack, [at[0], at[1] + 0.2, at[2]], [0.0; 3], 20);
-                self.tachyon_spend_held(n);
-            }
+            let Some(stack) = self.held().filter(|s| self.tachyon_belt_takes(s)).cloned() else {
+                return false;
+            };
+            let n = stack.count;
+            let at = [0usize, 1, 2].map(|i| f64::from(pos[i]) + 0.5);
+            self.spawn_item(stack, [at[0], at[1] + 0.2, at[2]], [0.0; 3], 20);
+            self.tachyon_spend_held(n);
             return true;
         }
-        // A funnel: from putting in to taking out, and back.
+        // A funnel: empty hand or wrench toggles in/out; blocks fall through to placement.
         if let Some(Part::Funnel(_)) = part {
+            if !funnel_accepts_use(self.held().map(|s| &*s.item)) {
+                return false;
+            }
             OWNERS.with_borrow_mut(|owners| {
                 let owner = owners.entry(dimension).or_default();
                 owner.load(&root, dimension);
@@ -2065,7 +2156,7 @@ impl Game<'_> {
                     owner.save(&root, dimension);
                 }
             });
-            return true;
+            return moved;
         }
         if matches!(part, Some(Part::Millstone | Part::Depot | Part::Drain)) {
             let mut mill = OWNERS.with_borrow_mut(|owners| {
@@ -2087,7 +2178,7 @@ impl Game<'_> {
                     owner.save(&root, dimension);
                 }
             });
-            return true;
+            return moved;
         }
         OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
@@ -2107,15 +2198,225 @@ impl Game<'_> {
         true
     }
 
-    /// Whether the block at `pos` is one of Tachyon's a use goes to: a
-    /// player's window sends the use and places nothing (the owner does the
-    /// rest, `tachyon_use`).
-    pub(super) fn tachyon_takes_use(&self, pos: [i32; 3]) -> bool {
+    /// Whether `tachyon_use` at `pos` would consume the click for `held` (matches
+    /// both server `OWNERS` and guest `CLIENT.shown.held` so block placement against
+    /// non-interacting faces is not swallowed on LAN clients).
+    pub(super) fn tachyon_takes_use(&self, pos: [i32; 3], held: Option<&ItemStack>) -> bool {
         let Some(kinds) = self.tachyon_kinds() else {
             return false;
         };
         let state = self.world.block(pos[0], pos[1], pos[2]).0;
-        kinds.part(state).is_some_and(takes_use)
+        let Some(part) = kinds.part(state).filter(|p| takes_use(*p)) else {
+            return false;
+        };
+        let sneaking = self.tachyon_sneaking();
+        let dimension = self.dim.id();
+        let is_remote = self.remote.is_some();
+        let shown_held = || CLIENT.with_borrow(|c| c.shown.held.get(&pos).cloned().unwrap_or_default());
+        match part {
+            Part::Burner | Part::LitBurner => {
+                self.tachyon_burner_takes_use(pos, part == Part::LitBurner, held)
+            }
+            Part::CreativeTank | Part::Tank | Part::Spout => {
+                let Some(s) = held else {
+                    return false;
+                };
+                if !is_remote {
+                    return OWNERS.with_borrow(|owners| {
+                        let tank = owners.get(dimension).and_then(|o| o.tanks.get(&pos));
+                        fluids::plan_tank_use(part, tank, &s.item, self.creative).is_some()
+                    });
+                }
+                if part == Part::CreativeTank {
+                    return fluids::fluid_of_bucket(&s.item).is_some()
+                        || (&*s.item == "minecraft:bucket"
+                            && shown_held()
+                                .into_iter()
+                                .any(|(name, _)| fluids::bucket_of(&name).is_some()));
+                }
+                let shown = shown_held();
+                if let Some(fluid) = fluids::fluid_of_bucket(&s.item) {
+                    let cap = fluids::capacity(part);
+                    return shown.first().is_none_or(|(name, amt)| {
+                        *amt + fluids::BUCKET <= cap && name == &fluids::stack_name(fluid)
+                    });
+                }
+                &*s.item == "minecraft:bucket"
+                    && shown.into_iter().any(|(name, amt)| {
+                        amt >= fluids::BUCKET && fluids::bucket_of(&name).is_some()
+                    })
+            }
+            Part::Deployer { .. } => {
+                if held.is_some_and(|s| s.count > 0) {
+                    return true;
+                }
+                if is_remote {
+                    !shown_held().is_empty()
+                } else {
+                    OWNERS.with_borrow(|owners| {
+                        owners
+                            .get(dimension)
+                            .and_then(|o| o.deployers.get(&pos))
+                            .and_then(|d| d.held.as_ref())
+                            .is_some()
+                    })
+                }
+            }
+            Part::Link(_) => held.is_some_and(|s| &*s.item != "minecraft:air") || sneaking,
+            Part::Latch(_) | Part::ToggleLatch(_) => !sneaking,
+            Part::AnalogLever | Part::Diode(_, _) | Part::Motor(_) | Part::Crank(_) => true,
+            Part::Belt(_) => held.is_some_and(|s| self.tachyon_belt_takes(s)),
+            Part::Funnel(_) => funnel_accepts_use(held.map(|s| &*s.item)),
+            Part::Basin => {
+                if held.is_some_and(|s| fluids::fluid_of_bucket(&s.item).is_some()) {
+                    return true;
+                }
+                if is_remote {
+                    return held.is_some_and(|s| s.extra.is_none())
+                        || shown_held()
+                            .into_iter()
+                            .any(|(it, _)| !fluids::is_fluid(&it));
+                }
+                OWNERS.with_borrow(|owners| {
+                    let mut b = owners
+                        .get(dimension)
+                        .and_then(|o| o.basins.get(&pos))
+                        .cloned()
+                        .unwrap_or_default();
+                    if let Some(s) = held {
+                        if &*s.item == "minecraft:bucket" && b.bucket_out().is_some() {
+                            return true;
+                        }
+                        if s.extra.is_none() && b.put(&s.item, s.count) > 0 {
+                            return true;
+                        }
+                    }
+                    !b.take().is_empty()
+                })
+            }
+            Part::Millstone => {
+                let grinds = held.filter(|s| {
+                    millstone::recipe(&s.item).is_some()
+                        || self.tachyon_create_recipes().milling(&s.item).is_some()
+                });
+                if is_remote {
+                    let shown = shown_held();
+                    return millstone::remote_millstone_takes(
+                        &shown,
+                        grinds.map(|s| &*s.item),
+                    );
+                }
+                OWNERS.with_borrow(|owners| {
+                    let mut mill = owners
+                        .get(dimension)
+                        .and_then(|o| o.mills.get(&pos))
+                        .cloned()
+                        .unwrap_or_default();
+                    if let Some(s) = grinds {
+                        return mill.put(&s.item, s.count) > 0;
+                    }
+                    !mill.take().is_empty()
+                })
+            }
+            Part::Depot | Part::Drain => {
+                let has_item = if is_remote {
+                    !shown_held().is_empty()
+                } else {
+                    OWNERS.with_borrow(|owners| {
+                        owners
+                            .get(dimension)
+                            .and_then(|o| o.mills.get(&pos))
+                            .is_some_and(|m| !m.is_empty())
+                    })
+                };
+                has_item || held.is_some_and(|s| s.extra.is_none() && s.count > 0)
+            }
+            _ => false,
+        }
+    }
+
+    /// Client-side prediction on a LAN guest for `native_hooks::native_use_item_on`.
+    pub(in crate::game) fn tachyon_predict_use_item_on(
+        &mut self,
+        stack: &ItemStack,
+        hit: &super::Hit,
+        hand: horizon_client::first_person::Hand,
+        seq: i32,
+    ) -> bool {
+        if self.remote.is_none() {
+            return false;
+        }
+        let cooling = self.res.items().get(&stack.item).is_some_and(|info| {
+            let group = horizon_client::cooldowns::group(stack, info.use_cooldown.as_ref());
+            self.cooldowns.is_on_cooldown(&group)
+        });
+        if cooling {
+            return false;
+        }
+        if let Some(id) = self.tachyon_girder_target(stack, hit.pos, hit.face) {
+            let at = horizon_core::position::BlockPos::new(hit.pos[0], hit.pos[1], hit.pos[2]);
+            self.predict_blocks(&vec![(at, id)], seq);
+            if !self.creative {
+                self.with_hand(hand, Game::consume_held);
+            }
+            return true;
+        }
+        if let Some(plan) = self.tachyon_bracket_plan(stack, hit.pos, hit.face) {
+            if let bracket::BracketPlan::Replace { state, .. } = plan {
+                let at = horizon_core::position::BlockPos::new(hit.pos[0], hit.pos[1], hit.pos[2]);
+                self.predict_blocks(&vec![(at, state)], seq);
+                if !self.creative {
+                    self.with_hand(hand, Game::consume_held);
+                }
+            }
+            return true;
+        }
+        if let Some(plan) = self.tachyon_apply_plan(stack, hit.pos) {
+            let at = horizon_core::position::BlockPos::new(hit.pos[0], hit.pos[1], hit.pos[2]);
+            self.predict_blocks(&vec![(at, plan.state)], seq);
+            if !self.creative && !plan.keep {
+                self.with_hand(hand, Game::consume_held);
+            }
+            return true;
+        }
+        if let Some((ctx, placed_pos, state, _)) = self.tachyon_assist_plan(stack, hit.pos) {
+            if self.block_place_canceled(stack, &ctx) {
+                if let Some(r) = self.remote.as_mut() {
+                    r.placing = None;
+                }
+                return true;
+            }
+            let changes = vec![(placed_pos, state)];
+            self.predict_place(&(placed_pos, changes), seq);
+            self.apply_predicted_item([placed_pos.x, placed_pos.y, placed_pos.z], stack);
+            self.with_hand(hand, Game::consume_held);
+            return true;
+        }
+        if let Some(plan) = self.tachyon_wrench_plan(stack, hit.pos, hit.face) {
+            let next_state = match plan {
+                wrench::WrenchPlan::RemoveBracket(s)
+                | wrench::WrenchPlan::Rotate { state: s, .. } => s,
+                wrench::WrenchPlan::Remove { replacement, .. } => replacement,
+            };
+            let at = horizon_core::position::BlockPos::new(hit.pos[0], hit.pos[1], hit.pos[2]);
+            self.predict_blocks(&vec![(at, next_state)], seq);
+            return true;
+        }
+        match self.tachyon_belt_connector_plan(stack, hit.pos) {
+            create_belt::BeltPlan::Ignored => false,
+            create_belt::BeltPlan::Message(_) => true,
+            create_belt::BeltPlan::Place(blocks) => {
+                let changes: Vec<_> = blocks
+                    .into_iter()
+                    .map(|(p, id)| (horizon_core::position::BlockPos::new(p[0], p[1], p[2]), id))
+                    .collect();
+                self.predict_blocks(&changes, seq);
+                if !self.creative {
+                    self.with_hand(hand, Game::consume_held);
+                }
+                true
+            }
+        }
     }
 
     /// Whether the block at `pos` is a machine a hopper fills and empties
@@ -3549,5 +3850,36 @@ mod tests {
             let [x, y, z] = d.offset().map(|c| c as f32);
             assert!((v - Vec3::new(x, y, z)).length() < 1e-5, "{d:?}: {v}");
         }
+    }
+
+    #[test]
+    fn pick_block_resolves_itemless_create_blocks() {
+        assert_eq!(tachyon_pick_block_item("create:belt"), Some("create:belt_connector"));
+        assert_eq!(tachyon_pick_block_item("create:powered_shaft"), Some("create:shaft"));
+        assert_eq!(
+            tachyon_pick_block_item("create:metal_girder_encased_shaft"),
+            Some("create:metal_girder")
+        );
+        assert_eq!(tachyon_pick_block_item("create:water_wheel_structure"), Some("create:large_water_wheel"));
+        assert_eq!(tachyon_pick_block_item("create:lit_blaze_burner"), Some("create:blaze_burner"));
+        assert_eq!(tachyon_pick_block_item("create:shaft"), None);
+    }
+
+    #[test]
+    fn belt_funnel_and_vanilla_guard_do_not_swallow_block_placement() {
+        assert!(belt_accepts_item("minecraft:wheat", false));
+        assert!(!belt_accepts_item("create:wrench", false));
+        assert!(!belt_accepts_item("create:belt_connector", false));
+        assert!(!belt_accepts_item("create:funnel", true));
+
+        assert!(funnel_accepts_use(None));
+        assert!(funnel_accepts_use(Some("create:wrench")));
+        assert!(!funnel_accepts_use(Some("create:basin")));
+
+        assert!(suppresses_vanilla_use("create:blaze_burner", None));
+        assert!(suppresses_vanilla_use("create:basin", Some(Part::Basin)));
+        assert!(suppresses_vanilla_use("create:depot", Some(Part::Depot)));
+        assert!(suppresses_vanilla_use("create:fluid_tank", Some(Part::Tank)));
+        assert!(!suppresses_vanilla_use("minecraft:stone", None));
     }
 }

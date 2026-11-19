@@ -50,6 +50,7 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     ("depot", "minecraft:end_portal_frame", 2.0, "minecraft:copper_block"),
     // ChuteBlock's five facings and four shapes, stored in stair properties.
     ("chute", "minecraft:polished_andesite_stairs", 3.0, "minecraft:netherite_block"),
+    ("smart_chute", "minecraft:polished_andesite", 3.0, "minecraft:netherite_block"),
     // Four ways, a whole block.
     ("mechanical_press", "minecraft:white_glazed_terracotta", 2.5, "minecraft:copper_block"),
     // HorizontalAxisKineticBlock's shaft is across the player's facing.
@@ -113,6 +114,14 @@ const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     // the shafted one its own axis (x or z) and ends.
     ("metal_girder", "minecraft:iron_chain", 5.0, "minecraft:netherite_block"),
     ("metal_girder_encased_shaft", "minecraft:iron_block", 5.0, "minecraft:netherite_block"),
+    // CuckooClockBlock's horizontal facing, with no vanilla block menu.
+    ("cuckoo_clock", "minecraft:white_glazed_terracotta", 2.0, "minecraft:oak_planks"),
+    (
+        "mysterious_cuckoo_clock",
+        "minecraft:white_glazed_terracotta",
+        2.0,
+        "minecraft:oak_planks",
+    ),
 ];
 
 /// Blocks drawn darker than Create's with their template's occlusion: Create's own `noOcclusion()`
@@ -132,6 +141,9 @@ const NOT_OCCLUDING: &[&str] = &[
     "mechanical_press",
     "mechanical_mixer",
     "chute",
+    "smart_chute",
+    "cuckoo_clock",
+    "mysterious_cuckoo_clock",
     "flywheel",
     "mechanical_saw",
     "mechanical_drill",
@@ -396,7 +408,7 @@ const TURNING: &[&str] = &[
 ];
 
 /// The version of [`fix`]: a port fixed by an older one is fixed again.
-const VERSION: &str = "14";
+const VERSION: &str = "15";
 const STAMP: &str = ".tachyon-fix";
 
 /// Fixes a Create ported into `dir` (`horizon-mods/create`) by an older
@@ -451,6 +463,8 @@ const RECIPES: &[&str] = &[
     "crafting/logistics/pulse_timer",
     "crafting/logistics/redstone_link",
     "crafting/kinetics/analog_lever",
+    "crafting/logistics/smart_chute",
+    "crafting/kinetics/cuckoo_clock",
 ];
 
 /// NeoForge's convention tags the restored recipes use, where the port has
@@ -473,19 +487,38 @@ pub fn restore_recipes(dir: &Path, jar: &Path) -> Result<(), String> {
     let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
     for recipe in RECIPES {
         let out = dir.join(format!("data/create/recipe/{recipe}.json"));
-        if out.is_file() {
+        let mut json = if let Some(existing) = read(&out) {
+            existing
+        } else {
+            let Ok(mut entry) = zip.by_name(&format!("data/create/recipe/{recipe}.json")) else {
+                continue;
+            };
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut bytes).map_err(|e| e.to_string())?;
+            let Ok(json) = serde_json::from_slice::<Value>(&bytes) else {
+                continue;
+            };
+            json
+        };
+        if horizon_port_pack::carry::result_before_1_20_5(&json) {
+            if out.is_file() {
+                let _ = fs::remove_file(&out);
+            }
             continue;
         }
-        let Ok(mut entry) = zip.by_name(&format!("data/create/recipe/{recipe}.json")) else {
-            continue;
-        };
-        let mut bytes = Vec::new();
-        std::io::Read::read_to_end(&mut entry, &mut bytes).map_err(|e| e.to_string())?;
-        let Ok(mut json) = serde_json::from_slice::<Value>(&bytes) else {
-            continue;
-        };
+        let before = json.clone();
+        horizon_port_pack::carry::renamed_ids(&mut json);
+        let mc_recipe = json["type"]
+            .as_str()
+            .is_some_and(|t| !t.contains(':') || t.starts_with("minecraft:"));
+        if mc_recipe && let Some(obj) = json.as_object_mut() {
+            obj.remove("neoforge:conditions");
+        }
+        horizon_port_pack::carry::upgrade_recipe(&mut json);
         porter_ingredients(&mut json);
-        write(&out, &json)?;
+        if !out.is_file() || json != before {
+            write(&out, &json)?;
+        }
     }
     for (tag, item) in CONVENTION_TAGS {
         let file = dir.join(format!("data/c/tags/item/{tag}.json"));
@@ -510,6 +543,11 @@ fn porter_ingredients(recipe: &mut Value) {
             return json!(format!("#{tag}"));
         }
         v.clone()
+    }
+    for field in ["ingredient", "base", "addition", "template"] {
+        if !recipe[field].is_null() {
+            recipe[field] = one(&recipe[field]);
+        }
     }
     if let Some(list) = recipe["ingredients"].as_array_mut() {
         for v in list {
@@ -601,6 +639,13 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         // AllShapes.SPOUT and the drain's 13-pixel tray.
         if *block == "spout" {
             declaration["shapes"] = json!({"default": [[0.0625, 0.0, 0.0625, 0.9375, 1.0, 0.9375]]});
+        }
+        if *block == "smart_chute" {
+            declaration["state_properties"] = json!({
+                "facing": {"type": "enum", "values": ["down", "north", "south", "west", "east"]},
+                "powered": {"type": "boolean"}
+            });
+            declaration["default_state"] = json!({"facing": "down", "powered": "false"});
         }
         if *block == "steam_engine" {
             declaration["shapes"] = json!({"default": [[0.125, 0.0, 0.125, 0.875, 1.0, 0.875]]});
@@ -781,6 +826,9 @@ pub fn fix(dir: &Path) -> Result<(), String> {
             // the anchor's emission; both lit flames emit regular fire's 12.
             declaration["properties"]["light"] = if lit { json!(12) } else { Value::Null };
         }
+        if declaration["item"].as_bool() != Some(false) {
+            let _ = fs::remove_file(dir.join(format!("data/create/horizon/item/{block}.json")));
+        }
         write(&file, &declaration)?;
     }
     // A turning block's chunk model: its particle alone.
@@ -893,7 +941,7 @@ pub fn fix(dir: &Path) -> Result<(), String> {
         goggles["template"] = json!("minecraft:leather_helmet");
         write(&file, &goggles)?;
     }
-    for block in ["fluid_valve", "smart_fluid_pipe", "steam_engine"] {
+    for block in ["fluid_valve", "smart_fluid_pipe", "steam_engine", "smart_chute"] {
         rekey(&blockstates.join(format!("{block}.json")), |k| {
             if k.contains("waterlogged=true") {
                 return None;
@@ -1548,6 +1596,158 @@ mod tests {
         fix(&dir).unwrap();
         assert_eq!(read(&states.join("lit_blaze_burner.json")), Some(lit));
         assert_eq!(read(&loot), Some(remapped));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn smart_chute_and_cuckoo_clocks_are_declared_and_recipes_upgraded() {
+        let dir = scratch("smart-chute");
+        let states = dir.join("assets/create/blockstates");
+        write(
+            &states.join("smart_chute.json"),
+            &json!({"variants": {
+                "facing=down,powered=false,waterlogged=false": {"model": "create:block/smart_chute/block"},
+                "facing=down,powered=false,waterlogged=true": {"model": "create:block/smart_chute/block"},
+                "facing=north,powered=true,waterlogged=false": {"model": "create:block/smart_chute/side"}
+            }}),
+        )
+        .unwrap();
+        fix(&dir).unwrap();
+        let declarations = dir.join("data/create/horizon/block");
+        let smart = read(&declarations.join("smart_chute.json")).unwrap();
+        assert_eq!(smart["template"], "minecraft:polished_andesite");
+        assert_eq!(smart["properties"]["occludes"], false);
+        assert_eq!(
+            smart["state_properties"]["facing"]["values"],
+            json!(["down", "north", "south", "west", "east"])
+        );
+        assert_eq!(smart["state_properties"]["powered"]["type"], "boolean");
+        assert_eq!(
+            smart["default_state"],
+            json!({"facing": "down", "powered": "false"})
+        );
+        let smart_state = read(&states.join("smart_chute.json")).unwrap();
+        assert!(
+            smart_state["variants"]
+                .as_object()
+                .unwrap()
+                .contains_key("facing=down,powered=false")
+        );
+        assert!(
+            !smart_state["variants"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .any(|k| k.contains("waterlogged"))
+        );
+        for clock in ["cuckoo_clock", "mysterious_cuckoo_clock"] {
+            let decl = read(&declarations.join(format!("{clock}.json"))).unwrap();
+            assert_eq!(decl["template"], "minecraft:white_glazed_terracotta");
+            assert_eq!(decl["properties"]["occludes"], false);
+        }
+
+        let jar = dir.join("create.jar");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&jar).unwrap());
+        let opts = zip::write::SimpleFileOptions::default();
+        zip.start_file("data/create/recipe/crafting/logistics/smart_chute.json", opts)
+            .unwrap();
+        std::io::Write::write_all(
+            &mut zip,
+            br#"{
+                "type": "minecraft:crafting_shaped",
+                "neoforge:conditions": [{"type": "neoforge:true"}],
+                "key": {"C": {"item": "minecraft:chain"}, "P": {"tag": "c:plates/brass"}},
+                "pattern": [" P ", " C "],
+                "result": {"id": "create:smart_chute", "count": 1}
+            }"#,
+        )
+        .unwrap();
+        zip.start_file("data/create/recipe/crafting/kinetics/cuckoo_clock.json", opts)
+            .unwrap();
+        std::io::Write::write_all(
+            &mut zip,
+            br#"{
+                "type": "minecraft:stonecutting",
+                "neoforge:conditions": [{"type": "neoforge:false"}],
+                "ingredient": {"item": "minecraft:chain"},
+                "result": {"id": "create:cuckoo_clock", "count": 1}
+            }"#,
+        )
+        .unwrap();
+        zip.start_file("data/create/recipe/crafting/kinetics/clutch.json", opts)
+            .unwrap();
+        std::io::Write::write_all(
+            &mut zip,
+            br#"{
+                "type": "minecraft:crafting_shapeless",
+                "ingredients": [{"item": "minecraft:redstone"}],
+                "result": {"item": "create:clutch"}
+            }"#,
+        )
+        .unwrap();
+        zip.finish().unwrap();
+
+        restore_recipes(&dir, &jar).unwrap();
+        let smart_recipe =
+            read(&dir.join("data/create/recipe/crafting/logistics/smart_chute.json")).unwrap();
+        assert!(smart_recipe.get("neoforge:conditions").is_none());
+        assert_eq!(smart_recipe["key"]["C"], "minecraft:iron_chain");
+        assert_eq!(smart_recipe["key"]["P"], "#c:plates/brass");
+
+        let clock_recipe =
+            read(&dir.join("data/create/recipe/crafting/kinetics/cuckoo_clock.json")).unwrap();
+        assert!(clock_recipe.get("neoforge:conditions").is_none());
+        assert_eq!(clock_recipe["ingredient"], "minecraft:iron_chain");
+
+        assert!(
+            !dir.join("data/create/recipe/crafting/kinetics/clutch.json")
+                .exists()
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fix_removes_colliding_block_item_declarations_and_restore_upgrades_existing_recipes() {
+        let dir = scratch("collision-and-existing-recipe");
+        write(
+            &dir.join("data/create/horizon/item/mechanical_saw.json"),
+            &json!({"template": "minecraft:stick"}),
+        )
+        .unwrap();
+        write(
+            &dir.join("data/create/horizon/item/lit_blaze_burner.json"),
+            &json!({"template": "minecraft:stick"}),
+        )
+        .unwrap();
+        write(
+            &dir.join("data/create/horizon/item/goggles.json"),
+            &json!({"template": "minecraft:leather_helmet"}),
+        )
+        .unwrap();
+        fix(&dir).unwrap();
+        assert!(!dir.join("data/create/horizon/item/mechanical_saw.json").exists());
+        assert!(dir.join("data/create/horizon/item/lit_blaze_burner.json").exists());
+        assert!(dir.join("data/create/horizon/item/goggles.json").exists());
+
+        let existing_recipe = dir.join("data/create/recipe/crafting/kinetics/mechanical_saw.json");
+        write(
+            &existing_recipe,
+            &json!({
+                "type": "minecraft:stonecutting",
+                "neoforge:conditions": [{"type": "neoforge:true"}],
+                "ingredient": {"item": "minecraft:chain"},
+                "result": {"id": "create:mechanical_saw", "count": 1}
+            }),
+        )
+        .unwrap();
+        let jar = dir.join("empty.jar");
+        zip::ZipWriter::new(fs::File::create(&jar).unwrap())
+            .finish()
+            .unwrap();
+        restore_recipes(&dir, &jar).unwrap();
+        let cleaned = read(&existing_recipe).unwrap();
+        assert!(cleaned.get("neoforge:conditions").is_none());
+        assert_eq!(cleaned["ingredient"], "minecraft:iron_chain");
         let _ = fs::remove_dir_all(&dir);
     }
 }

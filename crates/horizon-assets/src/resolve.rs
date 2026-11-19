@@ -40,6 +40,15 @@ pub enum ResolvedLoader {
         /// Objects the model chain's `visibility` hides.
         hidden: BTreeSet<String>,
     },
+    /// `neoforge:separate_transforms`: resolved base and per-display overrides.
+    SeparateTransforms {
+        base: Option<Box<ResolvedCuboidModel>>,
+        perspectives: BTreeMap<String, ResolvedCuboidModel>,
+    },
+    /// `neoforge:item_layers` / `forge:item_layers`.
+    ItemLayers,
+    /// `neoforge:empty` / `forge:empty`.
+    Empty,
 }
 #[derive(Clone, Debug)]
 pub struct ResolvedCuboidModel {
@@ -253,12 +262,19 @@ impl ModelLibrary {
             .find_map(|m| m.gui_light)
             .unwrap_or(GuiLight::Side);
         let render_type = chain.iter().find_map(|m| m.render_type.clone());
-        let geometry = chain.iter().find(|m| m.elements.is_some()).map(Arc::clone);
-        let generated = chain
-            .iter()
-            .zip(&names)
-            .find(|(m, name)| m.elements.is_some() || *name == GENERATED_MODEL)
-            .is_some_and(|(_, name)| name == GENERATED_MODEL);
+        let leaf_loader = chain.iter().find_map(|m| m.loader.as_ref());
+        let (geometry, generated) = if matches!(leaf_loader, Some(Loader::Empty)) {
+            (None, false)
+        } else {
+            let geometry = chain.iter().find(|m| m.elements.is_some()).map(Arc::clone);
+            let generated = chain
+                .iter()
+                .zip(&names)
+                .find(|(m, name)| m.elements.is_some() || *name == GENERATED_MODEL)
+                .is_some_and(|(_, name)| name == GENERATED_MODEL)
+                || (geometry.is_none() && matches!(leaf_loader, Some(Loader::ItemLayers)));
+            (geometry, generated)
+        };
         let display = ItemTransforms {
             contexts: std::array::from_fn(|index| {
                 chain
@@ -280,7 +296,7 @@ impl ModelLibrary {
         if let Some(child) = child {
             slots.extend(child.iter().map(|(k, v)| (k.clone(), v)));
         }
-        let loader = match chain.iter().find_map(|m| m.loader.as_ref()) {
+        let loader = match leaf_loader {
             Some(Loader::Composite {
                 children,
                 visibility,
@@ -332,7 +348,41 @@ impl ModelLibrary {
                         .collect(),
                 })
             }
-            Some(Loader::Unknown(_)) | None => None,
+            Some(Loader::SeparateTransforms { base, perspectives }) => {
+                let inherited: BTreeMap<String, TextureSlot> = slots
+                    .iter()
+                    .map(|(k, v)| (k.clone(), (*v).clone()))
+                    .collect();
+                let resolve_sub = |sub: &Arc<CuboidModel>, suffix: &str| {
+                    self.resolve_chain(
+                        vec![Arc::clone(sub)],
+                        vec![format!("{}#{suffix}", names[0])],
+                        sub.parent.clone(),
+                        &inherited,
+                        None,
+                        depth + 1,
+                    )
+                };
+                let base = base
+                    .as_ref()
+                    .map(|sub| resolve_sub(sub, "base").map(Box::new))
+                    .transpose()?;
+                let mut resolved_perspectives = BTreeMap::new();
+                for (key, sub) in perspectives {
+                    resolved_perspectives.insert(key.clone(), resolve_sub(sub, key)?);
+                }
+                Some(ResolvedLoader::SeparateTransforms {
+                    base,
+                    perspectives: resolved_perspectives,
+                })
+            }
+            Some(Loader::ItemLayers) => Some(ResolvedLoader::ItemLayers),
+            Some(Loader::Empty) => Some(ResolvedLoader::Empty),
+            Some(Loader::Unknown(name)) => {
+                log::warn!("Horizon: unsupported model loader `{name}` in `{}`", names[0]);
+                None
+            }
+            None => None,
         };
         let mut textures = BTreeMap::<String, Material>::new();
         let mut unresolved_textures = BTreeSet::<String>::new();
@@ -367,6 +417,30 @@ impl ModelLibrary {
                 None => {
                     unresolved_textures.extend(path.into_iter().map(str::to_owned));
                 }
+            }
+        }
+        if !textures.contains_key("particle") && !unresolved_textures.contains("particle") {
+            let fallback = match &loader {
+                Some(ResolvedLoader::ItemLayers) => textures.get("layer0").cloned(),
+                Some(ResolvedLoader::SeparateTransforms { base, perspectives }) => base
+                    .as_deref()
+                    .and_then(|b| b.textures.get("particle").cloned())
+                    .or_else(|| {
+                        ["gui", "fixed", "ground"]
+                            .into_iter()
+                            .find_map(|k| perspectives.get(k).and_then(|p| p.textures.get("particle")))
+                            .cloned()
+                    })
+                    .or_else(|| {
+                        perspectives
+                            .values()
+                            .find_map(|p| p.textures.get("particle"))
+                            .cloned()
+                    }),
+                _ => None,
+            };
+            if let Some(material) = fallback {
+                textures.insert("particle".to_owned(), material);
             }
         }
         Ok(ResolvedCuboidModel {

@@ -227,4 +227,23 @@ mod tests {
             assert!(!touch.poll_frame().sneak_toggle);
         }
     }
+
+    #[test]
+    fn sneak_mapping_tracks_held_sneak_action_beyond_physical_shift() {
+        use horizon_client::{actions::Action, held::HeldKeys};
+
+        let mut keys = HeldKeys::default();
+        assert!(!keys.held(Action::Sneak));
+        let mapped = Action::Sneak.key().expect("sneak action key");
+        assert!(keys.insert(mapped));
+        assert!(keys.held(Action::Sneak));
+        assert!(keys.remove(&mapped));
+        assert!(!keys.held(Action::Sneak));
+
+        let mut touch = TouchInput::default();
+        assert!(!touch.held(SHIFT, true));
+        edge(&mut touch, Source::Touch(Button::RightStick), SHIFT, true, 1);
+        assert!(touch.held(SHIFT, true));
+        assert!(!touch.held(SHIFT, false));
+    }
 }

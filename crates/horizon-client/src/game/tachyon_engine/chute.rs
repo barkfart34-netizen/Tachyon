@@ -311,36 +311,20 @@ fn with_part(registry: &BlockRegistry, state: BlockStateId, part: Part) -> Block
     registry.id(&next).unwrap_or(state)
 }
 
-/// `ChuteBlock.getStateForPlacement`, using stair properties only as
-/// storage. The template's stair behaviour is removed by mod_content.rs.
-pub(in crate::game) fn place<L: LevelAccess + ?Sized>(
-    registry: &BlockRegistry,
-    b: &Behaviours,
-    level: &mut L,
-    ticks: &mut Ticks,
-    ctx: &PlaceContext,
-) -> PlaceOutcome {
-    if ctx.item != "create:chute" {
-        return b.place_block(level, ticks, ctx);
-    }
-    let Some((proposed, _)) = b.placement_state(level, ticks, ctx) else {
-        return PlaceOutcome::Failed;
-    };
+fn chute_facing_for(ctx: &PlaceContext) -> Dir {
     let o = ctx.face.normal();
     let face = Dir::ALL.into_iter().find(|d| d.offset() == o).unwrap_or(Dir::Down);
-    let facing = if !ctx.sneaking && face.axis() != Axis::Y { face } else { Dir::Down };
-    let p = [proposed.x, proposed.y, proposed.z];
-    if neighbours(p, facing).any(|q| !level.is_loaded(BlockPos::new(q[0], q[1], q[2]))) {
-        return PlaceOutcome::Failed;
-    }
-    // ChuteBlock.canSurvive: no chute directly below a diagonal chute.
-    if matches!(kind(registry, level.block_state(proposed.offset(0, 1, 0))), Some(Part::Chute(d, _)) if d != Dir::Down)
-    {
-        return PlaceOutcome::Failed;
-    }
-    let before = level.block_state(proposed);
-    let outcome = b.place_block(level, ticks, ctx);
-    let PlaceOutcome::Placed { pos, state } = outcome else { return outcome };
+    if !ctx.sneaking && face.axis() != Axis::Y { face } else { Dir::Down }
+}
+
+fn resolved_chute_state<L: LevelAccess + ?Sized>(
+    registry: &BlockRegistry,
+    level: &L,
+    pos: BlockPos,
+    state: BlockStateId,
+    before: BlockStateId,
+    facing: Dir,
+) -> BlockStateId {
     let p = [pos.x, pos.y, pos.z];
     let part = updated(p, Part::Chute(facing, ChuteShape::Normal), |q| {
         kind(registry, level.block_state(BlockPos::new(q[0], q[1], q[2])))
@@ -355,6 +339,55 @@ pub(in crate::game) fn place<L: LevelAccess + ?Sized>(
         wet.properties.insert("waterlogged".into(), "true".into());
         placed = registry.id(&wet).unwrap_or(placed);
     }
+    placed
+}
+
+/// Validates chute placement (`b.placement_state`, loaded neighbours, and `ChuteBlock.canSurvive`
+/// diagonal-above guard) and returns the expected `(pos, resolved_state)` without mutating world.
+pub(super) fn preview_place<L: LevelAccess + ?Sized>(
+    registry: &BlockRegistry,
+    b: &Behaviours,
+    level: &mut L,
+    ticks: &mut Ticks,
+    ctx: &PlaceContext,
+) -> Option<(BlockPos, BlockStateId)> {
+    let (proposed, state) = b.placement_state(level, ticks, ctx)?;
+    let facing = chute_facing_for(ctx);
+    let p = [proposed.x, proposed.y, proposed.z];
+    if neighbours(p, facing).any(|q| !level.is_loaded(BlockPos::new(q[0], q[1], q[2]))) {
+        return None;
+    }
+    // ChuteBlock.canSurvive: no chute directly below a diagonal chute.
+    if matches!(
+        kind(registry, level.block_state(proposed.offset(0, 1, 0))),
+        Some(Part::Chute(d, _)) if d != Dir::Down
+    ) {
+        return None;
+    }
+    let before = level.block_state(proposed);
+    Some((proposed, resolved_chute_state(registry, level, proposed, state, before, facing)))
+}
+
+/// `ChuteBlock.getStateForPlacement`, using stair properties only as
+/// storage. The template's stair behaviour is removed by mod_content.rs.
+pub(in crate::game) fn place<L: LevelAccess + ?Sized>(
+    registry: &BlockRegistry,
+    b: &Behaviours,
+    level: &mut L,
+    ticks: &mut Ticks,
+    ctx: &PlaceContext,
+) -> PlaceOutcome {
+    if ctx.item != "create:chute" {
+        return b.place_block(level, ticks, ctx);
+    }
+    let Some((proposed, _)) = preview_place(registry, b, level, ticks, ctx) else {
+        return PlaceOutcome::Failed;
+    };
+    let facing = chute_facing_for(ctx);
+    let before = level.block_state(proposed);
+    let outcome = b.place_block(level, ticks, ctx);
+    let PlaceOutcome::Placed { pos, state } = outcome else { return outcome };
+    let placed = resolved_chute_state(registry, level, pos, state, before, facing);
     if placed != state {
         b.set_block(level, ticks, pos, placed, flags::UPDATE_ALL);
     }

@@ -9,6 +9,11 @@
 use super::water_wheel::replaceable;
 use horizon_client::hud::HudBatch;
 use horizon_client::items::ItemStack;
+use horizon_core::{
+    geometry::{Direction, Vec3},
+    position::BlockPos,
+};
+use horizon_world::{level::PlaceContext, registry::BlockStateId};
 
 pub(super) const SHAFT: &str = "create:shaft";
 const COG: &str = "create:cogwheel";
@@ -393,6 +398,45 @@ impl super::super::Game<'_> {
         })
     }
 
+    /// Computes and validates the assist placement (resolving `BlockItem -> block`,
+    /// `state_for_placement`, `waterlogged`, `can_survive`, `is_unobstructed`).
+    pub(super) fn tachyon_assist_plan(
+        &mut self,
+        stack: &ItemStack,
+        pos: [i32; 3],
+    ) -> Option<(PlaceContext, BlockPos, BlockStateId, &'static str)> {
+        if !self.may_build() || self.block_action_restricted(pos) {
+            return None;
+        }
+        let item = stack.item.to_string();
+        let offer = self.tachyon_assist_offer(&item)?;
+        // The ray is the local player's: a click it doesn't agree with places as usual.
+        if offer.pos != pos || self.block_action_restricted(offer.cell) {
+            return None;
+        }
+        let axis_name = ["x", "y", "z"][offer.axis];
+        let face = [Direction::East, Direction::Up, Direction::South][offer.axis];
+        let clicked_pos = BlockPos::new(offer.cell[0], offer.cell[1], offer.cell[2]);
+        let ctx = PlaceContext {
+            clicked_pos,
+            face,
+            hit: Vec3::new(
+                f64::from(offer.cell[0]) + 0.5,
+                f64::from(offer.cell[1]) + 0.5,
+                f64::from(offer.cell[2]) + 0.5,
+            ),
+            inside: false,
+            yaw: self.yaw,
+            pitch: self.pitch,
+            sneaking: self.tachyon_sneaking(),
+            item,
+            can_use_game_master_blocks: self.can_use_game_master_blocks(),
+        };
+        let (placed_pos, state, _) =
+            self.tachyon_validated_block_state(&ctx, Some(axis_name))?;
+        Some((ctx, placed_pos, state, axis_name))
+    }
+
     /// A shaft or cogwheel used on its kind goes where the helper shows.
     pub(in crate::game) fn tachyon_assist_use(
         &mut self,
@@ -400,34 +444,39 @@ impl super::super::Game<'_> {
         pos: [i32; 3],
         claimed: &mut bool,
     ) {
-        if *claimed || !self.may_build() || self.block_action_restricted(pos) {
+        if *claimed {
             return;
         }
-        let item = stack.item.to_string();
-        let Some(offer) = self.tachyon_assist_offer(&item) else {
+        let Some((ctx, _, _, axis_name)) = self.tachyon_assist_plan(stack, pos) else {
             return;
         };
-        // The ray is the local player's: a click it doesn't agree with places as usual.
-        if offer.pos != pos || self.block_action_restricted(offer.cell) {
-            return;
-        }
-        let registry = &self.pack.assets.registry;
-        let Some(id) = registry.default_state(&item).and_then(|default| {
-            let mut state = registry.state(default)?.clone();
-            state
-                .properties
-                .insert("axis".into(), ["x", "y", "z"][offer.axis].into());
-            registry.id(&state)
-        }) else {
-            return;
-        };
-        let dimension = self.native_dimension();
-        if self.native_set_block(dimension, offer.cell, id, 3) {
-            if !self.creative {
-                self.native_take_items(&item, 1);
-            }
+        if self.block_place_canceled(stack, &ctx) {
+            self.use_failed = true;
+            self.guest_inventory_resend = true;
             *claimed = true;
+            return;
         }
+        let Some((placed_pos, placed_state)) =
+            self.tachyon_place_validated_block(&ctx, Some(axis_name))
+        else {
+            return;
+        };
+        let target = [placed_pos.x, placed_pos.y, placed_pos.z];
+        let state = self
+            .apply_item_block_state(target, placed_state, stack)
+            .unwrap_or(placed_state);
+        if self.world.block_entities.get(&(target[0], target[1], target[2])).is_some() {
+            self.apply_placed_item(target, stack, self.can_use_game_master_blocks());
+        }
+        self.award_stat("used", &stack.item, 1);
+        self.trigger_block("minecraft:placed_block", target, stack);
+        self.native_place_block(stack, target, state);
+        if self.held().is_some_and(|h| &*h.item == &*stack.item) {
+            self.consume_held();
+        } else if !self.creative {
+            self.native_take_items(&stack.item, 1);
+        }
+        *claimed = true;
     }
 
     pub(in crate::game) fn tachyon_assist_hud(&mut self, batch: &mut HudBatch) {

@@ -1553,6 +1553,22 @@ impl GameLevel<'_> {
     /// `Some(Some(state))` to choose a state, `Some(None)` to refuse, or
     /// `None` to leave the answer to the next mod or vanilla.
     /// Authoritative servers only. 76.
+    /// Create / Tachyon's client-and-server placement state rules (`getStateForPlacement`).
+    pub(super) fn tachyon_state_for_placement(
+        &self,
+        state: BlockStateId,
+        context: &PlacementContext,
+        answer: &mut Option<Option<BlockStateId>>,
+    ) {
+        self.tachyon_water_wheel_place(state, context, answer);
+        self.tachyon_clock_place(state, context, answer);
+        self.tachyon_saw_place(state, context, answer);
+        self.tachyon_drill_place(state, context, answer);
+        self.tachyon_deployer_place(state, context, answer);
+        self.tachyon_fluid_place(state, context, answer);
+        self.tachyon_redstone_place(state, context, answer);
+    }
+
     #[inline(always)]
     #[allow(clippy::option_option)]
     pub(super) fn native_state_for_placement(
@@ -1563,13 +1579,7 @@ impl GameLevel<'_> {
         fluid: FluidState,
         answer: &mut Option<Option<BlockStateId>>,
     ) {
-        self.tachyon_water_wheel_place(state, context, answer);
-        self.tachyon_clock_place(state, context, answer);
-        self.tachyon_saw_place(state, context, answer);
-        self.tachyon_drill_place(state, context, answer);
-        self.tachyon_deployer_place(state, context, answer);
-        self.tachyon_fluid_place(state, context, answer);
-        self.tachyon_redstone_place(state, context, answer);
+        self.tachyon_state_for_placement(state, context, answer);
         mod_api::dispatch_state_for_placement(
             self,
             mod_api::mods(),
@@ -4816,6 +4826,7 @@ impl Game<'_> {
         stack: &mut Option<ItemStack>,
     ) {
         mod_api::dispatch_block_clone_item(self, mod_api::mods(), block, pos, state, stack);
+        self.tachyon_block_clone_item(block, stack);
     }
 
     /// A server player picked an item from a block or entity, before it enters

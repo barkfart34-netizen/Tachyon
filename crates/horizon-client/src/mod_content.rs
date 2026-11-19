@@ -1501,12 +1501,29 @@ impl<'a> Plan<'a> {
                         if !b.decl.item && b.wall_of.is_none() {
                             v.set("item", J::Str("minecraft:air".into()));
                         }
-                        // Create's ChuteBlock uses stair properties as state
-                        // storage, not StairBlock's placement or corners.
-                        if b.decl.id == "create:chute"
-                            && let Some(J::Arr(classes)) = v.get_mut("class")
-                        {
-                            classes.retain(|c| !matches!(c, J::Str(s) if s.ends_with("StairBlock")));
+                        // Ported Create blocks reuse vanilla templates for state/shape
+                        // compatibility; strip vanilla classes whose click, placement, or tick
+                        // hooks interfere with Create's own behaviour.
+                        if let Some(J::Arr(classes)) = v.get_mut("class") {
+                            let strip: &[&str] = match b.decl.id.as_str() {
+                                "create:chute" => &["StairBlock"],
+                                "create:smart_fluid_pipe" => &[
+                                    "GrindstoneBlock",
+                                    "FaceAttachedHorizontalDirectionalBlock",
+                                ],
+                                "create:steam_engine" => &["GrindstoneBlock"],
+                                "create:depot" => &["EndPortalFrameBlock"],
+                                "create:basin" => &["ComposterBlock"],
+                                "create:blaze_burner" | "create:lit_blaze_burner" => {
+                                    &["RespawnAnchorBlock"]
+                                }
+                                _ => &[],
+                            };
+                            if !strip.is_empty() {
+                                classes.retain(|c| {
+                                    !matches!(c, J::Str(s) if strip.iter().any(|bad| s.ends_with(bad)))
+                                });
+                            }
                         }
                         // `SignBlock.getWoodType`: the wood's name is what
                         // the editor reads of it.

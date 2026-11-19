@@ -86,6 +86,15 @@ pub enum Loader {
         shade_quads: Option<bool>,
         mtl_override: Option<String>,
     },
+    /// `neoforge:separate_transforms`: base model plus per-display-context overrides.
+    SeparateTransforms {
+        base: Option<Arc<CuboidModel>>,
+        perspectives: BTreeMap<String, Arc<CuboidModel>>,
+    },
+    /// `neoforge:item_layers` / `forge:item_layers`: layered 2D item textures.
+    ItemLayers,
+    /// `neoforge:empty` / `forge:empty`: intentional geometry-free model.
+    Empty,
     /// A loader this decoder does not know: it adds no geometry.
     Unknown(String),
 }
@@ -296,10 +305,21 @@ impl CuboidModel {
     /// The models this one needs besides itself: its parent and its composite children's parents.
     pub fn referenced_models(&self) -> Vec<String> {
         let mut names: Vec<String> = self.parent.iter().cloned().collect();
-        if let Some(Loader::Composite { children, .. }) = &self.loader {
-            for (_, child) in children {
-                names.extend(child.referenced_models());
+        match &self.loader {
+            Some(Loader::Composite { children, .. }) => {
+                for (_, child) in children {
+                    names.extend(child.referenced_models());
+                }
             }
+            Some(Loader::SeparateTransforms { base, perspectives }) => {
+                if let Some(base) = base {
+                    names.extend(base.referenced_models());
+                }
+                for child in perspectives.values() {
+                    names.extend(child.referenced_models());
+                }
+            }
+            _ => {}
         }
         names
     }
@@ -317,7 +337,7 @@ impl Loader {
     fn decode(raw: &RawValue, obj: &Object<'_>) -> Result<Self> {
         let name = primitive_string(raw)?;
         match name.as_str() {
-            "neoforge:composite" => {
+            "neoforge:composite" | "forge:composite" => {
                 let mut children = Vec::new();
                 if let Some(raw) = obj.get("children") {
                     for (name, raw) in ordered_object(raw)? {
@@ -329,7 +349,7 @@ impl Loader {
                     visibility: visibility(obj)?,
                 })
             }
-            "neoforge:obj" => {
+            "neoforge:obj" | "forge:obj" => {
                 let optional = |key: &str| {
                     obj.get(key)
                         .filter(|raw| raw.get() != "null")
@@ -349,6 +369,24 @@ impl Loader {
                         .transpose()?,
                 })
             }
+            "neoforge:separate_transforms"
+            | "forge:separate_transforms"
+            | "forge:separate-transforms" => {
+                let base = obj
+                    .get("base")
+                    .filter(|raw| raw.get() != "null")
+                    .map(|raw| CuboidModel::decode(raw).map(Arc::new))
+                    .transpose()?;
+                let mut perspectives = BTreeMap::new();
+                if let Some(raw) = obj.get("perspectives").filter(|raw| raw.get() != "null") {
+                    for (key, raw) in object(raw)? {
+                        perspectives.insert(key, Arc::new(CuboidModel::decode(raw)?));
+                    }
+                }
+                Ok(Self::SeparateTransforms { base, perspectives })
+            }
+            "neoforge:item_layers" | "forge:item_layers" => Ok(Self::ItemLayers),
+            "neoforge:empty" | "forge:empty" => Ok(Self::Empty),
             _ => Ok(Self::Unknown(name)),
         }
     }

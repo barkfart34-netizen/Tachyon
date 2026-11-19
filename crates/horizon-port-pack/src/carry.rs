@@ -70,7 +70,7 @@ pub fn renamed_in_1_21(name: &str) -> Option<String> {
 
 /// A recipe result naming its item as `item`, as before 1.20.5; 26.3 reads only `id`
 /// (or a bare id) and skips the recipe.
-fn result_before_1_20_5(recipe: &Value) -> bool {
+pub fn result_before_1_20_5(recipe: &Value) -> bool {
     let r = &recipe["result"];
     r.get("item").is_some() && r.get("id").is_none()
 }
@@ -174,7 +174,8 @@ const TEMPLATES: &[(&str, &str)] = &[
     ("facing", "minecraft:carved_pumpkin"),
     ("facing,lit", "minecraft:furnace"),
     ("lit", "minecraft:redstone_lamp"),
-    ("waterlogged", "minecraft:chain"),
+    ("waterlogged", "minecraft:iron_chain"),
+    ("axis,waterlogged", "minecraft:iron_chain"),
     ("age", "minecraft:wheat"),
     ("distance,persistent,waterlogged", "minecraft:oak_leaves"),
     ("stage", "minecraft:oak_sapling"),
@@ -1104,14 +1105,13 @@ pub fn carry(
                     tags_used(&recipe, &mut convention);
                     let renamed = renamed_ids(&mut recipe);
                     // Kept, so its conditions passed (`recipe_off`): 26.3 has no use for them.
-                    if recipe["type"]
+                    let stripped_conditions = recipe["type"]
                         .as_str()
                         .is_some_and(|t| t.starts_with("minecraft:"))
-                    {
-                        recipe
+                        && recipe
                             .as_object_mut()
-                            .map(|o| o.remove("neoforge:conditions"));
-                    }
+                            .and_then(|o| o.remove("neoforge:conditions"))
+                            .is_some();
                     let old_result = result_before_1_20_5(&recipe);
                     let upgraded = !old_result && upgrade_recipe(&mut recipe);
                     if upgraded {
@@ -1120,7 +1120,7 @@ pub fn carry(
                         report.recipes_old_result += usize::from(old_result);
                         report.recipes_kept.push(file.to_owned());
                     }
-                    if upgraded || renamed {
+                    if upgraded || renamed || stripped_conditions {
                         bytes = serde_json::to_vec_pretty(&recipe).unwrap_or(bytes);
                     }
                 }
@@ -1485,7 +1485,7 @@ pub fn carry(
         // Without the oracle's classes an armour piece is known by its vanilla armour tag:
         // worn in its slot, one to a stack.
         let armor = tagged_armor(&inside);
-        for m in item_models.iter().filter(|m| !blockstates.contains_key(*m)) {
+        for m in item_models.iter().filter(|m| !report.blocks.contains_key(*m)) {
             let mut v = json!({"template": "minecraft:stick"});
             if let Some(slot) = armor.get(&format!("{id}:{m}")) {
                 v["max_stack_size"] = json!(1);
@@ -3084,5 +3084,125 @@ mod tests {
                 "dirt": "minecraft:block/gravel", "side": "minecraft:block/gravel",
                 "bottom": "minecraft:block/gravel", "top": "m:block/raked"}})
         );
+    }
+
+    #[test]
+    fn waterlogged_chain_templates_use_26_3_iron_chain() {
+        assert_eq!(
+            template("iron_rod", &BTreeSet::from(["waterlogged".to_owned()])),
+            Some("minecraft:iron_chain")
+        );
+        assert_eq!(
+            template(
+                "brass_chain",
+                &BTreeSet::from(["axis".to_owned(), "waterlogged".to_owned()])
+            ),
+            Some("minecraft:iron_chain")
+        );
+    }
+
+    #[test]
+    fn renamed_ids_rewrites_chain_to_iron_chain() {
+        let mut recipe = json!({
+            "type": "minecraft:crafting_shaped",
+            "key": {"#": "minecraft:chain", "I": {"item": "minecraft:iron_nugget"}},
+            "result": {"id": "minecraft:chain"}
+        });
+        assert!(renamed_ids(&mut recipe));
+        assert_eq!(
+            recipe,
+            json!({
+                "type": "minecraft:crafting_shaped",
+                "key": {"#": "minecraft:iron_chain", "I": {"item": "minecraft:iron_nugget"}},
+                "result": {"id": "minecraft:iron_chain"}
+            })
+        );
+    }
+
+    #[test]
+    fn unmapped_blockstate_with_item_model_keeps_its_item() {
+        let dir = std::env::temp_dir().join(format!(
+            "horizon-port-pack-unmapped-item-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let jar = dir.join("gizmo-1.0.jar");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&jar).unwrap());
+        for (name, text) in [
+            (
+                "META-INF/neoforge.mods.toml",
+                "license = \"MIT\"\n[[mods]]\nmodId = \"gizmo\"\nversion = \"1.0\"\n",
+            ),
+            (
+                "assets/gizmo/blockstates/weird_lamp.json",
+                r#"{"variants": {"charge=1": {"model": "gizmo:block/weird_lamp"}}}"#,
+            ),
+            (
+                "assets/gizmo/models/item/weird_lamp.json",
+                r#"{"parent": "gizmo:block/weird_lamp"}"#,
+            ),
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(text.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        let info = crate::jar::read(&jar).unwrap();
+        let out = dir.join("work/mods/gizmo");
+        let pack = Pack {
+            loaded: &|_| true,
+            mods: &|_| false,
+        };
+        let report = carry(&jar, &info, &out, None, &|_| true, &pack, &BTreeMap::new()).unwrap();
+        assert!(report.blocks.is_empty());
+        assert_eq!(report.blocks_unknown.keys().collect::<Vec<_>>(), ["weird_lamp"]);
+        assert_eq!(report.items, 1);
+        assert!(
+            out.join("carry/assets/gizmo/items/weird_lamp.json")
+                .exists()
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn conditional_recipe_writes_stripped_conditions_even_without_upgrade_or_rename() {
+        let dir = std::env::temp_dir().join(format!(
+            "horizon-port-pack-cond-only-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let jar = dir.join("cond-1.0.jar");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&jar).unwrap());
+        for (name, text) in [
+            (
+                "META-INF/neoforge.mods.toml",
+                "license = \"MIT\"\n[[mods]]\nmodId = \"cond\"\nversion = \"1.0\"\n",
+            ),
+            (
+                "data/cond/recipe/already_flat.json",
+                r#"{"type":"minecraft:crafting_shapeless","neoforge:conditions":[{"type":"neoforge:true"}],"ingredients":["minecraft:stick"],"result":{"id":"minecraft:torch"}}"#,
+            ),
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(text.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        let info = crate::jar::read(&jar).unwrap();
+        let out = dir.join("work/mods/cond");
+        let pack = Pack {
+            loaded: &|_| true,
+            mods: &|_| false,
+        };
+        carry(&jar, &info, &out, None, &|_| true, &pack, &BTreeMap::new()).unwrap();
+        let recipe: Value = serde_json::from_slice(
+            &fs::read(out.join("carry/data/cond/recipe/already_flat.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(recipe.get("neoforge:conditions").is_none());
+        assert_eq!(recipe["ingredients"], json!(["minecraft:stick"]));
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -48,7 +48,51 @@ fn item_of(value: &str) -> Option<&'static str> {
         .map(|(item, _)| *item)
 }
 
+pub(super) enum BracketPlan {
+    Unchanged,
+    Replace {
+        item: &'static str,
+        old: Option<&'static str>,
+        next: String,
+        state: horizon_world::registry::BlockStateId,
+    },
+}
+
 impl super::super::Game<'_> {
+    pub(super) fn tachyon_bracket_plan(
+        &self,
+        stack: &ItemStack,
+        pos: [i32; 3],
+        face: [i32; 3],
+    ) -> Option<BracketPlan> {
+        let (item, material) = ITEMS.iter().find(|(item, _)| *item == &*stack.item)?;
+        if !self.may_build() || self.block_action_restricted(pos) {
+            return None;
+        }
+        if !BRACKETED.contains(&self.native_block(pos).as_str()) {
+            return None;
+        }
+        let axis = self
+            .native_block_property(pos, "axis")
+            .as_deref()
+            .and_then(Axis::parse);
+        let next = axis.and_then(|axis| value(material, axis, face))?;
+        let now = self.native_block_property(pos, "bracket");
+        if now.as_deref() == Some(next.as_str()) {
+            return Some(BracketPlan::Unchanged);
+        }
+        let cur = self.world.block(pos[0], pos[1], pos[2]);
+        let mut parsed = self.pack.assets.registry.state(cur)?.clone();
+        parsed.properties.insert("bracket".into(), next.clone());
+        let state = self.pack.assets.registry.id(&parsed)?;
+        Some(BracketPlan::Replace {
+            item,
+            old: now.as_deref().and_then(item_of),
+            next,
+            state,
+        })
+    }
+
     /// A bracket used on a shaft or cogwheel goes on (the old one back to
     /// the player).
     pub(in crate::game) fn tachyon_bracket_use(
@@ -58,31 +102,20 @@ impl super::super::Game<'_> {
         face: [i32; 3],
         claimed: &mut bool,
     ) {
-        let Some((item, material)) = ITEMS.iter().find(|(item, _)| *item == &*stack.item) else {
-            return;
-        };
-        if *claimed || !self.may_build() || self.block_action_restricted(pos) {
+        if *claimed {
             return;
         }
-        if !BRACKETED.contains(&self.native_block(pos).as_str()) {
-            return;
-        }
-        let axis = self
-            .native_block_property(pos, "axis")
-            .as_deref()
-            .and_then(Axis::parse);
-        let Some(next) = axis.and_then(|axis| value(material, axis, face)) else {
+        let Some(plan) = self.tachyon_bracket_plan(stack, pos, face) else {
             return;
         };
-        let now = self.native_block_property(pos, "bracket");
         *claimed = true;
-        if now.as_deref() == Some(next.as_str()) {
+        let BracketPlan::Replace { item, old, next, .. } = plan else {
             return;
-        }
+        };
         self.native_set_block_property(pos, "bracket", &next);
         if !self.creative {
             self.native_take_items(item, 1);
-            if let Some(old) = now.as_deref().and_then(item_of) {
+            if let Some(old) = old {
                 self.native_give_items(old, 1);
             }
         }

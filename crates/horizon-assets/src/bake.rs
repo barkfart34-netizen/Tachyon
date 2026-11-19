@@ -283,7 +283,102 @@ fn bake_into(
             shade,
             hidden,
         }) => bake_obj(model, obj, *flip_v, *shade, hidden, transform, output)?,
-        Some(ResolvedLoader::Obj { model: None, .. }) | None => {}
+        Some(ResolvedLoader::SeparateTransforms { base, perspectives }) => {
+            let baked_base = match base {
+                Some(base) => bake_child_or_generated(base, transform, skip_flat, output)?,
+                None => false,
+            };
+            if !baked_base {
+                let mut baked = false;
+                for key in ["gui", "fixed", "ground"] {
+                    if let Some(child) = perspectives.get(key)
+                        && bake_child_or_generated(child, transform, skip_flat, output)?
+                    {
+                        baked = true;
+                        break;
+                    }
+                }
+                if !baked {
+                    for (key, child) in perspectives {
+                        if !matches!(key.as_str(), "gui" | "fixed" | "ground")
+                            && bake_child_or_generated(child, transform, skip_flat, output)?
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        Some(ResolvedLoader::ItemLayers) => {
+            if model.elements().is_empty() {
+                bake_layer_quads(model, transform, render_type, output)?;
+            }
+        }
+        Some(ResolvedLoader::Obj { model: None, .. } | ResolvedLoader::Empty) | None => {}
+    }
+    Ok(())
+}
+
+fn bake_child_or_generated(
+    model: &ResolvedCuboidModel,
+    transform: BlockModelTransform,
+    skip_flat: bool,
+    output: &mut Vec<ModelQuad>,
+) -> Result<bool> {
+    let start = output.len();
+    bake_into(model, transform, skip_flat, output)?;
+    if output.len() == start && model.uses_item_generator() {
+        let render_type = model
+            .render_type
+            .as_deref()
+            .map(|name| RenderType::by_name(name).unwrap_or(RenderType::Unsupported));
+        bake_layer_quads(model, transform, render_type, output)?;
+    }
+    Ok(output.len() > start)
+}
+
+fn bake_layer_quads(
+    model: &ResolvedCuboidModel,
+    transform: BlockModelTransform,
+    render_type: Option<RenderType>,
+    output: &mut Vec<ModelQuad>,
+) -> Result<()> {
+    let element = Element {
+        from: [0.0, 0.0, 7.5],
+        to: [16.0, 16.0, 8.5],
+        faces: Default::default(),
+        rotation: None,
+        shade_direction_override: None,
+        light_emission: 0,
+        neoforge_data: None,
+    };
+    for layer in 0..8 {
+        let Some(material) = model.material(&format!("layer{layer}"))? else {
+            continue;
+        };
+        for (direction, uv) in [
+            (Direction::South, [0.0, 0.0, 16.0, 16.0]),
+            (Direction::North, [16.0, 0.0, 0.0, 16.0]),
+        ] {
+            let face = Face {
+                cull: None,
+                tint_index: layer,
+                texture: String::new(),
+                uv: Some(uv),
+                rotation: 0,
+                light_emission: None,
+                neoforge_data: None,
+            };
+            output.push(bake_face(
+                &element,
+                &face,
+                direction,
+                None,
+                material.clone(),
+                transform,
+                render_type,
+            )?);
+        }
     }
     Ok(())
 }
@@ -666,5 +761,86 @@ mod loader_tests {
         assert_eq!(quads.len(), 1);
         assert_eq!(quads[0].facing, Direction::Down);
         assert_eq!(bake(&library, "t:restoring").len(), 2);
+    }
+
+    #[test]
+    fn separate_transforms_bakes_base_or_perspective_fallback() {
+        let cube_parent =
+            r##"{"elements":[{"from":[0,0,0],"to":[16,16,16],"faces":{"up":{"texture":"#all"}}}]}"##;
+        let sep = r##"{
+            "loader": "neoforge:separate_transforms",
+            "textures": {"all": "t:block/base", "icon": "t:item/gui"},
+            "base": {"parent": "t:cube"},
+            "perspectives": {
+                "gui": {"parent": "minecraft:builtin/generated", "textures": {"layer0": "#icon"}}
+            }
+        }"##;
+        let forge_gui_only = r#"{
+            "loader": "forge:separate-transforms",
+            "perspectives": {
+                "gui": {"parent": "t:cube", "textures": {"all": "t:item/gui_3d"}}
+            }
+        }"#;
+        let decoded = CuboidModel::from_json(sep).unwrap();
+        assert_eq!(
+            decoded.referenced_models(),
+            vec![
+                "t:cube".to_owned(),
+                "minecraft:builtin/generated".to_owned()
+            ]
+        );
+        let mut models = BTreeMap::from([
+            ("t:cube".to_owned(), CuboidModel::from_json(cube_parent).unwrap()),
+            ("t:sep".to_owned(), decoded),
+            (
+                "t:gui_only".to_owned(),
+                CuboidModel::from_json(forge_gui_only).unwrap(),
+            ),
+        ]);
+        let _ = &mut models;
+        let library = ModelLibrary::with_item_generator(models).unwrap();
+        assert_eq!(sprites(&bake(&library, "t:sep")), vec!["t:block/base"]);
+        assert_eq!(
+            sprites(&bake(&library, "t:gui_only")),
+            vec!["t:item/gui_3d"]
+        );
+    }
+
+    #[test]
+    fn item_layers_and_empty_loaders_bake_as_specified() {
+        let base =
+            r##"{"elements":[{"from":[0,0,0],"to":[16,16,16],"faces":{"up":{"texture":"#all"}}}]}"##;
+        let neo_layers =
+            r#"{"loader":"neoforge:item_layers","textures":{"layer0":"t:item/a","layer1":"t:item/b"}}"#;
+        let forge_layers =
+            r#"{"loader":"forge:item_layers","textures":{"layer0":"t:item/c"}}"#;
+        let empty = r#"{"parent":"t:base","loader":"neoforge:empty","textures":{"all":"t:block/x"}}"#;
+        let forge_empty = r#"{"loader":"forge:empty"}"#;
+        let library = library(
+            &[
+                ("t:base", base),
+                ("t:neo_layers", neo_layers),
+                ("t:forge_layers", forge_layers),
+                ("t:empty", empty),
+                ("t:forge_empty", forge_empty),
+            ],
+            &[],
+        );
+        let quads = bake(&library, "t:neo_layers");
+        assert_eq!(
+            sprites(&quads),
+            vec!["t:item/a", "t:item/a", "t:item/b", "t:item/b"]
+        );
+        assert_eq!(quads[0].tint_index, 0);
+        assert_eq!(quads[2].tint_index, 1);
+        assert_eq!(sprites(&bake(&library, "t:forge_layers")), vec!["t:item/c", "t:item/c"]);
+        let resolved_layers = library.resolve("t:neo_layers").unwrap();
+        assert!(resolved_layers.uses_item_generator());
+        assert_eq!(
+            resolved_layers.material("particle").unwrap().unwrap().sprite,
+            "t:item/a"
+        );
+        assert!(bake(&library, "t:empty").is_empty());
+        assert!(bake(&library, "t:forge_empty").is_empty());
     }
 }

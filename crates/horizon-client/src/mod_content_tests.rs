@@ -5301,3 +5301,79 @@ fn worldgen_entry_reads_both_feature_folders() {
         None
     );
 }
+
+#[test]
+fn create_blocks_strip_interfering_vanilla_classes() {
+    let (base, _) = block_base("create-classes", &[r#"{"template":"minecraft:test","item":false}"#]);
+    let manifest_toml = manifest("create", "");
+    let decl = r#"{"template":"minecraft:test","item":false}"#;
+    let mod_dir = base.parent().unwrap().join("create-mod");
+    let mods = vec![folder_mod(
+        &mod_dir,
+        &[
+            ("horizon-mod.toml", &manifest_toml),
+            ("data/create/horizon/block/chute.json", decl),
+            ("data/create/horizon/block/smart_fluid_pipe.json", decl),
+            ("data/create/horizon/block/steam_engine.json", decl),
+            ("data/create/horizon/block/depot.json", decl),
+            ("data/create/horizon/block/basin.json", decl),
+            ("data/create/horizon/block/blaze_burner.json", decl),
+            ("data/create/horizon/block/lit_blaze_burner.json", decl),
+        ],
+    )];
+    let plan = Plan::new(&base, &mods).unwrap();
+    let mut behaviours: J = serde_json::from_str(
+        r#"{
+        "states": [{}, {}],
+        "blocks": [{
+            "name": "minecraft:test",
+            "class": [
+                "GrindstoneBlock",
+                "FaceAttachedHorizontalDirectionalBlock",
+                "EndPortalFrameBlock",
+                "ComposterBlock",
+                "RespawnAnchorBlock",
+                "StairBlock",
+                "HorizontalDirectionalBlock",
+                "Block"
+            ],
+            "fields": {}
+        }],
+        "items": {"minecraft:test": {"class": ["Item"], "fields": {}}}
+    }"#,
+    )
+    .unwrap();
+    plan.json("block-behaviours.json", &mut behaviours).unwrap();
+    let out = serde_json::to_value(behaviours).unwrap();
+    let classes_for = |id: &str| -> Vec<String> {
+        out["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["name"] == id)
+            .unwrap()["class"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c.as_str().unwrap().to_owned())
+            .collect()
+    };
+    let chute = classes_for("create:chute");
+    assert!(!chute.iter().any(|c| c == "StairBlock"));
+    assert!(chute.iter().any(|c| c == "Block"));
+
+    let pipe = classes_for("create:smart_fluid_pipe");
+    assert!(!pipe.iter().any(|c| c == "GrindstoneBlock"));
+    assert!(!pipe.iter().any(|c| c == "FaceAttachedHorizontalDirectionalBlock"));
+
+    let engine = classes_for("create:steam_engine");
+    assert!(!engine.iter().any(|c| c == "GrindstoneBlock"));
+    assert!(engine.iter().any(|c| c == "FaceAttachedHorizontalDirectionalBlock"));
+
+    assert!(!classes_for("create:depot").iter().any(|c| c == "EndPortalFrameBlock"));
+    assert!(!classes_for("create:basin").iter().any(|c| c == "ComposterBlock"));
+    for burner in ["create:blaze_burner", "create:lit_blaze_burner"] {
+        assert!(!classes_for(burner).iter().any(|c| c == "RespawnAnchorBlock"));
+    }
+    fs::remove_dir_all(base.parent().unwrap()).unwrap();
+}

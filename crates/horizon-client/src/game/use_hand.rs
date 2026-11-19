@@ -44,14 +44,21 @@ impl Game<'_> {
         }
         // MultiPlayerGameMode.useItemOn: blocks react first.
         let block_phase = horizon_client::spans::guard("use_block");
-        if !(sneaking && hands_full)
-            && let Some(hit) = block_hit
-        {
+        'block: {
+            if sneaking && hands_full {
+                break 'block;
+            }
+            let Some(hit) = block_hit else {
+                break 'block;
+            };
             let held = self.held().cloned();
             // Tachyon's blocks (a creative motor's speed).
             if self.tachyon_use(hit.pos) {
                 self.swing_arm();
                 return Ok(true);
+            }
+            if self.tachyon_suppresses_vanilla_use(hit.pos) {
+                break 'block;
             }
             if self.use_lectern(hit.pos, held.as_ref()) {
                 self.swing_arm();

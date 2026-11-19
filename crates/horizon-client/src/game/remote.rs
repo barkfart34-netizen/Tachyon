@@ -768,7 +768,7 @@ pub(super) struct Remote {
     /// a SWAP_ITEM_WITH_OFFHAND (`remote_hand_slot_set`).
     swap_answer: [bool; 2],
     stop_mining: bool,
-    placing: Option<([i32; 3], u64)>,
+    pub(super) placing: Option<([i32; 3], u64)>,
     /// `CommonPlayerSpawnInfo.isFlat`: the level is a superflat one.
     pub(super) flat: bool,
     death_message: Option<horizon_client::text::Text>,
@@ -1675,7 +1675,7 @@ impl Game<'_> {
     /// `LocalPlayer.isShiftKeyDown` (and so `isSecondaryUseActive`): the input as of the player's
     /// last tick (`input.keyPresses`, what the last ServerboundPlayerInputPacket said), not the key
     /// now: a sneak pressed in the frame of a click acts from the next tick, as on the server.
-    fn remote_shift_down(&self) -> bool {
+    pub(super) fn remote_shift_down(&self) -> bool {
         self.remote
             .as_ref()
             .is_some_and(|r| r.last_input & SHIFT_INPUT != 0)
@@ -8062,8 +8062,9 @@ impl Game<'_> {
                 // glowstone, SUCCESS.
                 let sneaking = self.remote_shift_down();
                 let hands_full = self.stack_in(self.selected).is_some() || self.offhand.is_some();
-                let charges =
-                    !(sneaking && hands_full) && self.anchor_takes(hit.pos, held.as_ref());
+                let charges = !(sneaking && hands_full)
+                    && (self.anchor_takes(hit.pos, held.as_ref())
+                        || self.tachyon_takes_use(hit.pos, held.as_ref()));
                 let result = if charges {
                     InteractionResult::Success
                 } else {
@@ -8261,7 +8262,8 @@ impl Game<'_> {
                 return true;
             } else if let Some(stack) = held.as_ref()
                 && (self.predict_item_on_block(stack, &hit, hand)
-                    || self.predict_map_on_banner(stack, &hit))
+                    || self.predict_map_on_banner(stack, &hit)
+                    || self.tachyon_predict_use_item_on(stack, &hit, hand, seq))
             {
                 // Item.useOn succeeded here (InteractionResult.SUCCESS):
                 // this hand swings and the click ends, so the other hand
@@ -8425,8 +8427,11 @@ impl Game<'_> {
             return (InteractionResult::Pass, DryUse::default());
         }
         // Tachyon's blocks (a motor's speed, a millstone): the owner's use.
-        if self.tachyon_takes_use(hit.pos) {
+        if self.tachyon_takes_use(hit.pos, held) {
             return (InteractionResult::Success, DryUse::default());
+        }
+        if self.tachyon_suppresses_vanilla_use(hit.pos) {
+            return (InteractionResult::Pass, DryUse::default());
         }
         // BeehiveBlock.useItemOn: shears or a glass bottle on a full hive
         // (honey level 5) is SUCCESS, so the click ends after UseItemOn and
@@ -8543,7 +8548,7 @@ impl Game<'_> {
     /// than past them (the server would refuse it). Its place sound is the
     /// placer's own (`playSound(player, ...)`: the server sends it to the
     /// others only).
-    fn predict_place(&mut self, (pos, changes): &DryPlace, seq: i32) {
+    pub(super) fn predict_place(&mut self, (pos, changes): &DryPlace, seq: i32) {
         let ticks = self.ticks;
         if let Some(r) = self.remote.as_mut() {
             // set_block plays the place sound of the block at `placing`.
@@ -10896,6 +10901,37 @@ impl horizon_world::level::LevelAccess for DryLevel<'_> {
     }
     fn game_time(&self) -> i64 {
         self.base.game_time()
+    }
+    fn before_update_shape(
+        &self,
+        ticks: &mut horizon_world::level::Ticks,
+        pos: horizon_core::position::BlockPos,
+        state: BlockStateId,
+        direction: horizon_core::geometry::Direction,
+        neighbour_pos: horizon_core::position::BlockPos,
+        neighbour: BlockStateId,
+        new: &mut Option<BlockStateId>,
+    ) {
+        self.base.before_update_shape(
+            ticks,
+            pos,
+            state,
+            direction,
+            neighbour_pos,
+            neighbour,
+            new,
+        );
+    }
+    #[allow(clippy::option_option)]
+    fn before_state_for_placement(
+        &self,
+        state: BlockStateId,
+        context: &horizon_world::level::PlacementContext,
+        fluid: horizon_world::fluid::FluidState,
+        answer: &mut Option<Option<BlockStateId>>,
+    ) {
+        self.base
+            .before_state_for_placement(state, context, fluid, answer);
     }
 }
 

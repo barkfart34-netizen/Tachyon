@@ -52,12 +52,12 @@ pub(super) struct Diode {
 
 impl Pulse {
     /// `BrassDiodeBlockEntity.defaultValue`.
-    pub fn default_interval(self) -> u32 {
+    pub(super) fn default_interval(self) -> u32 {
         if self == Pulse::Timer { 20 } else { 2 }
     }
 
     /// `updateState` of each: a tick of the count, and whether it powers after it.
-    pub fn tick(self, d: &mut Diode, powered: bool, powering: bool) -> bool {
+    pub(super) fn tick(self, d: &mut Diode, powered: bool, powering: bool) -> bool {
         let max = d.max.max(2);
         let at_min = d.state == 0;
         match self {

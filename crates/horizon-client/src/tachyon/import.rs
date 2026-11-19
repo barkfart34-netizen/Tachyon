@@ -132,6 +132,10 @@ fn java_mod(file: &Path, home: &Path, report: &dyn Fn(String)) -> Result<Importe
         fs::remove_dir_all(&target).map_err(|e| format!("{}: {e}", target.display()))?;
     }
     fs::rename(work.join("carry"), &target).map_err(|e| format!("{}: {e}", target.display()))?;
+    if check.mod_id == "create" {
+        super::create_port::fix(&target)?;
+        super::create_port::restore_recipes(&target, file)?;
+    }
     let _ = fs::copy(work.join("check.json"), target.join("tachyon-check.json"));
     let _ = fs::remove_dir_all(&work);
     enable(home, &check.mod_id);
@@ -363,5 +367,64 @@ mod tests {
     fn names_are_safe_folder_names() {
         assert_eq!(clean_name("a/b:c*?"), "a_b_c__");
         assert_eq!(clean_name("..world.."), "world");
+    }
+
+    #[test]
+    fn importing_create_jar_runs_create_port_fix_and_recipe_restore() {
+        let dir = scratch("create-import");
+        let jar = dir.join("create-6.0.jar");
+        zip_of(
+            &jar,
+            &[
+                (
+                    "META-INF/neoforge.mods.toml",
+                    b"license = \"MIT\"\n[[mods]]\nmodId = \"create\"\nversion = \"6.0\"\n",
+                ),
+                (
+                    "assets/create/blockstates/andesite_casing.json",
+                    br#"{"variants":{"":{"model":"create:block/andesite_casing"}}}"#,
+                ),
+                ("assets/create/models/block/andesite_casing.json", b"{}"),
+                (
+                    "assets/create/blockstates/smart_chute.json",
+                    br#"{"variants":{"facing=down,powered=false,waterlogged=false":{"model":"create:block/smart_chute"}}}"#,
+                ),
+                (
+                    "assets/create/blockstates/mechanical_saw.json",
+                    br#"{"variants":{"facing=north,axis_along_first=true":{"model":"create:block/mechanical_saw"}}}"#,
+                ),
+                (
+                    "assets/create/models/item/mechanical_saw.json",
+                    br#"{"parent":"create:block/mechanical_saw"}"#,
+                ),
+                (
+                    "data/create/recipe/crafting/logistics/smart_chute.json",
+                    br#"{"type":"minecraft:crafting_shaped","neoforge:conditions":[{"type":"neoforge:true"}],"key":{"C":{"item":"minecraft:chain"}},"pattern":["C"],"result":{"id":"create:smart_chute"}}"#,
+                ),
+            ],
+        );
+        let home = dir.join("home");
+        let got = import(&jar, "create-6.0.jar", &home, &|_| {}).unwrap();
+        assert_eq!(got.what, Kind::Mod);
+        let target = home.join(horizon_client::mod_list::DIR).join("create");
+        assert!(!target.join("data/create/horizon/item/mechanical_saw.json").exists());
+        let package = horizon_mods::Package::read(&target).unwrap();
+        horizon_mods::Content::read(&target, &package.manifest).unwrap();
+        let decl: serde_json::Value = serde_json::from_slice(
+            &fs::read(target.join("data/create/horizon/block/smart_chute.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(decl["template"], "minecraft:polished_andesite");
+        assert_eq!(
+            decl["default_state"],
+            serde_json::json!({"facing": "down", "powered": "false"})
+        );
+        let recipe: serde_json::Value = serde_json::from_slice(
+            &fs::read(target.join("data/create/recipe/crafting/logistics/smart_chute.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(recipe.get("neoforge:conditions").is_none());
+        assert_eq!(recipe["key"]["C"], "minecraft:iron_chain");
     }
 }

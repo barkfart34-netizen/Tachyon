@@ -11,7 +11,7 @@
 //! never a fueled blaze. Create exposes no item handler for either cage.
 use super::super::Game;
 use super::kinetic::Part;
-use super::OWNERS;
+use super::{CLIENT, OWNERS};
 use horizon_client::items::ItemStack;
 use horizon_client::particles::{ParticleOptions, ParticleType};
 use horizon_core::random::RandomSource;
@@ -71,7 +71,7 @@ fn heat(name: &str, charges: Option<&str>) -> Heat {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum Fuel {
+pub(super) enum Fuel {
     #[default]
     None,
     Normal,
@@ -101,6 +101,13 @@ impl Burner {
             Fuel::Normal if self.remaining < MAX_HEAT_CAPACITY / 80 => Heat::Fading,
             Fuel::Normal => Heat::Kindled,
         }
+    }
+    /// Whether normal and special fuels would both be rejected by `feed`:
+    /// creative-cake burners reject all fuels, and special fuel above
+    /// `INSERTION_THRESHOLD` rejects both downgrades and re-insertion.
+    pub(super) fn is_feed_locked(&self) -> bool {
+        self.creative.is_some()
+            || (self.fuel == Fuel::Special && self.remaining > INSERTION_THRESHOLD)
     }
     /// `BlazeBurnerBlockEntity.tick`: special fuel leaves half the normal
     /// capacity behind when it runs out. Whether the saved state changed.
@@ -170,6 +177,47 @@ fn fuel(furnace: i32, special: bool, regular: bool) -> (Fuel, u32) {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BurnerAction {
+    Extinguish,
+    SoulFire,
+    Ignite,
+    CreativeCake,
+    Feed(Fuel, u32),
+}
+
+/// Non-fuel click plan for `create:lit_blaze_burner`: a shovel extinguishes it and
+/// a `minecraft:soul_fire_base_blocks` item converts it only when `charges != Some("1")`.
+fn lit_burner_action(
+    item: &str,
+    soul_fire_base: bool,
+    charges: Option<&str>,
+) -> Option<BurnerAction> {
+    if item.ends_with("_shovel") {
+        Some(BurnerAction::Extinguish)
+    } else if soul_fire_base && charges != Some("1") {
+        Some(BurnerAction::SoulFire)
+    } else {
+        None
+    }
+}
+
+/// Non-fuel click plan for `create:blaze_burner`: flint & steel on an empty (`Heat::None`)
+/// cage, or a creative blaze cake on a fueled cage.
+fn burner_special_action(was: Heat, item: &str) -> Option<BurnerAction> {
+    if was == Heat::None {
+        (item == "minecraft:flint_and_steel").then_some(BurnerAction::Ignite)
+    } else if item == "create:creative_blaze_cake" {
+        Some(BurnerAction::CreativeCake)
+    } else {
+        None
+    }
+}
+
+fn remote_burner_takes_feed(heat: Heat, locked: bool, next_fuel: Fuel) -> bool {
+    !locked && !(heat == Heat::Seething && next_fuel < Fuel::Special)
+}
+
 impl Game<'_> {
     /// Heat read from a block state, shared by basins and the goggles.
     pub(super) fn tachyon_heat(&self, pos: [i32; 3]) -> Heat {
@@ -229,59 +277,129 @@ impl Game<'_> {
             self.tachyon_burner_state(p, "create:blaze_burner", heat.charge());
         }
     }
-    /// `BlazeBurnerBlock.useItemOn` / `tryInsert`: one fuel item, its
-    /// crafting remainder returned to the hand or inventory, none spent in
-    /// creative mode. `LitBlazeBurnerBlock` also accepts a shovel or soul sand.
-    pub(super) fn tachyon_use_burner(&mut self, pos: [i32; 3], lit: bool) {
-        let Some(stack) = self.held().cloned() else {
-            return;
-        };
+    fn tachyon_burner_charges(&self, pos: [i32; 3]) -> Option<&str> {
+        let state = self.world.block(pos[0], pos[1], pos[2]);
+        self.pack
+            .assets
+            .registry
+            .state(state)
+            .and_then(|s| s.properties.get("charges").map(String::as_str))
+    }
+    fn tachyon_burner_action(
+        &self,
+        pos: [i32; 3],
+        lit: bool,
+        stack: &ItemStack,
+    ) -> Option<BurnerAction> {
         let items = self.res.items();
         let tagged = |tag: &str| {
             items.item_tags.get(tag).is_some_and(|t| t.contains(&*stack.item))
         };
         if lit {
-            if stack.item.ends_with("_shovel") {
-                self.tachyon_burner_state(pos, "create:blaze_burner", "0");
-                self.damage_held(1);
-            } else if tagged("minecraft:soul_fire_base_blocks") {
-                self.tachyon_burner_state(pos, "create:lit_blaze_burner", "1");
-            }
-            return;
+            return lit_burner_action(
+                &stack.item,
+                tagged("minecraft:soul_fire_base_blocks"),
+                self.tachyon_burner_charges(pos),
+            );
         }
         let was = self.tachyon_heat(pos);
+        if let Some(special) = burner_special_action(was, &stack.item) {
+            return Some(special);
+        }
         if was == Heat::None {
-            if &*stack.item == "minecraft:flint_and_steel" {
-                self.tachyon_burner_state(pos, "create:lit_blaze_burner", "0");
-                self.damage_held(1);
-            }
-            return;
+            return None;
         }
         let special =
             &*stack.item == "create:blaze_cake" || tagged("create:blaze_burner_fuel/special");
-        let (fuel, time) = fuel(
-            self.res.providers().burn_time(items, &stack, false),
+        let (f, time) = fuel(
+            self.res.providers().burn_time(items, stack, false),
             special,
             tagged("create:blaze_burner_fuel/regular"),
         );
-        let creative = &*stack.item == "create:creative_blaze_cake";
+        (f != Fuel::None && time > 0).then_some(BurnerAction::Feed(f, time))
+    }
+    /// Whether `tachyon_use_burner` would act for `held` at `pos`.
+    pub(super) fn tachyon_burner_takes_use(
+        &self,
+        pos: [i32; 3],
+        lit: bool,
+        held: Option<&ItemStack>,
+    ) -> bool {
+        let Some(stack) = held else {
+            return false;
+        };
+        let Some(action) = self.tachyon_burner_action(pos, lit, stack) else {
+            return false;
+        };
+        match action {
+            BurnerAction::Extinguish
+            | BurnerAction::SoulFire
+            | BurnerAction::Ignite
+            | BurnerAction::CreativeCake => true,
+            BurnerAction::Feed(f, time) => {
+                if self.remote.is_some() {
+                    let locked = CLIENT.with_borrow(|c| c.shown.held.contains_key(&pos));
+                    remote_burner_takes_feed(self.tachyon_heat(pos), locked, f)
+                } else {
+                    let dimension = self.dim.id();
+                    OWNERS.with_borrow(|owners| {
+                        let mut burner = owners
+                            .get(dimension)
+                            .and_then(|o| o.burners.get(&pos))
+                            .cloned()
+                            .unwrap_or_default();
+                        burner.feed(f, time, true)
+                    })
+                }
+            }
+        }
+    }
+    /// `BlazeBurnerBlock.useItemOn` / `tryInsert`: one fuel item, its
+    /// crafting remainder returned to the hand or inventory, none spent in
+    /// creative mode. `LitBlazeBurnerBlock` also accepts a shovel or soul sand.
+    pub(super) fn tachyon_use_burner(&mut self, pos: [i32; 3], lit: bool) -> bool {
+        let Some(stack) = self.held().cloned() else {
+            return false;
+        };
+        let Some(action) = self.tachyon_burner_action(pos, lit, &stack) else {
+            return false;
+        };
+        let creative = match action {
+            BurnerAction::Extinguish => {
+                self.tachyon_burner_state(pos, "create:blaze_burner", "0");
+                self.damage_held(1);
+                return true;
+            }
+            BurnerAction::SoulFire => {
+                self.tachyon_burner_state(pos, "create:lit_blaze_burner", "1");
+                return true;
+            }
+            BurnerAction::Ignite => {
+                self.tachyon_burner_state(pos, "create:lit_blaze_burner", "0");
+                self.damage_held(1);
+                return true;
+            }
+            BurnerAction::CreativeCake => true,
+            BurnerAction::Feed(_, _) => false,
+        };
+        let was = self.tachyon_heat(pos);
         let dimension = self.dim.id();
         let root = self.save.root.clone();
         let heat = OWNERS.with_borrow_mut(|owners| {
             let owner = owners.entry(dimension).or_default();
             owner.load(&root, dimension);
             let burner = owner.burners.entry(pos).or_default();
-            if creative {
-                burner.creative(was);
-            } else if !burner.feed(fuel, time, true) {
-                return None;
+            match action {
+                BurnerAction::CreativeCake => burner.creative(was),
+                BurnerAction::Feed(f, time) if burner.feed(f, time, true) => {}
+                _ => return None,
             }
             let heat = burner.heat();
             owner.save(&root, dimension);
             Some(heat)
         });
         let Some(heat) = heat else {
-            return;
+            return false;
         };
         self.tachyon_burner_state(pos, "create:blaze_burner", heat.charge());
         if !self.creative && !creative {
@@ -300,6 +418,7 @@ impl Game<'_> {
                 }
             }
         }
+        true
     }
     /// A window's smoke and flames, by
     /// `BlazeBurnerBlockEntity.spawnParticles`'s heat levels: no flame when
@@ -470,5 +589,39 @@ mod tests {
         nether.load(&root, "minecraft:the_nether");
         assert!(nether.burners.is_empty());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn burner_use_does_not_swallow_blocks_or_redundant_clicks() {
+        assert_eq!(lit_burner_action("minecraft:iron_shovel", false, Some("0")), Some(BurnerAction::Extinguish));
+        assert_eq!(lit_burner_action("minecraft:soul_sand", true, Some("0")), Some(BurnerAction::SoulFire));
+        assert_eq!(lit_burner_action("minecraft:soul_sand", true, Some("1")), None);
+        assert_eq!(lit_burner_action("create:basin", false, Some("0")), None);
+
+        assert_eq!(burner_special_action(Heat::None, "minecraft:flint_and_steel"), Some(BurnerAction::Ignite));
+        assert_eq!(burner_special_action(Heat::None, "create:basin"), None);
+        assert_eq!(burner_special_action(Heat::None, "minecraft:coal"), None);
+        assert_eq!(burner_special_action(Heat::Smouldering, "create:creative_blaze_cake"), Some(BurnerAction::CreativeCake));
+
+        let mut b = Burner::default();
+        b.feed(Fuel::Special, 3200, true);
+        assert_eq!(b.heat(), Heat::Seething);
+        assert!(!b.feed(Fuel::Normal, 1600, true));
+        assert!(b.is_feed_locked());
+        assert!(!remote_burner_takes_feed(b.heat(), b.is_feed_locked(), Fuel::Special));
+        assert!(!remote_burner_takes_feed(b.heat(), b.is_feed_locked(), Fuel::Normal));
+
+        b.remaining = INSERTION_THRESHOLD;
+        assert!(!b.is_feed_locked());
+        assert!(remote_burner_takes_feed(b.heat(), b.is_feed_locked(), Fuel::Special));
+        assert!(!remote_burner_takes_feed(b.heat(), b.is_feed_locked(), Fuel::Normal));
+
+        let mut creative = Burner::default();
+        creative.creative(Heat::None);
+        assert!(creative.is_feed_locked());
+        assert!(!creative.feed(Fuel::Normal, 1600, true));
+        assert!(!creative.feed(Fuel::Special, 3200, true));
+        assert!(!remote_burner_takes_feed(creative.heat(), creative.is_feed_locked(), Fuel::Normal));
+        assert!(!remote_burner_takes_feed(creative.heat(), creative.is_feed_locked(), Fuel::Special));
     }
 }

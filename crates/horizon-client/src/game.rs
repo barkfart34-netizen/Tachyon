@@ -1367,6 +1367,8 @@ impl LevelAccess for GameLevel<'_> {
                 neighbour,
                 new,
             );
+        } else {
+            self.tachyon_fluid_update_shape(pos, state, direction, neighbour, new);
         }
     }
     #[allow(clippy::option_option)]
@@ -1379,6 +1381,8 @@ impl LevelAccess for GameLevel<'_> {
     ) {
         if self.native_authoritative {
             self.native_state_for_placement(self.dimension, state, context, fluid, answer);
+        } else {
+            self.tachyon_state_for_placement(state, context, answer);
         }
     }
     fn before_can_survive(&self, pos: BlockPos, state: BlockStateId, survives: &mut Option<bool>) {

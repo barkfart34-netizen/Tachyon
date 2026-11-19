@@ -12,8 +12,161 @@
 //! no filter, a held tool is used up like any item, and no belt (only a depot).
 use super::kinetic::{Axis, Dir};
 use super::millstone::Held;
-use horizon_core::random::RandomSource;
+use horizon_core::{
+    geometry::{Direction, Vec3},
+    position::BlockPos,
+    random::RandomSource,
+};
+use horizon_world::{
+    level::{Behaviours, LevelAccess, PlaceContext, PlaceOutcome, Ticks, data::ItemKind, flags},
+    registry::{BlockRegistry, BlockStateId},
+};
 use serde::{Deserialize, Serialize};
+
+pub(super) trait PlacementValidator {
+    fn directional_can_place(&mut self, ctx: &PlaceContext) -> bool;
+    fn has_binding(&self, item: &str) -> bool;
+    fn is_scaffolding(&self, item: &str) -> bool;
+    fn placement_state(&mut self, ctx: &PlaceContext) -> Option<(BlockPos, BlockStateId)>;
+    fn state_for_placement(&mut self, default: BlockStateId, ctx: &PlaceContext) -> Option<BlockStateId>;
+    fn can_survive(&mut self, pos: BlockPos, state: BlockStateId) -> bool;
+    fn is_unobstructed(&self, pos: BlockPos, state: BlockStateId) -> bool;
+}
+
+struct BehavioursPlacement<'a, L: LevelAccess + ?Sized> {
+    registry: &'a BlockRegistry,
+    behaviours: &'a Behaviours,
+    level: &'a mut L,
+    ticks: &'a mut Ticks,
+}
+
+impl<L: LevelAccess + ?Sized> PlacementValidator for BehavioursPlacement<'_, L> {
+    fn directional_can_place(&mut self, ctx: &PlaceContext) -> bool {
+        self.behaviours.directional_can_place(self.level, self.ticks, ctx)
+    }
+
+    fn has_binding(&self, item: &str) -> bool {
+        self.behaviours.item_binding(item).is_some()
+    }
+
+    fn is_scaffolding(&self, item: &str) -> bool {
+        self.behaviours
+            .item_binding(item)
+            .is_some_and(|bind| bind.kind == ItemKind::Scaffolding)
+    }
+
+    fn placement_state(&mut self, ctx: &PlaceContext) -> Option<(BlockPos, BlockStateId)> {
+        if ctx.item == "create:chute" {
+            return super::chute::preview_place(
+                self.registry,
+                self.behaviours,
+                self.level,
+                self.ticks,
+                ctx,
+            );
+        }
+        self.behaviours.placement_state(self.level, self.ticks, ctx)
+    }
+
+    fn state_for_placement(
+        &mut self,
+        default: BlockStateId,
+        ctx: &PlaceContext,
+    ) -> Option<BlockStateId> {
+        let block = self.behaviours.block(default);
+        self.behaviours
+            .state_for_placement(self.level, self.ticks, block, ctx)
+    }
+
+    fn can_survive(&mut self, pos: BlockPos, state: BlockStateId) -> bool {
+        self.behaviours.can_survive(self.level, self.ticks, pos, state)
+    }
+
+    fn is_unobstructed(&self, pos: BlockPos, state: BlockStateId) -> bool {
+        self.level.is_unobstructed(pos, state)
+    }
+}
+
+/// Validates a resolved `BlockItem` placement (`directional_can_place`, `placement_state` or
+/// `state_for_placement`, optional rotated pillar `axis`, `waterlogged` in water, `can_survive`,
+/// and `is_unobstructed`).
+pub(super) fn validate_block_placement<V: PlacementValidator>(
+    validator: &mut V,
+    registry: &BlockRegistry,
+    default_state: BlockStateId,
+    ctx: &PlaceContext,
+    forced_axis: Option<&str>,
+    water_present: bool,
+) -> Option<(BlockPos, BlockStateId, bool)> {
+    if !validator.directional_can_place(ctx) {
+        return None;
+    }
+    let has_binding = validator.has_binding(&ctx.item);
+    let (pos, computed) = if has_binding {
+        let (p, s) = validator.placement_state(ctx)?;
+        if p != ctx.clicked_pos {
+            return None;
+        }
+        (p, s)
+    } else {
+        let s = validator.state_for_placement(default_state, ctx)?;
+        (ctx.clicked_pos, s)
+    };
+    let mut final_state = computed;
+    if let Some(axis) = forced_axis
+        && let Some(mut parsed) = registry.state(final_state).cloned()
+        && parsed.properties.get("axis").is_some_and(|cur| cur != axis)
+    {
+        parsed.properties.insert("axis".into(), axis.into());
+        final_state = registry.id(&parsed)?;
+    }
+    if water_present
+        && let Some(mut parsed) = registry.state(final_state).cloned()
+        && parsed.properties.get("waterlogged").is_some_and(|v| v == "false")
+    {
+        parsed.properties.insert("waterlogged".into(), "true".into());
+        final_state = registry.id(&parsed)?;
+    }
+    if !has_binding || final_state != computed {
+        if !validator.is_scaffolding(&ctx.item) && !validator.can_survive(pos, final_state) {
+            return None;
+        }
+        if !validator.is_unobstructed(pos, final_state) {
+            return None;
+        }
+    }
+    Some((pos, final_state, has_binding))
+}
+
+pub(super) fn deployer_target_replaceable(
+    here_name: &str,
+    here_replaceable: bool,
+    placed_block: &str,
+) -> bool {
+    here_replaceable && here_name != placed_block
+}
+
+fn direction_of(d: Dir) -> Direction {
+    match d {
+        Dir::Down => Direction::Down,
+        Dir::Up => Direction::Up,
+        Dir::North => Direction::North,
+        Dir::South => Direction::South,
+        Dir::West => Direction::West,
+        Dir::East => Direction::East,
+    }
+}
+
+fn deployer_look(d: Dir) -> (f32, f32) {
+    match d {
+        Dir::South => (0.0, 0.0),
+        Dir::West => (90.0, 0.0),
+        Dir::North => (180.0, 0.0),
+        Dir::East => (-90.0, 0.0),
+        Dir::Down => (0.0, 90.0),
+        Dir::Up => (0.0, -90.0),
+    }
+}
 
 pub(super) const DEPLOYER: &str = "create:deployer";
 
@@ -194,10 +347,10 @@ impl super::super::Game<'_> {
             });
             let before = d.clone();
             // Asked only when its wait is over, as `tick` would.
-            let ready = d.state == State::Waiting && d.timer <= 0 && self.tachyon_deployer_ready(&d, target);
+            let ready = d.state == State::Waiting && d.timer <= 0 && self.tachyon_deployer_ready(&d, facing, target);
             let works = d.tick(speed, || ready);
             if works {
-                self.tachyon_deployer_work(&mut d, target);
+                self.tachyon_deployer_work(&mut d, facing, target);
             }
             super::OWNERS.with_borrow_mut(|owners| {
                 if let Some(o) = owners.get_mut(dimension) {
@@ -229,33 +382,137 @@ impl super::super::Game<'_> {
         Some((item, outs, r.keep))
     }
 
+    /// Validates `ctx` as a `BlockItem` placement (`BlockItem -> block` via `info.block`,
+    /// `directional_can_place`, `state_for_placement`, `waterlogged`, `can_survive`,
+    /// `is_unobstructed`), optionally forcing rotated pillar `axis`.
+    pub(super) fn tachyon_validated_block_state(
+        &mut self,
+        ctx: &PlaceContext,
+        forced_axis: Option<&str>,
+    ) -> Option<(BlockPos, BlockStateId, bool)> {
+        let default_state = self.res.items().get(&ctx.item).and_then(|i| i.block)?;
+        let registry = self.pack.assets.registry;
+        let before = self.world.block(ctx.clicked_pos.x, ctx.clicked_pos.y, ctx.clicked_pos.z);
+        let water_present = registry.state(before).is_some_and(|s| {
+            (s.name == "minecraft:water"
+                && s.properties.get("level").is_none_or(|l| l == "0"))
+                || s.properties.get("waterlogged").is_some_and(|v| v == "true")
+        });
+        self.with_level(|b, level, ticks| {
+            let mut validator = BehavioursPlacement {
+                registry,
+                behaviours: b,
+                level,
+                ticks,
+            };
+            validate_block_placement(
+                &mut validator,
+                registry,
+                default_state,
+                ctx,
+                forced_axis,
+                water_present,
+            )
+        })
+    }
+
+    /// Places a block validated by `tachyon_validated_block_state` via `Behaviours::place_block`
+    /// (`chute::place` for `create:chute`, or `set_block` fallback if no `ItemBinding` or adjusted
+    /// axis/waterlogging).
+    pub(super) fn tachyon_place_validated_block(
+        &mut self,
+        ctx: &PlaceContext,
+        forced_axis: Option<&str>,
+    ) -> Option<(BlockPos, BlockStateId)> {
+        let (pos, final_state, has_binding) =
+            self.tachyon_validated_block_state(ctx, forced_axis)?;
+        let previous = self.world.block(pos.x, pos.y, pos.z);
+        let registry = self.pack.assets.registry;
+        self.ensure_stateful_entity_table();
+        let placed = self.with_level(|b, level, ticks| {
+            if has_binding {
+                let outcome = if ctx.item == "create:chute" {
+                    super::chute::place(registry, b, level, ticks, ctx)
+                } else {
+                    b.place_block(level, ticks, ctx)
+                };
+                let PlaceOutcome::Placed { pos, state } = outcome else {
+                    return None;
+                };
+                if state != final_state {
+                    b.set_block(level, ticks, pos, final_state, flags::UPDATE_ALL);
+                }
+                Some((pos, final_state))
+            } else if b.set_block(level, ticks, pos, final_state, flags::UPDATE_ALL | 8) {
+                Some((pos, final_state))
+            } else {
+                None
+            }
+        })?;
+        let new_name = self.res.facts().get(placed.1).name.clone();
+        if !self.world.block_entities.stateful_entity(placed.1.0)
+            && self.res.facts().get(previous).name != new_name
+            && let Some(entity) = self.new_block_entity_for_state(placed.1)
+        {
+            self.world
+                .block_entities
+                .insert((placed.0.x, placed.0.y, placed.0.z), entity);
+        }
+        let _ = self.process_level_events();
+        Some(placed)
+    }
+
     /// `shouldActivate` and BeltDeployerCallbacks' wait: work on the depot ahead, or a block
     /// to place where nothing stands.
-    fn tachyon_deployer_ready(&mut self, d: &Deployer, target: [i32; 3]) -> bool {
+    fn tachyon_deployer_ready(&mut self, d: &Deployer, facing: Dir, target: [i32; 3]) -> bool {
         let Some(held) = d.held.as_ref() else {
             return false;
         };
         if self.tachyon_deployer_recipe(held, target).is_some() {
             return true;
         }
-        self.tachyon_deployer_block(&held.item, target).is_some()
+        self.tachyon_deployer_block(&held.item, facing, target).is_some()
     }
 
-    /// The state a held block item is placed in at `target`, when the place is free.
-    fn tachyon_deployer_block(&self, item: &str, target: [i32; 3]) -> Option<horizon_world::registry::BlockStateId> {
+    /// The validated placement context and state for a held block item at `target`.
+    fn tachyon_deployer_block(
+        &mut self,
+        item: &str,
+        facing: Dir,
+        target: [i32; 3],
+    ) -> Option<(PlaceContext, BlockStateId)> {
         if !self.world.chunks.contains_key(&(target[0] >> 4, target[2] >> 4)) {
             return None;
         }
+        let block_state = self.res.items().get(item).and_then(|i| i.block)?;
         let here = self.world.block(target[0], target[1], target[2]);
         let facts = self.res.facts().get(here);
-        if !facts.replaceable || &*facts.name == item {
+        let placed_block = &*self.res.facts().get(block_state).name;
+        if !deployer_target_replaceable(&facts.name, facts.replaceable, placed_block) {
             return None;
         }
-        self.pack.assets.registry.default_state(item)
+        let (yaw, pitch) = deployer_look(facing);
+        let ctx = PlaceContext {
+            clicked_pos: BlockPos::new(target[0], target[1], target[2]),
+            face: direction_of(facing.opposite()),
+            hit: Vec3::new(
+                f64::from(target[0]) + 0.5,
+                f64::from(target[1]) + 0.5,
+                f64::from(target[2]) + 0.5,
+            ),
+            inside: false,
+            yaw,
+            pitch,
+            sneaking: false,
+            item: item.to_owned(),
+            can_use_game_master_blocks: false,
+        };
+        let (_, state, _) = self.tachyon_validated_block_state(&ctx, None)?;
+        Some((ctx, state))
     }
 
     /// The work at full reach: the depot's item by its recipe, else the held block placed.
-    fn tachyon_deployer_work(&mut self, d: &mut Deployer, target: [i32; 3]) {
+    fn tachyon_deployer_work(&mut self, d: &mut Deployer, facing: Dir, target: [i32; 3]) {
         let Some(held) = d.held.clone() else { return };
         let dimension = self.native_dimension();
         if let Some((input, outs, keep)) = self.tachyon_deployer_recipe(&held, target) {
@@ -292,20 +549,30 @@ impl super::super::Game<'_> {
             }
             return;
         }
-        if let Some(state) = self.tachyon_deployer_block(&held.item, target)
-            && self.native_set_block(dimension, target, state, 3)
+        if let Some((ctx, _)) = self.tachyon_deployer_block(&held.item, facing, target)
+            && self.tachyon_place_validated_block(&ctx, None).is_some()
         {
             d.held = Some(held).filter(|h| h.count > 1).map(|h| Held { count: h.count - 1, ..h });
         }
     }
 
     /// DeployerBlock's use: the player's hand and the deployer's swap.
-    pub(super) fn tachyon_use_deployer(&mut self, pos: [i32; 3]) {
+    pub(super) fn tachyon_use_deployer(&mut self, pos: [i32; 3]) -> bool {
         let dimension = self.native_dimension();
         let mut d = super::OWNERS.with_borrow_mut(|owners| {
             owners.get_mut(dimension).and_then(|o| o.deployers.remove(&pos)).unwrap_or_default()
         });
         let given = self.held().filter(|s| s.count > 0).map(|s| Held { item: s.item.to_string(), count: s.count });
+        if given.is_none() && d.held.is_none() {
+            super::OWNERS.with_borrow_mut(|owners| {
+                if let Some(o) = owners.get_mut(dimension)
+                    && (d.state != State::Waiting || d.timer > 0)
+                {
+                    o.deployers.insert(pos, d);
+                }
+            });
+            return false;
+        }
         if let Some(g) = &given {
             self.tachyon_spend_held(g.count);
         }
@@ -315,10 +582,13 @@ impl super::super::Game<'_> {
         d.held = given;
         super::OWNERS.with_borrow_mut(|owners| {
             if let Some(o) = owners.get_mut(dimension) {
-                o.deployers.insert(pos, d);
+                if d.held.is_some() || d.state != State::Waiting || d.timer > 0 {
+                    o.deployers.insert(pos, d);
+                }
                 o.mills_changed = true;
             }
         });
+        true
     }
 }
 
@@ -356,5 +626,159 @@ mod tests {
         assert_eq!(shaft_axis(Dir::North, false), Axis::Y);
         assert_eq!(timer_speed(-300.0), 512);
         assert_eq!(timer_speed(1.0), 8);
+    }
+
+    #[test]
+    fn deployer_and_assist_validate_placement_axis_waterlogging_and_survival() {
+        use horizon_world::nbt::{Compound, JavaString, Tag};
+
+        let nbt_state = |name: &str, properties: &[(&str, &str)]| -> Tag {
+            let mut map = Compound::new();
+            map.insert(JavaString::from("id"), Tag::String(name.into()));
+            if !properties.is_empty() {
+                let mut props = Compound::new();
+                for (k, v) in properties {
+                    props.insert(JavaString::from(*k), Tag::String((*v).into()));
+                }
+                map.insert(JavaString::from("properties"), Tag::Compound(props));
+            }
+            Tag::Compound(map)
+        };
+        let mut defaults = Compound::new();
+        defaults.insert(JavaString::from("minecraft:air"), Tag::Int(0));
+        defaults.insert(JavaString::from("minecraft:stone"), Tag::Int(1));
+        defaults.insert(JavaString::from("minecraft:wheat"), Tag::Int(2));
+        defaults.insert(JavaString::from("create:shaft"), Tag::Int(3));
+        let mut root = Compound::new();
+        root.insert(JavaString::from("DataVersion"), Tag::Int(horizon_world::DATA_VERSION));
+        root.insert(
+            JavaString::from("states"),
+            Tag::List(vec![
+                nbt_state("minecraft:air", &[]),
+                nbt_state("minecraft:stone", &[]),
+                nbt_state("minecraft:wheat", &[("age", "0")]),
+                nbt_state("create:shaft", &[("axis", "y"), ("waterlogged", "false")]),
+                nbt_state("create:shaft", &[("axis", "x"), ("waterlogged", "false")]),
+                nbt_state("create:shaft", &[("axis", "x"), ("waterlogged", "true")]),
+            ]),
+        );
+        root.insert(JavaString::from("defaults"), Tag::Compound(defaults));
+        let registry = BlockRegistry::from_nbt(&Tag::Compound(root)).expect("test registry");
+
+        #[derive(Default)]
+        struct FakeValidator {
+            can_place: bool,
+            has_binding: bool,
+            scaffolding: bool,
+            bound_pos: Option<BlockPos>,
+            survives: bool,
+            unobstructed: bool,
+            checked_survival: bool,
+        }
+        impl PlacementValidator for FakeValidator {
+            fn directional_can_place(&mut self, _ctx: &PlaceContext) -> bool {
+                self.can_place
+            }
+            fn has_binding(&self, _item: &str) -> bool {
+                self.has_binding
+            }
+            fn is_scaffolding(&self, _item: &str) -> bool {
+                self.scaffolding
+            }
+            fn placement_state(&mut self, ctx: &PlaceContext) -> Option<(BlockPos, BlockStateId)> {
+                Some((self.bound_pos.unwrap_or(ctx.clicked_pos), BlockStateId(2)))
+            }
+            fn state_for_placement(
+                &mut self,
+                default: BlockStateId,
+                _ctx: &PlaceContext,
+            ) -> Option<BlockStateId> {
+                Some(default)
+            }
+            fn can_survive(&mut self, _pos: BlockPos, _state: BlockStateId) -> bool {
+                self.checked_survival = true;
+                self.survives
+            }
+            fn is_unobstructed(&self, _pos: BlockPos, _state: BlockStateId) -> bool {
+                self.unobstructed
+            }
+        }
+
+        let pos = BlockPos::new(4, 64, -2);
+        let ctx = PlaceContext {
+            clicked_pos: pos,
+            face: Direction::Up,
+            hit: Vec3::new(4.5, 64.5, -1.5),
+            inside: false,
+            yaw: 0.0,
+            pitch: 0.0,
+            sneaking: false,
+            item: "create:shaft".into(),
+            can_use_game_master_blocks: false,
+        };
+
+        // 1. Replaceability guard blocks solid or identical targets.
+        assert!(deployer_target_replaceable("minecraft:air", true, "create:shaft"));
+        assert!(!deployer_target_replaceable("minecraft:stone", false, "create:shaft"));
+        assert!(!deployer_target_replaceable("minecraft:water", true, "minecraft:water"));
+
+        // 2. Assist placement applies forced axis + waterlogged=true and checks survival/obstruction.
+        let mut ok = FakeValidator {
+            can_place: true,
+            survives: true,
+            unobstructed: true,
+            ..FakeValidator::default()
+        };
+        assert_eq!(
+            validate_block_placement(&mut ok, &registry, BlockStateId(3), &ctx, Some("x"), true),
+            Some((pos, BlockStateId(5), false))
+        );
+        assert!(ok.checked_survival);
+
+        // 3. Survival and obstruction rejections prevent placement.
+        let mut cannot_survive = FakeValidator {
+            can_place: true,
+            survives: false,
+            unobstructed: true,
+            ..FakeValidator::default()
+        };
+        assert_eq!(
+            validate_block_placement(&mut cannot_survive, &registry, BlockStateId(2), &ctx, None, false),
+            None
+        );
+        let mut blocked = FakeValidator {
+            can_place: true,
+            survives: true,
+            unobstructed: false,
+            ..FakeValidator::default()
+        };
+        assert_eq!(
+            validate_block_placement(&mut blocked, &registry, BlockStateId(3), &ctx, None, false),
+            None
+        );
+
+        // 4. Directional/target shift checks reject shifted or non-placeable targets.
+        let mut shifted = FakeValidator {
+            can_place: true,
+            has_binding: true,
+            bound_pos: Some(BlockPos::new(4, 65, -2)),
+            survives: true,
+            unobstructed: true,
+            ..FakeValidator::default()
+        };
+        assert_eq!(
+            validate_block_placement(&mut shifted, &registry, BlockStateId(2), &ctx, None, false),
+            None
+        );
+        let mut denied_dir = FakeValidator {
+            can_place: false,
+            survives: true,
+            unobstructed: true,
+            ..FakeValidator::default()
+        };
+        assert_eq!(
+            validate_block_placement(&mut denied_dir, &registry, BlockStateId(3), &ctx, None, false),
+            None
+        );
     }
 }

@@ -24,7 +24,7 @@ use std::sync::OnceLock;
 /// 16 RPM.
 pub(super) const TIME: f32 = 100.0;
 /// The most of the input a millstone takes.
-const INPUT_MAX: u32 = 64;
+pub(super) const INPUT_MAX: u32 = 64;
 /// How many stacks of what was ground it keeps: full, it stops.
 const OUTPUT_STACKS: usize = 9;
 
@@ -337,6 +337,18 @@ pub(super) fn add_all(stacks: &mut Vec<Held>, made: &[Held]) {
     }
 }
 
+/// Guest parity for `tachyon_use_millstone`: `shown` puts `input` (or `("", 0)` when only outputs
+/// exist) at `[0]`, followed by the first output if present.
+pub(super) fn remote_millstone_takes(shown: &[(String, u32)], grinds: Option<&str>) -> bool {
+    if let Some(item) = grinds {
+        shown.first().is_none_or(|(it, amt)| {
+            it.is_empty() || (it == item && *amt < INPUT_MAX)
+        })
+    } else {
+        !shown.is_empty()
+    }
+}
+
 impl Game<'_> {
     /// The player used a millstone at `pos` (the world's owner): the held
     /// stack goes in when it grinds, else what it holds comes out. Whether
@@ -504,5 +516,24 @@ mod tests {
         }
         assert_eq!(m.input.as_ref().unwrap().count, 2);
         assert_eq!(m.take_all().len(), OUTPUT_STACKS + 1);
+    }
+
+    #[test]
+    fn remote_millstone_takes_mirrors_host_put_and_take() {
+        assert!(remote_millstone_takes(&[], Some("minecraft:cobblestone")));
+        assert!(!remote_millstone_takes(&[], None));
+
+        let partial = vec![("minecraft:cobblestone".to_owned(), 10)];
+        assert!(remote_millstone_takes(&partial, Some("minecraft:cobblestone")));
+        assert!(!remote_millstone_takes(&partial, Some("minecraft:wheat")));
+        assert!(remote_millstone_takes(&partial, None));
+
+        let full = vec![("minecraft:cobblestone".to_owned(), INPUT_MAX)];
+        assert!(!remote_millstone_takes(&full, Some("minecraft:cobblestone")));
+        assert!(remote_millstone_takes(&full, None));
+
+        let outputs_only = vec![(String::new(), 0), ("minecraft:gravel".to_owned(), 3)];
+        assert!(remote_millstone_takes(&outputs_only, Some("minecraft:cobblestone")));
+        assert!(remote_millstone_takes(&outputs_only, None));
     }
 }

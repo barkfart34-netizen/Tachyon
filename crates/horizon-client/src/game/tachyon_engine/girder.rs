@@ -291,21 +291,18 @@ impl super::super::Game<'_> {
         }
     }
 
-    /// A shaft used on a metal girder goes through it.
-    pub(in crate::game) fn tachyon_girder_use(
-        &mut self,
+    pub(super) fn tachyon_girder_target(
+        &self,
         stack: &ItemStack,
         pos: [i32; 3],
         face: [i32; 3],
-        claimed: &mut bool,
-    ) {
-        if *claimed
-            || &*stack.item != SHAFT_ITEM
+    ) -> Option<horizon_world::registry::BlockStateId> {
+        if &*stack.item != SHAFT_ITEM
             || !self.may_build()
             || self.block_action_restricted(pos)
             || self.native_block(pos) != GIRDER
         {
-            return;
+            return None;
         }
         let on = |key: &str| self.native_block_property(pos, key).as_deref() == Some("true");
         let clicked = face.iter().position(|c| *c != 0).unwrap_or(1);
@@ -315,7 +312,21 @@ impl super::super::Game<'_> {
             ("top", flag(on("top"))),
             ("bottom", flag(on("bottom"))),
         ];
-        let Some(id) = self.tachyon_with_properties(ENCASED, None, &props) else {
+        self.tachyon_with_properties(ENCASED, None, &props)
+    }
+
+    /// A shaft used on a metal girder goes through it.
+    pub(in crate::game) fn tachyon_girder_use(
+        &mut self,
+        stack: &ItemStack,
+        pos: [i32; 3],
+        face: [i32; 3],
+        claimed: &mut bool,
+    ) {
+        if *claimed {
+            return;
+        }
+        let Some(id) = self.tachyon_girder_target(stack, pos, face) else {
             return;
         };
         let dimension = self.native_dimension();

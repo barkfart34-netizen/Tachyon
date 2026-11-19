@@ -362,6 +362,7 @@ impl Game<'_> {
     }
 
     #[cfg(any(target_os = "android", test))]
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     pub(super) fn touch_context(&self) -> TouchContext {
         TouchContext {
             screen: if !self.focused || !self.options.execution_role.is_client() {
@@ -376,7 +377,7 @@ impl Game<'_> {
             vertical_movement: self.player.as_ref().is_some_and(|p| p.flying),
             swimming: self.player.as_ref().is_some_and(|p| p.swimming),
             mounted: self.riding.is_some(),
-            sneaking: self.keys.contains(&KeyCode::ShiftLeft),
+            sneaking: self.keys.held(super::Mapping::Sneak),
             shield_available: self.held().into_iter().chain(self.offhand.as_ref())
                 .any(|s| self.blocks_attacks(s).is_some()),
             ..TouchContext::default()
@@ -386,6 +387,8 @@ impl Game<'_> {
     /// Whether a world hold uses the held item rather than mining, as
     /// Bedrock's touch controls do: eating and drinking, drawing a bow or a
     /// crossbow, raising a shield, a trident, a spyglass, a horn, a brush.
+    #[cfg(any(target_os = "android", test))]
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     pub(super) fn touch_hold_uses(&self) -> bool {
         let Some(stack) = self.held() else { return false };
         let Some(info) = self.items().get(&stack.item) else { return false };
@@ -396,6 +399,8 @@ impl Game<'_> {
             || matches!(id, "bow" | "crossbow" | "trident" | "spyglass" | "goat_horn" | "brush")
     }
 
+    #[cfg(any(target_os = "android", test))]
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     pub(super) fn set_touch_aim(&mut self, point: Option<[f32; 2]>) {
         self.touch_aim = point;
     }
@@ -500,6 +505,7 @@ impl Game<'_> {
     }
 
     #[cfg(any(target_os = "android", test))]
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     pub(super) fn cancel_zalith_input(&mut self) {
         for source in self.touch_input.sources().into_iter().filter(|s| s.zalith()) {
             if let Err(e) = self.input_from(source, Vec::new(), false, false) {
@@ -531,6 +537,7 @@ impl Game<'_> {
 
     /// Called outside the overlay borrow, before the game requests its next tick.
     #[cfg(any(target_os = "android", test))]
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     pub(super) fn apply_touch_frame(&mut self, frame: TouchFrame) -> Result<bool> {
         if !self.touch_playing() { self.cancel_touch_input(); return Ok(false); }
         self.touch_input.movement = frame.movement;

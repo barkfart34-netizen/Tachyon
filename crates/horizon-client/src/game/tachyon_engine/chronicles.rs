@@ -53,6 +53,7 @@ pub(super) struct Book {
 #[derive(Deserialize)]
 pub(super) struct Chapter {
     pub id: String,
+    #[allow(dead_code)]
     pub icon: String,
     pub quests: Vec<Quest>,
 }
