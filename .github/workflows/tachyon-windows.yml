@@ -11,12 +11,15 @@ on:
       - "crates/horizon-client/src/desktop/**"
       - "crates/horizon-client/src/tachyon/**"
       - "crates/horizon-client/src/tachyon_main.rs"
+      - "crates/horizon-client/src/tachyon_native_mods.rs"
       - "crates/horizon-client/src/game/tachyon_mods.rs"
       - "crates/horizon-client/src/game/tachyon_mods/**"
       - "crates/horizon-client/src/game/tachyon_engine.rs"
       - "crates/horizon-client/src/game/tachyon_engine/**"
-      - "crates/horizon-client/src/game/mods.rs"
+      - "crates/horizon-client/src/game/modding/**"
       - "crates/horizon-client/src/mod_content.rs"
+      - "crates/horizon-quests/**"
+      - "crates/megamap-engine/**"
       - ".github/tachyon/scene.py"
       - "tachyon/**"
       - ".github/workflows/tachyon-windows.yml"
@@ -41,6 +44,9 @@ jobs:
   resources:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: -C debuginfo=0
     outputs:
       key: xos-resources-26.3-${{ steps.hash.outputs.hash }}
     steps:
@@ -99,6 +105,7 @@ jobs:
     timeout-minutes: 150
     env:
       PROFILE: ${{ inputs.profile || 'tachyon' }}
+      CARGO_INCREMENTAL: "0"
       # No DLL a player's Windows may lack (the C runtime), as Horizon's releases.
       RUSTFLAGS: -C target-feature=+crt-static
       TACHYON_BUILD: windows-${{ github.run_number }}

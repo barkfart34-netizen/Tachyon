@@ -41,6 +41,9 @@ jobs:
     timeout-minutes: 180
     env:
       PROFILE: ${{ inputs.profile || 'tachyon' }}
+      CARGO_INCREMENTAL: "0"
+      # Shadow .cargo/config.toml (-Zthreads=8) so rustc stays within 16 GB RAM on ubuntu-24.04.
+      RUSTFLAGS: -C debuginfo=0
     steps:
       - uses: actions/checkout@v4
 
@@ -118,5 +121,5 @@ jobs:
         run: >
           gh release create "tachyon-${{ github.run_number }}" android/build/Tachyon.apk
           --repo "${{ github.repository }}" --target "${{ github.sha }}" --latest
-          --title "Tachyon #${{ github.run_number }}${{ github.repository != 'Rxuser2/Tachyon' && ' (GPT worker)' || '' }}"
+          --title "Tachyon #${{ github.run_number }}${{ github.repository != 'barkfart34-netizen/Tachyon' && github.repository != 'Rxuser2/Tachyon' && ' (GPT worker)' || '' }}"
           --notes "Tachyon untuk Android (arm64, Android 10+, Vulkan), profil ${{ env.PROFILE }}, dari commit ${{ github.sha }}. Resource Minecraft 26.3 sudah di dalam APK: pasang, buka, tunggu bongkar resource sekali (sekitar 1 menit), lalu Play. Untuk pribadi, jangan dibagikan."

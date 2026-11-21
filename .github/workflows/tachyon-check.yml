@@ -22,6 +22,10 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      # Shadow .cargo/config.toml (-Zthreads=8) so rustc stays within 16 GB RAM on ubuntu-24.04.
+      RUSTFLAGS: -C debuginfo=0
     steps:
       - uses: actions/checkout@v4
 
@@ -42,6 +46,8 @@ jobs:
       # launchers in the programs.
       - name: Tachyon's tests
         run: |
+          cargo test -p horizon-quests
+          cargo test -p megamap-engine --release -- --test-threads=1
           cargo test -p horizon-client --lib -- tachyon native_hooks
           cargo test -p horizon-client --bin tachyon-desktop -- tachyon desktop
 
