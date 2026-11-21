@@ -2380,7 +2380,7 @@ impl Game<'_> {
             return true;
         }
         if let Some((ctx, placed_pos, state, _)) = self.tachyon_assist_plan(stack, hit.pos) {
-            if self.block_place_canceled(stack, &ctx) {
+            if self.player_place_canceled(&ctx) {
                 if let Some(r) = self.remote.as_mut() {
                     r.placing = None;
                 }
@@ -2597,7 +2597,7 @@ impl Game<'_> {
 
     /// What a hopper took from the machine at `pos` and couldn't keep (of
     /// the items to work, `input`).
-    pub(super) fn tachyon_machine_return(&mut self, pos: [i32; 3], rest: ItemStack, input: bool) {
+    pub(super) fn tachyon_machine_put_back(&mut self, pos: [i32; 3], rest: ItemStack, input: bool) {
         let state = self.world.block(pos[0], pos[1], pos[2]).0;
         let part = self.tachyon_kinds().and_then(|k| k.part(state));
         let basin = part == Some(Part::Basin);
@@ -3232,34 +3232,34 @@ impl Game<'_> {
         let state = self.world.block(hit.pos[0], hit.pos[1], hit.pos[2]);
         let name = self.pack.assets.registry.state(state).map(|s| s.name.clone());
         let what = match name.as_deref().and_then(|n| n.strip_prefix("create:")) {
-            Some(create) => self.translate(&format!("block.create.{create}"), english),
-            None => self.translate(&format!("block.kinetica.{block}"), english),
+            Some(create) => self.tachyon_tr(&format!("block.create.{create}"), english),
+            None => self.tachyon_tr(&format!("block.kinetica.{block}"), english),
         };
         let mut state = if let Some(gauge) = gauge_readout(part, speed, jammed, stress, |k, fallback| {
-            self.translate(k, fallback)
+            self.tachyon_tr(k, fallback)
         }) {
             gauge
         } else {
             let mut state = if jammed {
-                self.translate("kinetica.hud.jammed", "jammed")
+                self.tachyon_tr("kinetica.hud.jammed", "jammed")
             } else if stress.is_some_and(kinetic::Stress::over) {
-                self.translate("kinetica.hud.overstressed", "overstressed")
+                self.tachyon_tr("kinetica.hud.overstressed", "overstressed")
             } else if speed == 0.0 {
-                self.translate("kinetica.hud.still", "still")
+                self.tachyon_tr("kinetica.hud.still", "still")
             } else {
-                self.translate("kinetica.hud.rpm", "%s RPM")
+                self.tachyon_tr("kinetica.hud.rpm", "%s RPM")
                     .replace("%s", &speed.abs().round().to_string())
             };
             // Other parts show the network's load, not its remaining capacity.
         if matches!(part, Part::SpeedController(_)) {
             let target = target.unwrap_or(speed_controller::DEFAULT_SPEED);
-            let text = self.translate("kinetica.hud.target", "target %s RPM")
+            let text = self.tachyon_tr("kinetica.hud.target", "target %s RPM")
                 .replace("%s", &target.to_string());
             state = format!("{state} | {text}");
         }
             if let Some(s) = stress {
                 let su = self
-                    .translate("kinetica.hud.stress", "%s / %s SU")
+                    .tachyon_tr("kinetica.hud.stress", "%s / %s SU")
                     .replacen("%s", &(s.load.round() as i64).to_string(), 1)
                     .replacen("%s", &(s.capacity.round() as i64).to_string(), 1);
                 state = format!("{state} | {su}");
@@ -3268,12 +3268,12 @@ impl Game<'_> {
         };
         // A funnel: whether it puts in or takes out, only.
         if let (Part::Funnel(_), Some(w)) = (part, &work) {
-            state = self.translate(&format!("kinetica.hud.{w}"), w);
+            state = self.tachyon_tr(&format!("kinetica.hud.{w}"), w);
         } else if let Some(item) = work {
             // A fan: what its air does ("pulling, washing").
             let what = if matches!(part, Part::Fan(_)) {
                 (item.split(':'))
-                    .map(|w| self.translate(&format!("kinetica.hud.{w}"), w))
+                    .map(|w| self.tachyon_tr(&format!("kinetica.hud.{w}"), w))
                     .collect::<Vec<_>>()
                     .join(", ")
             } else {
@@ -3319,7 +3319,7 @@ impl Game<'_> {
         };
         if let Some(pos) = heat_at {
             let heat = self.tachyon_heat(pos).name();
-            let heat = self.translate(&format!("kinetica.hud.heat.{heat}"), heat);
+            let heat = self.tachyon_tr(&format!("kinetica.hud.heat.{heat}"), heat);
             state = if part == Part::Basin {
                 format!("{state} | {heat}")
             } else {
@@ -3347,21 +3347,189 @@ impl Game<'_> {
             _ => {}
         }
         let line = format!("{what}: {state}");
-        let w = self.native_text_width(&line) + 4.0;
+        let w = self.native_text_width(batch, &line) + 4.0;
         let (x, y) = corners.place(Corner::TopLeft, w, 12.0);
         self.native_fill(batch, [x, y, w, 12.0], 0x7800_0000);
-        self.native_text(batch, &line, [x + 2.0, y + 2.0], 0xFFD27A, true);
+        self.native_text(batch, &line, [x + 2.0, y + 2.0], 0xFFFF_D27A, true);
     }
 
     /// An item's name in the player's language: its item key's, else its
     /// block key's.
     fn tachyon_item_name(&self, item: &str) -> String {
         let key = item.replacen(':', ".", 1);
-        let name = self.translate(&format!("item.{key}"), "");
+        let name = self.tachyon_tr(&format!("item.{key}"), "");
         if !name.is_empty() {
             return name;
         }
-        self.translate(&format!("block.{key}"), item)
+        self.tachyon_tr(&format!("block.{key}"), item)
+    }
+
+    pub(self) fn tachyon_tr(&self, key: &str, fallback: &str) -> String {
+        self.translate(key).unwrap_or_else(|| fallback.to_owned())
+    }
+
+    pub(self) fn native_dimension(&self) -> &'static str {
+        self.dim.id()
+    }
+
+    pub(self) fn native_block(&self, pos: [i32; 3]) -> String {
+        self.res
+            .facts()
+            .get(self.world.block(pos[0], pos[1], pos[2]))
+            .name
+            .to_string()
+    }
+
+    pub(self) fn native_block_property(&self, pos: [i32; 3], key: &str) -> Option<String> {
+        self.pack
+            .assets
+            .registry
+            .state(self.world.block(pos[0], pos[1], pos[2]))?
+            .properties
+            .get(key)
+            .cloned()
+    }
+
+    pub(self) fn native_set_block_property(&mut self, pos: [i32; 3], key: &str, value: &str) -> bool {
+        self.set_block_property(pos, key, value)
+    }
+
+    pub(self) fn native_level(&self, dimension: &str) -> Option<mod_api::LevelRef> {
+        self.level(dimension)
+    }
+
+    pub(self) fn native_level_play_sound(
+        &mut self,
+        level: mod_api::LevelRef,
+        sound: &str,
+        at: [f64; 3],
+        source: u8,
+        volume: f32,
+        pitch: f32,
+    ) -> bool {
+        let src = match source {
+            0 => mod_api::SoundSource::Master,
+            1 => mod_api::SoundSource::Music,
+            2 => mod_api::SoundSource::Records,
+            3 => mod_api::SoundSource::Weather,
+            4 => mod_api::SoundSource::Blocks,
+            5 => mod_api::SoundSource::Hostile,
+            6 => mod_api::SoundSource::Neutral,
+            7 => mod_api::SoundSource::Players,
+            8 => mod_api::SoundSource::Ambient,
+            9 => mod_api::SoundSource::Voice,
+            _ => mod_api::SoundSource::Blocks,
+        };
+        self.level_play_sound(level, sound, at, src, volume, pitch)
+    }
+
+    pub(self) fn native_level_send_particles(
+        &mut self,
+        level: mod_api::LevelRef,
+        options: &horizon_client::particles::ParticleOptions,
+        state: Option<horizon_world::registry::BlockStateId>,
+        at: [f64; 3],
+        spread: [f64; 3],
+        speed: f64,
+        count: i32,
+    ) -> bool {
+        self.level_send_particles(level, options, state, at, spread, speed, count)
+    }
+
+    pub(self) fn native_held(&self) -> Option<(String, u32, bool)> {
+        let s = self.inventory.get(self.selected)?.as_ref()?;
+        Some((s.item.to_string(), s.count, s.damage == 0 && s.extra.is_none()))
+    }
+
+    pub(self) fn native_take_items(&mut self, item: &str, count: u32) -> u32 {
+        if self.player.is_none() {
+            return 0;
+        }
+        const OFFHAND: usize = 36;
+        let selected = self.selected;
+        let mut slots: Vec<&mut Option<ItemStack>> = self
+            .inventory
+            .iter_mut()
+            .take(36)
+            .chain(std::iter::once(&mut self.offhand))
+            .collect();
+        let mut taken = 0;
+        for i in std::iter::once(selected)
+            .chain(std::iter::once(OFFHAND))
+            .chain((0..36).filter(move |&i| i != selected))
+        {
+            let slot = &mut *slots[i];
+            if let Some(s) = slot
+                && &*s.item == item
+                && s.damage == 0
+                && s.extra.is_none()
+            {
+                let n = s.count.min(count - taken);
+                s.count -= n;
+                taken += n;
+                if s.count == 0 {
+                    *slot = None;
+                }
+            }
+            if taken == count {
+                break;
+            }
+        }
+        taken
+    }
+
+    pub(self) fn native_give_items(&mut self, item: &str, count: u32) -> u32 {
+        let Some(max) = self.res.items().get(item).map(|i| i.max_stack.max(1)) else {
+            return 0;
+        };
+        if self.player.is_none() {
+            return 0;
+        }
+        const OFFHAND: usize = 36;
+        let selected = self.selected;
+        let mut slots: Vec<&mut Option<ItemStack>> = self
+            .inventory
+            .iter_mut()
+            .take(36)
+            .chain(std::iter::once(&mut self.offhand))
+            .collect();
+        let mut added = 0;
+        for pass in 0..2 {
+            for i in std::iter::once(selected)
+                .chain(std::iter::once(OFFHAND))
+                .chain((0..36).filter(move |&i| i != selected))
+            {
+                let slot = &mut *slots[i];
+                let n = match slot {
+                    Some(s)
+                        if pass == 0
+                            && &*s.item == item
+                            && s.damage == 0
+                            && s.extra.is_none() =>
+                    {
+                        let n = max.saturating_sub(s.count).min(count - added);
+                        s.count += n;
+                        n
+                    }
+                    None if pass == 1 && i != OFFHAND => {
+                        let n = max.min(count - added);
+                        *slot = Some(ItemStack {
+                            item: item.into(),
+                            count: n,
+                            damage: 0,
+                            extra: None,
+                        });
+                        n
+                    }
+                    _ => 0,
+                };
+                added += n;
+                if added == count {
+                    return added;
+                }
+            }
+        }
+        added
     }
 }
 
@@ -3378,7 +3546,7 @@ mod tests {
         let mut arm = arm::Arm::default();
         let mut stack = ItemStack { damage: 7, ..ItemStack::new("minecraft:iron_pickaxe", 1) };
         stack.enchant("minecraft:unbreaking", 2);
-        stack.data_mut().custom_name = Some(horizon_world::nbt::Tag::String("Held pickaxe".into()));
+        stack.data_mut().custom_name = Some(horizon_core::nbt::Tag::String("Held pickaxe".into()));
         arm.held = Some(stack);
         let shown = Shown {
             speeds: HashMap::from([([1, -64, 3], [32.0; 2]), ([-5, 70, 9], [-16.0, 16.0])]),

@@ -5,6 +5,7 @@
 use crate::motion::MotionWorld;
 use crate::sprint::Keys;
 use horizon_core::geometry::Vec3;
+use horizon_world::move_gate::MoveGate;
 use std::cell::RefCell;
 use std::ops::ControlFlow;
 
@@ -162,7 +163,7 @@ fn carry_step(
     p.old_position = p.position;
     p.fall_distance = 0.0;
     p.velocity = delta;
-    world.move_self(delta)?;
+    world.move_self(&mut MoveGate::new(), delta)?;
     world.player.fall_distance = 0.0;
     // (no longer swimming, stood up: carried through the air)
     world.player.swimming = false;

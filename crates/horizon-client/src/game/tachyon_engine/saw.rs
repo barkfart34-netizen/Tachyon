@@ -218,7 +218,7 @@ impl super::super::Game<'_> {
         {
             return Some((50.0, vec![ItemStack::new(&item, count * stack.count)]));
         }
-        let stone = self.stations().recipes.stonecutter(stack);
+        let stone = self.stations().recipes.stonecutter(&self.loop_context, stack);
         let first = stone.first()?;
         let mut result = first.result.clone();
         result.count *= stack.count;

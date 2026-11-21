@@ -384,9 +384,11 @@ impl Game<'_> {
         }
         let recipes = self.res.recipes();
         let cooked = if process == Process::Smoking {
-            recipes.cook("smoking", stack)
+            recipes.cook(&self.loop_context, "smoking", stack)
         } else {
-            (recipes.cook("blasting", stack)).or_else(|| recipes.cook("smelting", stack))
+            recipes
+                .cook(&self.loop_context, "blasting", stack)
+                .or_else(|| recipes.cook(&self.loop_context, "smelting", stack))
         }?;
         let mut result = cooked.result.clone();
         result.count *= n;

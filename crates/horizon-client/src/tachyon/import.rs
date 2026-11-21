@@ -94,7 +94,7 @@ fn enable(home: &Path, id: &str) {
 }
 
 fn horizon_mod(file: &Path, stem: &str, home: &Path) -> Result<Imported, String> {
-    let manifest = horizon_mods::Package::read(file)
+    let manifest = horizon_mod_package::Package::read(file)
         .map_err(|e| format!("Not a Horizon mod: {e}"))?
         .manifest;
     let dir = home.join(horizon_client::mod_list::DIR);
@@ -408,8 +408,8 @@ mod tests {
         assert_eq!(got.what, Kind::Mod);
         let target = home.join(horizon_client::mod_list::DIR).join("create");
         assert!(!target.join("data/create/horizon/item/mechanical_saw.json").exists());
-        let package = horizon_mods::Package::read(&target).unwrap();
-        horizon_mods::Content::read(&target, &package.manifest).unwrap();
+        let package = horizon_mod_package::Package::read(&target).unwrap();
+        horizon_mod_package::Content::read(&target, &package.manifest).unwrap();
         let decl: serde_json::Value = serde_json::from_slice(
             &fs::read(target.join("data/create/horizon/block/smart_chute.json")).unwrap(),
         )

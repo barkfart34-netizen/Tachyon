@@ -436,12 +436,13 @@ impl super::super::Game<'_> {
             {
                 // `destroyBlock(pos, false)`, then a blast of 3 that breaks blocks.
                 self.native_set_block(dimension, pos, air, 3);
-                self.native_explode(
-                    dimension,
+                let _ = self.native_explode(
+                    None,
                     at,
                     3.0,
                     false,
-                    super::super::native_explosions::NativeBlast::Block,
+                    mod_api::ExplosionInteraction::Block,
+                    mod_api::ExplosionSettings::default(),
                 );
             }
         }

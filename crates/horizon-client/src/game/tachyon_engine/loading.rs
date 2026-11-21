@@ -454,6 +454,7 @@ pub(in crate::game) fn early_gui() -> UiResources {
     UiResources {
         atlas: HudAtlas::loading_with(Some(horizon_theme::fonts::GEIST_MONO)),
         panorama: Arc::new(horizon_client::gfx::panorama::Faces::colour([0; 4])),
+        splashes: Arc::from(""),
     }
 }
 
@@ -928,7 +929,7 @@ mod tests {
         let atlas = HudAtlas::loading_with(Some(horizon_theme::fonts::GEIST_MONO));
         let mut screen = Screen::new(Instant::now());
         screen.sampled = Some(Instant::now() + Duration::from_secs(3600));
-        let mut batch = HudBatch::new([640, 480]);
+        let mut batch = HudBatch::scratch([640, 480]);
         batch.width = 320.0;
         batch.height = 160.0;
         screen.draw(&mut batch, &atlas, &progress);
@@ -955,18 +956,18 @@ mod tests {
         let mut screen = Screen::new(Instant::now());
         // Keep this glyph test independent of process-memory readings.
         screen.sampled = Some(Instant::now() + Duration::from_secs(3600));
-        let mut first = HudBatch::new([640, 480]);
+        let mut first = HudBatch::scratch([640, 480]);
         screen.draw(&mut first, &atlas, &progress);
         let glyphs = first.patches.len();
         assert!(glyphs > 0);
         screen.after_frame(&mut first, false);
         assert!(first.patches.is_empty());
 
-        let mut retry = HudBatch::new([640, 480]);
+        let mut retry = HudBatch::scratch([640, 480]);
         screen.draw(&mut retry, &atlas, &progress);
         assert_eq!(retry.patches.len(), glyphs);
         screen.after_frame(&mut retry, true);
-        let mut next = HudBatch::new([640, 480]);
+        let mut next = HudBatch::scratch([640, 480]);
         screen.draw(&mut next, &atlas, &progress);
         assert!(next.patches.is_empty());
 
@@ -978,7 +979,7 @@ mod tests {
             rgba: vec![255; 4],
         });
         atlas.font.reset_cache();
-        let mut replacement = HudBatch::new([640, 480]);
+        let mut replacement = HudBatch::scratch([640, 480]);
         screen.draw(&mut replacement, &atlas, &progress);
         assert!(!replacement.patches.is_empty());
         assert!(replacement.patches.iter().all(|p| p.x != u32::MAX));

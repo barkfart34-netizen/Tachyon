@@ -348,7 +348,7 @@ impl super::super::Game<'_> {
             SHAFT => None,
             _ => return None,
         };
-        let (distance, hit) = self.native_view_hit()?;
+        let (distance, hit) = self.view_hit()?;
         if distance > REACH {
             return None;
         }
@@ -378,7 +378,7 @@ impl super::super::Game<'_> {
                 hi,
             });
         }
-        if hit.block != SHAFT {
+        if self.native_block(pos) != SHAFT {
             return None;
         }
         let axis_name = self.native_block_property(pos, "axis")?;
@@ -450,9 +450,8 @@ impl super::super::Game<'_> {
         let Some((ctx, _, _, axis_name)) = self.tachyon_assist_plan(stack, pos) else {
             return;
         };
-        if self.block_place_canceled(stack, &ctx) {
+        if self.player_place_canceled(&ctx) {
             self.use_failed = true;
-            self.guest_inventory_resend = true;
             *claimed = true;
             return;
         }
@@ -462,7 +461,7 @@ impl super::super::Game<'_> {
             return;
         };
         let target = [placed_pos.x, placed_pos.y, placed_pos.z];
-        let state = self
+        let _state = self
             .apply_item_block_state(target, placed_state, stack)
             .unwrap_or(placed_state);
         if self.world.block_entities.get(&(target[0], target[1], target[2])).is_some() {
@@ -470,7 +469,8 @@ impl super::super::Game<'_> {
         }
         self.award_stat("used", &stack.item, 1);
         self.trigger_block("minecraft:placed_block", target, stack);
-        self.native_place_block(stack, target, state);
+        let placer = self.native_acting_player();
+        self.block_item_placed(stack, placer, placed_pos, &ctx);
         if self.held().is_some_and(|h| &*h.item == &*stack.item) {
             self.consume_held();
         } else if !self.creative {

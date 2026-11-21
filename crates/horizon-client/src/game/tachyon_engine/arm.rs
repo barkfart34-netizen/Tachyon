@@ -677,7 +677,7 @@ impl Game<'_> {
 mod tests {
     use super::*;
     use super::super::{add, kinetic::Dir, millstone::Held};
-    use horizon_world::nbt::Tag;
+    use horizon_core::nbt::Tag;
     use std::collections::HashMap;
 
     const AT: [i32; 3] = [0; 3];

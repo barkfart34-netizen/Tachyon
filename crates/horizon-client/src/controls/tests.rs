@@ -175,10 +175,13 @@ fn the_editor_adds_and_moves_a_button() {
     let mut e = Editor::new(Controls::default_layout());
     let hud = |e: &mut Editor| {
         // Drawing lays out the toolbar and panel the taps land on.
-        let atlas =
-            crate::hud::HudAtlas::build(std::path::Path::new("/nonexistent/horizon-test-assets"))
-                .unwrap();
-        let mut batch = HudBatch::new([SCREEN.width as u32, SCREEN.height as u32]);
+        let atlas = crate::hud::HudAtlas::build(
+            &horizon_assets::resource_source::ResourceSource::directory(
+                "/nonexistent/horizon-test-assets".into(),
+            ),
+        )
+        .unwrap();
+        let mut batch = HudBatch::scratch([SCREEN.width as u32, SCREEN.height as u32]);
         e.draw(&mut batch, &atlas, SCREEN);
     };
     hud(&mut e);

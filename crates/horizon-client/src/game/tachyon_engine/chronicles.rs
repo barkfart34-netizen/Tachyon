@@ -377,9 +377,9 @@ impl Game<'_> {
         let before = CLIENT.with_borrow_mut(|c| c.progress.replace(progress.clone()));
         if let Some(before) = before {
             for id in progress.done.difference(&before.done) {
-                let name = self.translate(&format!("chronicles.quest.{id}"), id);
+                let name = self.tachyon_tr(&format!("chronicles.quest.{id}"), id);
                 let line = self
-                    .translate("chronicles.done", "Quest complete: %s")
+                    .tachyon_tr("chronicles.done", "Quest complete: %s")
                     .replace("%s", &name);
                 self.native_chat(&line);
             }
@@ -388,10 +388,14 @@ impl Game<'_> {
 
     /// The quests key: opens the book while playing.
     pub(in crate::game) fn tachyon_quests_key(&mut self, key: &str, pressed: bool) {
-        if !pressed || book().is_none() || !self.native_playing() || self.remote.is_none() {
+        if !pressed || book().is_none() || !self.playing() || self.remote.is_none() {
             return;
         }
-        if key != self.native_mod_key(ID, KEY, DEFAULT_KEY) {
+        let binding = self
+            .mod_key(ID, KEY)
+            .map(|(k, _)| k)
+            .unwrap_or_else(|| DEFAULT_KEY.to_owned());
+        if key != binding {
             return;
         }
         self.tachyon_quests_send(HELLO, Vec::new());
@@ -419,7 +423,7 @@ impl Game<'_> {
         let atlas = &self.gui.atlas;
         let (w, h) = (batch.width, batch.height);
         ui::menu_background(batch, atlas, 0.0, 0.0, w, h, self.player.is_some());
-        let title = Text::literal(self.translate("chronicles.title", "Chronicles"));
+        let title = Text::literal(self.tachyon_tr("chronicles.title", "Chronicles"));
         ui::centered_text(batch, atlas, &title, 0.0, 12.0, w, u32::MAX);
         let (left, right) = self.tachyon_book_columns(w);
         let bottom = h - 36.0;
@@ -430,7 +434,7 @@ impl Game<'_> {
         let mut index = 0;
         for chapter in &book.chapters {
             if y > TOP - ROW && y < bottom {
-                let name = self.translate(&format!("chronicles.chapter.{}", chapter.id), &chapter.id);
+                let name = self.tachyon_tr(&format!("chronicles.chapter.{}", chapter.id), &chapter.id);
                 batch.text(atlas, &name, left + 4.0, y + 6.0, rgba(255, 210, 122, 255), true);
             }
             y += ROW;
@@ -443,7 +447,7 @@ impl Game<'_> {
                     }
                     icons.push((q.icon.clone(), left + 4.0, y + 2.0));
                     let color = quest_color(&progress, q);
-                    let name = self.translate(&format!("chronicles.quest.{}", q.id), &q.id);
+                    let name = self.tachyon_tr(&format!("chronicles.quest.{}", q.id), &q.id);
                     batch.text(atlas, &name, left + 24.0, y + 6.0, color, true);
                 }
                 y += ROW;
@@ -453,10 +457,10 @@ impl Game<'_> {
         // The page.
         if let Some(q) = book.quests().nth(selected) {
             let page_w = (w - right - 10.0).max(100.0);
-            let name = self.translate(&format!("chronicles.quest.{}", q.id), &q.id);
+            let name = self.tachyon_tr(&format!("chronicles.quest.{}", q.id), &q.id);
             icons.push((q.icon.clone(), right, TOP));
             batch.text(atlas, &name, right + 22.0, TOP + 4.0, quest_color(&progress, q), true);
-            let text = self.translate(&format!("chronicles.quest.{}.text", q.id), "");
+            let text = self.tachyon_tr(&format!("chronicles.quest.{}.text", q.id), "");
             let mut y = TOP + 24.0;
             for line in self.tachyon_wrap(&text, page_w) {
                 batch.text(atlas, &line, right, y, rgba(224, 224, 224, 255), true);
@@ -470,7 +474,7 @@ impl Game<'_> {
                     .chain([&self.offhand]),
             );
             if !q.tasks.is_empty() {
-                let label = self.translate("chronicles.tasks", "Hold at once:");
+                let label = self.tachyon_tr("chronicles.tasks", "Hold at once:");
                 batch.text(atlas, &label, right, y, u32::MAX, true);
                 y += 12.0;
                 for t in &q.tasks {
@@ -490,7 +494,7 @@ impl Game<'_> {
             if let Some(rpm) = q.turning {
                 let done = progress.done.contains(&q.id);
                 let line = self
-                    .translate("chronicles.turning", "A machine near you turning at %s RPM")
+                    .tachyon_tr("chronicles.turning", "A machine near you turning at %s RPM")
                     .replace("%s", &rpm.to_string());
                 let color = if done {
                     rgba(110, 230, 110, 255)
@@ -506,8 +510,8 @@ impl Game<'_> {
             if let Some(structure) = &q.find {
                 let done = progress.done.contains(&q.id);
                 let key = format!("structure.{}", structure.replace(':', "."));
-                let name = self.translate(&key, structure);
-                let line = self.translate("chronicles.find", "Find: %s").replace("%s", &name);
+                let name = self.tachyon_tr(&key, structure);
+                let line = self.tachyon_tr("chronicles.find", "Find: %s").replace("%s", &name);
                 let color = if done {
                     rgba(110, 230, 110, 255)
                 } else {
@@ -521,7 +525,7 @@ impl Game<'_> {
             }
             if !q.rewards.is_empty() {
                 y += 4.0;
-                let label = self.translate("chronicles.rewards", "Rewards:");
+                let label = self.tachyon_tr("chronicles.rewards", "Rewards:");
                 batch.text(atlas, &label, right, y, u32::MAX, true);
                 y += 12.0;
                 for (i, r) in q.rewards.iter().enumerate() {
@@ -533,17 +537,17 @@ impl Game<'_> {
             }
             // Claim, or why not.
             let state = if progress.claimed.contains(&q.id) {
-                Err(self.translate("chronicles.claimed", "Claimed"))
+                Err(self.tachyon_tr("chronicles.claimed", "Claimed"))
             } else if progress.done.contains(&q.id) {
                 Ok(())
             } else if !progress.open(q) {
-                Err(self.translate("chronicles.locked", "Finish the quests before it first"))
+                Err(self.tachyon_tr("chronicles.locked", "Finish the quests before it first"))
             } else {
                 Err(String::new())
             };
             match state {
                 Ok(()) => {
-                    let label = Text::literal(self.translate("chronicles.claim", "Claim"));
+                    let label = Text::literal(self.tachyon_tr("chronicles.claim", "Claim"));
                     let hover = ui::hovered(self.cursor, right, y + 4.0, 100.0, 20.0);
                     ui::button(batch, atlas, right, y + 4.0, 100.0, 20.0, &label, true, hover);
                 }
@@ -553,7 +557,7 @@ impl Game<'_> {
                 Err(_) => {}
             }
         }
-        let done = Text::literal(self.translate("gui.done", "Done"));
+        let done = Text::literal(self.tachyon_tr("gui.done", "Done"));
         let hover = ui::hovered(self.cursor, w / 2.0 - 100.0, h - 27.0, 200.0, 20.0);
         ui::button(batch, atlas, (w / 2.0).floor() - 100.0, h - 27.0, 200.0, 20.0, &done, true, hover);
         for (item, x, y) in icons {
@@ -620,7 +624,7 @@ impl Game<'_> {
     fn tachyon_claim_button_y(&self, q: &Quest, w: f32) -> Option<f32> {
         let (_, right) = self.tachyon_book_columns(w);
         let page_w = (w - right - 10.0).max(100.0);
-        let text = self.translate(&format!("chronicles.quest.{}.text", q.id), "");
+        let text = self.tachyon_tr(&format!("chronicles.quest.{}.text", q.id), "");
         let mut y = TOP + 24.0 + self.tachyon_wrap(&text, page_w).len() as f32 * 10.0 + 6.0;
         if !q.tasks.is_empty() {
             y += 12.0 + q.tasks.len() as f32 * 18.0;
@@ -681,7 +685,7 @@ impl Game<'_> {
             } else {
                 format!("{line} {word}")
             };
-            if !line.is_empty() && self.native_text_width(&next) > width {
+            if !line.is_empty() && HudBatch::text_width(&self.gui.atlas, &next) > width {
                 lines.push(std::mem::replace(&mut line, word.to_owned()));
             } else {
                 line = next;

@@ -4,82 +4,41 @@
 #[allow(dead_code)]
 mod windows_exe;
 fn main() {
-    let root =
-        std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
+    let dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    let root = std::path::Path::new(&dir).join("../..");
     let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join("crates/horizon-client/src/game").display()
+    );
+    std::fs::write(
+        out_dir.join("game_modules.rs"),
+        horizon_game_discovery::declarations(
+            &root.join("crates/horizon-client/src/game"),
+            &[
+                "native_hooks",
+                "host",
+                "creatures",
+                "android",
+                "orbital_glue",
+                "tachyon_engine",
+                "tachyon_mods",
+                "touch_input",
+            ],
+        )
+        .expect("discovering game modules"),
+    )
+    .expect("writing game modules");
+    let tests =
+        root.join("crates/horizon-client/src/crafting/ingredient/builtin_kinds_tests/families");
+    println!("cargo:rerun-if-changed={}", tests.display());
+    std::fs::write(
+        out_dir.join("builtin_ingredient_test_modules.rs"),
+        horizon_game_discovery::folder_modules(&tests).expect("discovering ingredient tests"),
+    )
+    .expect("writing ingredient test modules");
     horizon_mod_api_gen::generate(&root, &out_dir, horizon_mod_api_gen::Target::Client)
         .expect("generating native mod API");
-    let manifest_dir = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let ico = manifest_dir
-        .join("../..")
-        .join("packaging/icons/tachyon.ico");
-    let target_os =
-        std::env::var("CARGO_CFG_TARGET_OS").expect("Cargo must provide the build target OS");
-    println!("cargo:rerun-if-changed={}", ico.display());
-    // The game's main thread gets 8 MB of stack on Windows as on macOS and Linux (Windows gives 1
-    // MB): splitscreen builds a joining player's `Game`, ~67 KB, deep in the event loop.
-    if target_os == "windows" {
-        println!("cargo:rerun-if-env-changed=WINDRES");
-        println!("cargo:rerun-if-env-changed=AR");
-        println!("cargo:rerun-if-env-changed=RC_PATH");
-        let target_env = std::env::var("CARGO_CFG_TARGET_ENV")
-            .expect("Cargo must provide the target environment");
-        let arg = match target_env.as_str() {
-            "msvc" => "/STACK:8388608",
-            _ => "-Wl,--stack,8388608",
-        };
-        println!("cargo:rustc-link-arg-bin=horizon-client={arg}");
-        println!("cargo:rustc-link-arg-bin=tachyon-desktop={arg}");
-        let (resource_manifest_dir, resource_icon) = match resource_path(&manifest_dir, &target_env)
-            .and_then(|dir| Ok((dir, resource_path(&ico, &target_env)?)))
-        {
-            Ok(paths) => paths,
-            // #10398: a local GNU build in a folder whose path has a space or a non-ASCII letter,
-            // on a volume without 8.3 names, still builds (the launcher's native mod builds use
-            // that toolchain), without the icon. CI never does.
-            Err(e) if std::env::var_os("CI").is_none() => {
-                println!("cargo:warning=building without Horizon's icon: {e}");
-                return;
-            }
-            Err(e) => panic!("{e}"),
-        };
-        let mut resource = winresource::WindowsResource::new();
-        resource.set_icon(&resource_icon);
-        if std::env::var_os("CARGO_FEATURE_WINDOWS_SEGMENT_HEAP").is_some() {
-            let manifest = manifest_dir.join("windows-segment-heap.manifest");
-            println!("cargo:rerun-if-changed={}", manifest.display());
-            let resource_manifest =
-                resource_path(&manifest, &target_env).unwrap_or_else(|e| panic!("{e}"));
-            resource.set_manifest_file(&resource_manifest);
-        }
-
-        let original_manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR").unwrap();
-        if cfg!(windows) && target_env == "gnu" {
-            // GNU windres can split paths with spaces or fail on non-ASCII paths while
-            // preprocessing the .rc file. Pass an 8.3 alias for the include directory; the icon
-            // and optional manifest use the same alias.
-            // This build script has no other Rust threads, and winresource reads this variable
-            // only while compiling the resource; restore the original value immediately after.
-            unsafe { std::env::set_var("CARGO_MANIFEST_DIR", &resource_manifest_dir) };
-        }
-        let result = resource.compile();
-        if cfg!(windows) && target_env == "gnu" {
-            unsafe { std::env::set_var("CARGO_MANIFEST_DIR", original_manifest_dir) };
-        }
-        result.expect("embedding Tachyon's icon in Windows resources");
-    }
-    // A workspace horizon-mixins changed holds native mods, whichever tool ran it (the launcher,
-    // or a mod's own script with no `native-mods.json` beside its game): `HORIZON_MIXIN_MODS`
-    // names them for `game::mods::built_with_native_mods`. Watched only once it exists: a
-    // bundle applied in place also edits `game/`, which `generate` watches.
-    let stage = root.join(horizon_mod_api_gen::MIXINS_STAGE);
-    if stage.is_file() {
-        println!("cargo:rerun-if-changed={}", stage.display());
-    }
-    let staged = horizon_mod_api_gen::staged_mods(&root);
-    if !staged.is_empty() {
-        println!("cargo:rustc-env=HORIZON_MIXIN_MODS={}", staged.join(","));
-    }
     // Whether a native mod can run in a mob's turn (`game/creatures/mob_islands.rs`). The
     // launcher adds trait packages to the workspace's members.
     println!(
@@ -93,6 +52,67 @@ fn main() {
     }
     if let Some(found) = horizon_mod_api_gen::mob_turn(&root) {
         println!("cargo:rustc-env=HORIZON_MOB_TURN={found}");
+    }
+    // The SDK builds this library, not the platform executable. Carry the same executable
+    // policy without asking Cargo to link a binary this package no longer owns.
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").expect("Cargo must provide the target OS");
+    let target_env =
+        std::env::var("CARGO_CFG_TARGET_ENV").expect("Cargo must provide the target environment");
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join("packaging/executable_link.rs").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join("crates/horizon-guest-stack/src/guest_stack_constants.rs")
+            .display()
+    );
+    for arg in windows_exe::executable_link::arguments(&target_os, &target_env) {
+        println!("cargo:horizon-executable-link-arg={arg}");
+    }
+    if std::env::var("CARGO_PKG_NAME").as_deref() != Ok("horizon-client") {
+        windows_exe::resources("horizon-client");
+    } else if target_os == "windows" {
+        let manifest_dir =
+            std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+        let ico = manifest_dir
+            .join("../..")
+            .join("packaging/icons/tachyon.ico");
+        println!("cargo:rerun-if-changed={}", ico.display());
+        println!("cargo:rerun-if-env-changed=WINDRES");
+        println!("cargo:rerun-if-env-changed=AR");
+        println!("cargo:rerun-if-env-changed=RC_PATH");
+        for arg in windows_exe::executable_link::arguments(&target_os, &target_env) {
+            println!("cargo:rustc-link-arg-bin=tachyon-desktop={arg}");
+        }
+        let (resource_manifest_dir, resource_icon) = match resource_path(&manifest_dir, &target_env)
+            .and_then(|dir| Ok((dir, resource_path(&ico, &target_env)?)))
+        {
+            Ok(paths) => paths,
+            Err(e) if std::env::var_os("CI").is_none() => {
+                println!("cargo:warning=building without Tachyon's icon: {e}");
+                return;
+            }
+            Err(e) => panic!("{e}"),
+        };
+        let mut resource = winresource::WindowsResource::new();
+        resource.set_icon(&resource_icon);
+        if std::env::var_os("CARGO_FEATURE_WINDOWS_SEGMENT_HEAP").is_some() {
+            let manifest = manifest_dir.join("windows-segment-heap.manifest");
+            println!("cargo:rerun-if-changed={}", manifest.display());
+            let resource_manifest =
+                resource_path(&manifest, &target_env).unwrap_or_else(|e| panic!("{e}"));
+            resource.set_manifest_file(&resource_manifest);
+        }
+        let original_manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR").unwrap();
+        if cfg!(windows) && target_env == "gnu" {
+            unsafe { std::env::set_var("CARGO_MANIFEST_DIR", &resource_manifest_dir) };
+        }
+        let result = resource.compile();
+        if cfg!(windows) && target_env == "gnu" {
+            unsafe { std::env::set_var("CARGO_MANIFEST_DIR", original_manifest_dir) };
+        }
+        result.expect("embedding Tachyon's icon in Windows resources");
     }
 }
 

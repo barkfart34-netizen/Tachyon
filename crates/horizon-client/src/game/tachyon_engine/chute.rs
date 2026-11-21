@@ -162,8 +162,8 @@ pub(super) fn read(value: &serde_json::Value) -> HashMap<[i32; 3], Chute> {
 /// Stacks have no serde form. The world's item codec preserves damage,
 /// names and other components in the owner's JSON file as NBT bytes.
 mod stack_nbt {
+    use horizon_core::nbt::{self, Limits};
     use horizon_items::{item_nbt, items::ItemStack};
-    use horizon_world::nbt::{self, Limits};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub(super) fn serialize<S: Serializer>(
@@ -351,7 +351,8 @@ pub(super) fn preview_place<L: LevelAccess + ?Sized>(
     ticks: &mut Ticks,
     ctx: &PlaceContext,
 ) -> Option<(BlockPos, BlockStateId)> {
-    let (proposed, state) = b.placement_state(level, ticks, ctx)?;
+    let preview = b.placement_preview(level, ticks, ctx)?;
+    let (proposed, state) = (preview.pos, preview.state);
     let facing = chute_facing_for(ctx);
     let p = [proposed.x, proposed.y, proposed.z];
     if neighbours(p, facing).any(|q| !level.is_loaded(BlockPos::new(q[0], q[1], q[2]))) {
@@ -582,7 +583,7 @@ impl Game<'_> {
         }
     }
     fn tachyon_chute_limit(&self, stack: &ItemStack) -> u32 {
-        if let Some(horizon_world::nbt::Tag::Int(n)) =
+        if let Some(horizon_core::nbt::Tag::Int(n)) =
             stack.data().and_then(|d| d.other("minecraft:max_stack_size"))
         {
             return (*n).max(1) as u32;
@@ -651,7 +652,7 @@ impl Game<'_> {
         })
     }
     /// A hopper puts back only what it just took and couldn't insert.
-    pub(in crate::game) fn tachyon_chute_return(&mut self, pos: [i32; 3], stack: ItemStack) {
+    pub(in crate::game) fn tachyon_chute_put_back(&mut self, pos: [i32; 3], stack: ItemStack) {
         let dimension = self.dim.id();
         let root = self.save.root.clone();
         OWNERS.with_borrow_mut(|owners| {
@@ -1126,11 +1127,11 @@ mod tests {
     #[test]
     fn saved_chutes_keep_damage_and_components() {
         let mut item = ItemStack::new("minecraft:iron_pickaxe", 1);
-        let tag = horizon_world::nbt::Tag::compound([
-            ("minecraft:damage", horizon_world::nbt::Tag::Int(7)),
+        let tag = horizon_core::nbt::Tag::compound([
+            ("minecraft:damage", horizon_core::nbt::Tag::Int(7)),
             (
                 "minecraft:custom_data",
-                horizon_world::nbt::Tag::compound([("chute", horizon_world::nbt::Tag::Int(42))]),
+                horizon_core::nbt::Tag::compound([("chute", horizon_core::nbt::Tag::Int(42))]),
             ),
         ]);
         (item.damage, item.extra) = horizon_client::item_data::decode_components(Some(&tag));

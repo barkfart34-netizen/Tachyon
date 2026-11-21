@@ -4,8 +4,8 @@
 use super::recipes as m;
 use crate::game::Game;
 use crate::game::native_hooks::{
-    NativeItem, NativePanelEvent, NativeRecipe, NativeRecipeKind, NativeRecipeLayout,
-    NativeRecipeStack, NativeRecipeView, NativeStack,
+    NativeItem, NativeRecipe, NativeRecipeKind, NativeRecipeLayout, NativeRecipeResult,
+    NativeRecipeStack, NativeRecipeView,
 };
 
 fn item(i: &NativeItem) -> m::Item {
@@ -137,23 +137,34 @@ fn processing(game: &Game<'_>, items: &[NativeItem]) -> Vec<m::Recipe> {
     out
 }
 
-fn native(s: &m::Stack) -> NativeStack {
-    NativeStack {
-        item: s.item.clone(),
+fn native(s: &m::Stack) -> Option<mod_api::Stack> {
+    Some(mod_api::Stack {
+        item: mod_api::__private::item_key(&s.item)?,
         count: s.count,
         components: s.components.clone(),
-    }
+    })
 }
 
-fn stack(s: &NativeStack) -> m::Stack {
+fn stack(s: &mod_api::Stack) -> m::Stack {
     m::Stack {
-        item: s.item.clone(),
+        item: mod_api::__private::item_key_id(s.item)
+            .unwrap_or("")
+            .to_owned(),
         count: s.count,
         components: s.components.clone(),
     }
 }
 
 fn view(v: &m::View) -> NativeRecipeView {
+    let result_stacks: Vec<mod_api::Stack> = v.results.iter().filter_map(native).collect();
+    let results = if result_stacks.is_empty() {
+        Vec::new()
+    } else {
+        vec![NativeRecipeResult {
+            stacks: result_stacks,
+            chance: None,
+        }]
+    };
     NativeRecipeView {
         layout: match v.layout {
             m::Layout::Grid => NativeRecipeLayout::Grid,
@@ -167,9 +178,11 @@ fn view(v: &m::View) -> NativeRecipeView {
         slots: v
             .slots
             .iter()
-            .map(|s| s.iter().map(native).collect())
+            .map(|s| s.iter().filter_map(native).collect())
             .collect(),
-        results: v.results.iter().map(native).collect(),
+        results,
+        fluid_inputs: Vec::new(),
+        fluid_outputs: Vec::new(),
         note: v.note.clone(),
         action: v.action,
     }
@@ -178,7 +191,7 @@ fn view(v: &m::View) -> NativeRecipeView {
 /// Loads the world's tables once a world is open, and drops them (and the
 /// panel) when it closes or the player turns the mod off.
 pub(super) fn frame(game: &mut Game<'_>) {
-    let tables = if game.native_on(m::ID) {
+    let tables = if game.on(m::ID) {
         game.native_recipes()
     } else {
         None
@@ -194,25 +207,25 @@ pub(super) fn frame(game: &mut Game<'_>) {
         (None, true) => {
             m::set_viewer(None);
             game.native_panel_recipes(m::ID, "", Vec::new(), 0, Vec::new());
-            game.native_panel_items(m::ID, Vec::new());
+            game.panel_items(m::ID, Vec::new());
         }
         _ => {}
     }
 }
 
 /// The player's action on the panel, as the WebAssembly mod handled it.
-pub(super) fn event(game: &mut Game<'_>, event: &NativePanelEvent) {
+pub(super) fn event(game: &mut Game<'_>, event: &mod_api::PanelEvent) {
     let event = match event {
-        NativePanelEvent::Search(text) => m::Event::Search(text.clone()),
-        NativePanelEvent::Clicked { index, right } => m::Event::Clicked {
+        mod_api::PanelEvent::Search(text) => m::Event::Search(text.clone()),
+        mod_api::PanelEvent::Clicked { index, right } => m::Event::Clicked {
             index: *index as usize,
             right: *right,
         },
-        NativePanelEvent::Key { key, stack: s } => {
+        mod_api::PanelEvent::Key { key, stack: s } => {
             let [[recipe, _, recipe_default], [uses, _, uses_default]] = m::KEYS;
-            let uses = if *key == game.native_mod_key(m::ID, recipe, recipe_default) {
+            let uses = if *key == game.tachyon_mod_key(m::ID, recipe, recipe_default) {
                 false
-            } else if *key == game.native_mod_key(m::ID, uses, uses_default) {
+            } else if *key == game.tachyon_mod_key(m::ID, uses, uses_default) {
                 true
             } else {
                 return;
@@ -222,24 +235,24 @@ pub(super) fn event(game: &mut Game<'_>, event: &NativePanelEvent) {
                 stack: stack(s),
             }
         }
-        NativePanelEvent::SlotClicked {
+        mod_api::PanelEvent::SlotClicked {
             stack: s, right, ..
         } => m::Event::SlotClicked {
             stack: stack(s),
             right: *right,
         },
-        NativePanelEvent::Tab(i) => m::Event::Tab(*i as usize),
-        NativePanelEvent::Action(i) => m::Event::Action(*i as usize),
-        NativePanelEvent::Back => m::Event::Back,
+        mod_api::PanelEvent::Tab(i) => m::Event::Tab(*i as usize),
+        mod_api::PanelEvent::Action(i) => m::Event::Action(*i as usize),
+        mod_api::PanelEvent::Back => m::Event::Back,
         _ => return,
     };
-    let give = m::gives(game.native_setting(m::ID, "give"));
-    let known = game.native_known_recipes();
+    let give = m::gives(game.stored_setting(m::ID, "give"));
+    let known = game.known_recipes();
     let outs = m::with_viewer(|v| v.handle(event.clone(), give, true, &known)).unwrap_or_default();
     for out in outs {
         if let m::Out::Give { item, count } = &out {
             // Not in creative mode: the click shows the item's page, as with the setting off.
-            if game.native_give(item, *count).is_err() {
+            if game.recipe_give(item, *count).is_err() {
                 let again = m::with_viewer(|v| v.handle(event.clone(), false, false, &known));
                 for out in again.unwrap_or_default() {
                     apply(game, out);
@@ -253,7 +266,9 @@ pub(super) fn event(game: &mut Game<'_>, event: &NativePanelEvent) {
 
 fn apply(game: &mut Game<'_>, out: m::Out) {
     match out {
-        m::Out::Items(items) => game.native_panel_items(m::ID, items.iter().map(native).collect()),
+        m::Out::Items(items) => {
+            game.panel_items(m::ID, items.iter().filter_map(native).collect());
+        }
         m::Out::Recipes {
             title,
             tabs,
@@ -262,15 +277,15 @@ fn apply(game: &mut Game<'_>, out: m::Out) {
         } => game.native_panel_recipes(
             m::ID,
             &title,
-            tabs.iter().map(native).collect(),
+            tabs.iter().filter_map(native).collect(),
             tab as u32,
             views.iter().map(view).collect(),
         ),
         m::Out::Give { item, count } => {
-            let _ = game.native_give(&item, count);
+            let _ = game.recipe_give(&item, count);
         }
         m::Out::Place(book) => {
-            if let Err(e) = game.native_place_recipe(book, false) {
+            if let Err(e) = game.place_recipe(book, false) {
                 game.native_chat(&e);
             }
         }

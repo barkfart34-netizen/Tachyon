@@ -65,7 +65,8 @@ impl<L: LevelAccess + ?Sized> PlacementValidator for BehavioursPlacement<'_, L> 
                 ctx,
             );
         }
-        self.behaviours.placement_state(self.level, self.ticks, ctx)
+        let preview = self.behaviours.placement_preview(self.level, self.ticks, ctx)?;
+        Some((preview.pos, preview.state))
     }
 
     fn state_for_placement(
@@ -630,7 +631,7 @@ mod tests {
 
     #[test]
     fn deployer_and_assist_validate_placement_axis_waterlogging_and_survival() {
-        use horizon_world::nbt::{Compound, JavaString, Tag};
+        use horizon_core::nbt::{Compound, JavaString, Tag};
 
         let nbt_state = |name: &str, properties: &[(&str, &str)]| -> Tag {
             let mut map = Compound::new();

@@ -262,11 +262,11 @@ fn particle_positions(gap: [i32; 3], random: &mut impl RandomSource) -> [[f64; 3
 /// A tick of the turning gaps: the stacks in them crushed (what they made
 /// into `out`), the dropped items in them taken in by an empty one, else
 /// held there till it is. Whether a stack went in or out.
-fn crush(
+fn crush_with(
     owner: &mut Owner,
     create: &Recipes,
     turning: &HashMap<[i32; 3], Gap>,
-    dropped: &mut [ItemEntity],
+    each_dropped: impl FnOnce(&mut dyn FnMut(&mut ItemEntity)),
     random: &mut impl RandomSource,
     out: &mut Vec<Out>,
 ) -> bool {
@@ -299,15 +299,15 @@ fn crush(
         let (at, velocity) = exit(*p, gap.out);
         out.push((*p, made, at, velocity));
     }
-    for item in dropped.iter_mut() {
+    each_dropped(&mut |item: &mut ItemEntity| {
         let at = item.position;
         let cell = [at.x.floor() as i32, at.y.floor() as i32, at.z.floor() as i32];
         if !turning.contains_key(&cell) || owner.passed.get(&item.id) == Some(&cell) {
-            continue;
+            return;
         }
         if item.stack.extra.is_some() {
             owner.passed.insert(item.id, cell);
-            continue;
+            return;
         }
         if owner.crushers.contains_key(&cell) || owner.crushing_entities.contains_key(&cell) {
             item.position.x = f64::from(cell[0]) + 0.5;
@@ -317,7 +317,7 @@ fn crush(
             item.velocity.x = 0.0;
             item.velocity.y = 0.0;
             item.velocity.z = 0.0;
-            continue;
+            return;
         }
         let name = item.stack.item.to_string();
         let recipe = create.crushing(&name).or_else(|| create.milling(&name));
@@ -329,8 +329,31 @@ fn crush(
         moved = true;
         // Gone into the gap.
         item.stack.count = 0;
-    }
+    });
     moved
+}
+
+#[cfg(test)]
+fn crush(
+    owner: &mut Owner,
+    create: &Recipes,
+    turning: &HashMap<[i32; 3], Gap>,
+    dropped: &mut [ItemEntity],
+    random: &mut impl RandomSource,
+    out: &mut Vec<Out>,
+) -> bool {
+    crush_with(
+        owner,
+        create,
+        turning,
+        |f| {
+            for item in dropped.iter_mut() {
+                f(item);
+            }
+        },
+        random,
+        out,
+    )
 }
 
 impl Game<'_> {
@@ -419,8 +442,16 @@ impl Game<'_> {
                 }
             }
             let hurt = living(owner, &pairs, &turning, &entities);
-            let moved = create
-                .is_some_and(|create| crush(owner, &create, &turning, dropped, random, &mut out));
+            let moved = create.is_some_and(|create| {
+                crush_with(
+                    owner,
+                    &create,
+                    &turning,
+                    |f| dropped.for_each_mut(f),
+                    random,
+                    &mut out,
+                )
+            });
             // Saved at once when items left the world or came back to it.
             if moved || !gone.is_empty() {
                 owner.save(&root, dimension);
@@ -449,12 +480,16 @@ impl Game<'_> {
         }
         for mob in &mut self.mobs {
             if hurt.contains(&Living::Mob(mob.id)) {
-                mob.damage(DAMAGE, Damage::of(DamageKind::Crush));
+                mob.damage(
+                    crate::game::entity::damage_level_of!(self),
+                    DAMAGE,
+                    Damage::of(DamageKind::Crush),
+                );
             }
         }
         self.for_each_player(|g| {
             if hurt.contains(&Living::Player(g.acting_uuid())) && !g.creative && !g.spectator() {
-                g.hurt_player_from(DAMAGE, None, DAMAGE_TYPE, Some(None));
+                g.hurt_player_from(DAMAGE, None, DAMAGE_TYPE, Some(None), false);
             }
         });
     }
@@ -703,6 +738,7 @@ mod tests {
         let mut out = Vec::new();
         let at = horizon_core::geometry::Vec3::new(1.5, 0.3, 0.5);
         let mut dropped = vec![ItemEntity {
+            attachment_lifetime: Default::default(),
             rotation: [0.0, 0.0],
             join: Default::default(),
             no_gravity: false,

@@ -69,36 +69,41 @@ fn meets(pos: [i32; 3], lo: [f64; 3], hi: [f64; 3], grow: f64) -> bool {
     })
 }
 
+fn convey_one(belts: &HashMap<[i32; 3], [f64; 3]>, item: &mut ItemEntity) {
+    let p = item.position;
+    let y = p.y.floor();
+    // On the belt's top (9/16), not over it.
+    if p.y - y > 0.75 {
+        return;
+    }
+    let cell = |dx: f64, dz: f64| [(p.x + dx).floor() as i32, y as i32, (p.z + dz).floor() as i32];
+    let under = [(0.0, 0.0), (-0.125, 0.0), (0.125, 0.0), (0.0, -0.125), (0.0, 0.125)]
+        .into_iter()
+        .map(|(dx, dz)| cell(dx, dz))
+        .find_map(|c| Some((c, *belts.get(&c)?)));
+    let Some((at, way)) = under else {
+        return;
+    };
+    // Along the belt at its speed; across, to its middle.
+    let v = &mut item.velocity;
+    if way[0] != 0.0 {
+        v.x = way[0];
+        v.z = (f64::from(at[2]) + 0.5 - p.z) * 0.2;
+    } else {
+        v.z = way[2];
+        v.x = (f64::from(at[0]) + 0.5 - p.x) * 0.2;
+    }
+}
+
 /// Carries the dropped items by the turning belt under their middle, else
 /// under their edge. Their ordinary item ticks move them and let them fall.
+#[cfg(test)]
 fn convey(belts: &HashMap<[i32; 3], [f64; 3]>, dropped: &mut [ItemEntity]) {
     if belts.is_empty() {
         return;
     }
     for item in dropped {
-        let p = item.position;
-        let y = p.y.floor();
-        // On the belt's top (9/16), not over it.
-        if p.y - y > 0.75 {
-            continue;
-        }
-        let cell = |dx: f64, dz: f64| [(p.x + dx).floor() as i32, y as i32, (p.z + dz).floor() as i32];
-        let under = [(0.0, 0.0), (-0.125, 0.0), (0.125, 0.0), (0.0, -0.125), (0.0, 0.125)]
-            .into_iter()
-            .map(|(dx, dz)| cell(dx, dz))
-            .find_map(|c| Some((c, *belts.get(&c)?)));
-        let Some((at, way)) = under else {
-            continue;
-        };
-        // Along the belt at its speed; across, to its middle.
-        let v = &mut item.velocity;
-        if way[0] != 0.0 {
-            v.x = way[0];
-            v.z = (f64::from(at[2]) + 0.5 - p.z) * 0.2;
-        } else {
-            v.z = way[2];
-            v.x = (f64::from(at[0]) + 0.5 - p.x) * 0.2;
-        }
+        convey_one(belts, item);
     }
 }
 
@@ -106,7 +111,9 @@ fn convey(belts: &HashMap<[i32; 3], [f64; 3]>, dropped: &mut [ItemEntity]) {
 /// its usual container rules and spawning; tests need neither its resources
 /// nor a running window.
 trait FunnelWorld {
-    fn dropped(&mut self) -> &mut Vec<ItemEntity>;
+    fn dropped_slice(&self) -> &[ItemEntity];
+    fn remove_dropped(&mut self, index: usize);
+    fn set_dropped_stack(&mut self, index: usize, stack: ItemStack);
     fn put(&mut self, at: (i32, i32, i32), stack: ItemStack, face: Direction) -> Option<ItemStack>;
     fn take(&mut self, at: (i32, i32, i32), face: Direction, most: u32) -> Option<ItemStack>;
     fn spawn(&mut self, stack: ItemStack, at: [f64; 3], velocity: [f64; 3], delay: u32);
@@ -121,7 +128,7 @@ fn funnel(world: &mut impl FunnelWorld, pos: [i32; 3], facing: Dir, out: bool, t
     let Some(face) = dir_from_name(facing.name()) else {
         return;
     };
-    let near: Vec<usize> = (world.dropped().iter().enumerate())
+    let near: Vec<usize> = (world.dropped_slice().iter().enumerate())
         .filter(|(_, d)| {
             let b = d.bounds();
             let (lo, hi) = (b.min_position(), b.max_position());
@@ -132,12 +139,12 @@ fn funnel(world: &mut impl FunnelWorld, pos: [i32; 3], facing: Dir, out: bool, t
     if !out {
         // Last first, so the others keep their places.
         for i in near.into_iter().rev() {
-            let stack = world.dropped()[i].stack.clone();
+            let stack = world.dropped_slice()[i].stack.clone();
             match world.put(behind, stack, face) {
                 None => {
-                    world.dropped().remove(i);
+                    world.remove_dropped(i);
                 }
-                Some(rest) => world.dropped()[i].stack = rest,
+                Some(rest) => world.set_dropped_stack(i, rest),
             }
         }
         return;
@@ -168,7 +175,9 @@ impl Game<'_> {
                 .map(|o| moving(&o.index.parts, &o.shown.speeds))
                 .unwrap_or_default()
         });
-        convey(&belts, &mut self.dropped);
+        if !belts.is_empty() {
+            self.dropped.for_each_mut(|item| convey_one(&belts, item));
+        }
     }
 
     /// The owner's funnels: putting the items that come into them into the
@@ -197,8 +206,14 @@ impl Game<'_> {
 }
 
 impl FunnelWorld for Game<'_> {
-    fn dropped(&mut self) -> &mut Vec<ItemEntity> {
-        &mut self.dropped
+    fn dropped_slice(&self) -> &[ItemEntity] {
+        &self.dropped
+    }
+    fn remove_dropped(&mut self, index: usize) {
+        self.dropped.remove(index);
+    }
+    fn set_dropped_stack(&mut self, index: usize, stack: ItemStack) {
+        self.dropped.update(index, |item| item.stack = stack);
     }
     fn put(&mut self, at: (i32, i32, i32), stack: ItemStack, face: Direction) -> Option<ItemStack> {
         self.tachyon_container_put(at, stack, face)
@@ -225,11 +240,11 @@ mod tests {
         world::World,
     };
     use horizon_core::geometry::Vec3;
+    use horizon_core::nbt::Tag;
     use horizon_world::{
         DATA_VERSION,
         block_collision::BlockCollisionRegistry,
         collision::CachedCollisionRegistry,
-        nbt::Tag,
         registry::{BlockRegistry, BlockStateId},
     };
     use std::sync::{Arc, OnceLock};
@@ -240,6 +255,7 @@ mod tests {
 
     fn item(id: u32, position: Vec3, count: u32) -> ItemEntity {
         ItemEntity {
+            attachment_lifetime: Default::default(),
             rotation: [0.0, 0.0],
             join: Default::default(),
             no_gravity: false,
@@ -371,6 +387,7 @@ mod tests {
                     .map(|name| StateFacts {
                         name: name.into(),
                         emission: 0,
+                        dynamic_light: false,
                         dampening: 0,
                         skylight_down: true,
                         shape_occlusion: false,
@@ -382,10 +399,12 @@ mod tests {
                         random_ticks: false,
                         block_entity: false,
                         render_shape: RenderShape::Model,
+                        destroy_overlay: true,
                         full_collision: name == "minecraft:stone",
                         friction: 0.6,
                         explosion_resistance: 0.0,
                         item: name.into(),
+                        pick_item: name.into(),
                         sounds: Sounds {
                             volume: 1.0,
                             pitch: 1.0,
@@ -410,6 +429,7 @@ mod tests {
                     })
                     .collect(),
                 woods: Default::default(),
+                sign_texts: Default::default(),
             };
             let assets = Assets {
                 registry,
@@ -444,6 +464,19 @@ mod tests {
             self.world.set(at[0], at[1], at[2], state).unwrap();
         }
         fn tick(&self, dropped: &mut [ItemEntity]) {
+            static CONTEXT: OnceLock<horizon_world::native_load_context::LoopContext> =
+                OnceLock::new();
+            let context = CONTEXT.get_or_init(|| {
+                horizon_world::native_load_context::LoadContext::new(
+                    horizon_world::native_load_context::DataLoadOrigin::ServerDataLoad,
+                    Arc::new(horizon_world::native_load_context::LoadInputs::new(
+                        Default::default(),
+                        Default::default(),
+                    )),
+                    [],
+                )
+                .loop_context(horizon_world::native_load_context::LoopSide::Server, [])
+            });
             for d in dropped {
                 // ItemEntity.tick without fluids: the move, then the settle.
                 let _ = &self.fluids;
@@ -456,8 +489,9 @@ mod tests {
                     &[],
                     None,
                     None,
+                    context,
                 );
-                assert!(d.tick_settle(&self.world, &self.facts, false, step));
+                assert!(d.tick_settle(&self.world, &self.facts, false, step, context));
             }
         }
     }
@@ -473,8 +507,14 @@ mod tests {
         next_id: u32,
     }
     impl FunnelWorld for Funnels {
-        fn dropped(&mut self) -> &mut Vec<ItemEntity> {
-            &mut self.dropped
+        fn dropped_slice(&self) -> &[ItemEntity] {
+            &self.dropped
+        }
+        fn remove_dropped(&mut self, index: usize) {
+            self.dropped.remove(index);
+        }
+        fn set_dropped_stack(&mut self, index: usize, stack: ItemStack) {
+            self.dropped[index].stack = stack;
         }
         fn put(
             &mut self,

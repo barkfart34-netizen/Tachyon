@@ -95,7 +95,13 @@ pub enum Loader {
     ItemLayers,
     /// `neoforge:empty` / `forge:empty`: intentional geometry-free model.
     Empty,
-    /// A loader this decoder does not know: it adds no geometry.
+    /// A loader a native mod registered ([`crate::model_loaders`]): the model's JSON object,
+    /// which its mod reads.
+    Registered {
+        kind: String,
+        config: Arc<serde_json::Value>,
+    },
+    /// A loader nobody registered: it adds no geometry.
     Unknown(String),
 }
 /// NeoForge's `neoforge_data` of an element or a face; a face's keys win.
@@ -387,6 +393,18 @@ impl Loader {
             }
             "neoforge:item_layers" | "forge:item_layers" => Ok(Self::ItemLayers),
             "neoforge:empty" | "forge:empty" => Ok(Self::Empty),
+            kind if crate::model_loaders::is_registered(kind) => {
+                let mut config = serde_json::Map::new();
+                for (key, raw) in obj {
+                    let value = serde_json::from_str(raw.get())
+                        .map_err(|_| error("invalid model loader data"))?;
+                    config.insert(key.clone(), value);
+                }
+                Ok(Self::Registered {
+                    kind: name,
+                    config: Arc::new(serde_json::Value::Object(config)),
+                })
+            }
             _ => Ok(Self::Unknown(name)),
         }
     }

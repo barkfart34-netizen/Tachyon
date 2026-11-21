@@ -24,12 +24,18 @@ Vanilla oracles are reused too: tools/parity_shim.py stands in for java and
 javac and replays an oracle run whose inputs are unchanged, so a Rust-only
 change costs only the Rust side. A harness that fails while reusing oracle
 results is rerun fresh, and stops reusing them if it then passes. --all and
---fresh never reuse them.
+--fresh never reuse them. The summary says what the shim did with each Java
+call: replayed, or run and why.
 
 A harness listed in parity_hosts.json's "known_flaky" (each with its reason)
 that fails runs once more from scratch instead, and a pass then counts. Every
 retry is printed as a RETRIED line in the summary and in the CI job's summary.
 Fix the cause, then take the harness off the list: nothing else gets this retry.
+
+A harness or shard (datafix#2) listed in parity_hosts.json's "known_failing"
+("#issue: what differs") runs and reports as usual, but its failure, of any kind,
+doesn't fail the run: parity-main and the Nightly stop only for new failures
+(docs/parity-workflow.md).
 
 Harness probes build into .local/parity-target with release optimisations but
 without LTO and with 16 codegen units (`PROFILE` below), which builds in
@@ -44,6 +50,7 @@ the second build would replace the program the first is running.
 """
 
 import argparse
+from collections import Counter
 import hashlib
 import json
 import os
@@ -52,6 +59,7 @@ import re
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
@@ -79,6 +87,8 @@ PROFILE = {
     "CARGO_PROFILE_DEV_OPT_LEVEL": "3",
 }
 SHIM = STATE_DIR / "shim"
+# One line per Java call the shim handled in this run (tools/parity_shim.py's decide), summed up at its end.
+DECISIONS = STATE_DIR / "shim-decisions.jsonl"
 # Results shared by every worktree using the same vanilla data (.local/minecraft
 # links to a shared directory in parallel worktrees): passes keyed by content,
 # so a harness whose inputs match one that passed elsewhere doesn't run again.
@@ -206,9 +216,22 @@ def environment_key(hasher):
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
+# Directories whose modules a harness finds by file name (tools/command_exec_corpus.py, discovered_groups): a
+# harness that recorded one of their files depends on all of them, also on one added after its record was made.
+GROUP_DIRECTORIES = ("tools/command_exec_groups/",)
+
+
+def group_files(dependencies):
+    """The .py files now in the GROUP_DIRECTORIES that dependencies name a file of, as paths from ROOT."""
+    plain = {path.split(KEEP)[0].replace("\\", "/") for path in dependencies}
+    return {file.relative_to(ROOT).as_posix()
+            for directory in GROUP_DIRECTORIES if any(path.startswith(directory) for path in plain)
+            for file in (ROOT / directory).glob("*.py")}
+
+
 def key(record, hasher, environment):
     digest = hashlib.sha256(environment.encode())
-    for path in sorted(record["dependencies"]):
+    for path in sorted({*record["dependencies"], *group_files(record["dependencies"])}):
         digest.update(f"{path}\0{hasher(ROOT / path)}\n".encode())
     return digest.hexdigest()
 
@@ -258,7 +281,9 @@ def artifacts_of(arguments):
     index = 1
     while index < len(arguments):
         argument = arguments[index]
-        flag, _, value = argument.partition("=")
+        flag, sep, value = argument.partition("=")
+        if not sep and flag[:2] in ("-p", "-F") and len(flag) > 2:
+            flag, value = flag[:2], flag[2:]
         if flag in SELECTION_FLAGS | {"--profile", "--example", "--bin"} and not value and index + 1 < len(arguments):
             value = arguments[index + 1]
             index += 1
@@ -401,7 +426,7 @@ def impl_targets(header, text, workspace):
 def narrow_rust_sources(sources, scope):
     """Drop the workspace Rust sources a harness's declared PARITY_RUST_SCOPE proves it can't reach.
 
-    The scope lists source prefixes (crates/horizon-world/src/nbt.rs,
+    The scope lists source prefixes (crates/horizon-core/src/nbt.rs,
     crates/horizon-world/src/datafix/). It applies only if it is closed: no
     file in it names a module, crate item or macro outside it (crate::,
     super::, other workspace crates), declares a module it doesn't cover, or
@@ -619,6 +644,43 @@ def run_environment(reuse_oracles=False):
     return environment
 
 
+def check_oracle_hashes(cache, repair=False, seconds=5):
+    """The oracle shims' hash database (tools/parity_shim.py), checked once before any shim of this run starts.
+    Shims never remove or make it again, since another may have it open; one that fails only hashes files itself. A
+    database SQLite's quick_check finds damaged, or that is no database at all (a cache entry cut short), is removed
+    with its -wal and -shm files only with `repair`, when this run owns the cache alone (PARITY_REPAIR_ORACLE_HASHES=1:
+    parity-hosted.yml, a fresh runner with one parity run); the first shim then makes it again. Otherwise another
+    parity run in this checkout may have it open (an idle connection doesn't stop quick_check), so it is only named,
+    and the shims hash files themselves. quick_check reads every page: about 30 ms for 60 MiB (2026-11-20). One that
+    runs past `seconds` or meets a lock leaves the database as it is."""
+    path = cache / "hashes.sqlite"
+    if not path.exists():
+        return
+    deadline = time.monotonic() + seconds
+    try:
+        db = sqlite3.connect(path, timeout=1)
+        try:
+            db.set_progress_handler(lambda: time.monotonic() > deadline, 10000)
+            damaged = db.execute("pragma quick_check").fetchone()[0] != "ok"
+        finally:
+            db.close()
+    except sqlite3.OperationalError as error:
+        if any(word in str(error) for word in ("interrupted", "locked", "busy")):
+            print("The oracle shims' hash database was not checked in time: left as it is.", flush=True)
+            return
+        damaged = True
+    except sqlite3.DatabaseError:
+        damaged = True
+    if damaged and repair:
+        for name in (path.name, f"{path.name}-wal", f"{path.name}-shm"):
+            path.with_name(name).unlink(missing_ok=True)
+        print("The oracle shims' hash database was damaged: removed, the first shim makes it again.", flush=True)
+    elif damaged:
+        print(f"The oracle shims' hash database {path} is damaged: left as it is (another parity run may have it "
+              "open), and the shims hash files themselves. Remove it with its -wal and -shm files while no parity run "
+              "is running.", flush=True)
+
+
 def default_build_jobs():
     """Cargo jobs for the probe build: PARITY_BUILD_JOBS, else every thread, within $FLEET_LOAD_JOBS when set."""
     if os.environ.get("PARITY_BUILD_JOBS"):
@@ -826,7 +888,8 @@ def outcome(name, script, passed, elapsed, trace_path, hasher=None):
         if passed:
             clear_large_outputs(name, trace)
         if hasher is not None:
-            record["hashes"] = {path: hasher(ROOT / path) for path in record["dependencies"]}
+            record["hashes"] = {path: hasher(ROOT / path)
+                                for path in {*record["dependencies"], *group_files(record["dependencies"])}}
     else:
         record["dependencies"], record["artifacts"] = [], []
     return record
@@ -843,6 +906,9 @@ class LocalExecutor:
         self.builds = {}  # Windows: {harness: executables(...)}, see clashes
         self.dead = False  # this machine never drops out, unlike a remote host
         self.available, self.measured = 0, 0.0
+        self.decisions = None  # where the shim notes its decisions: the coordinating runner's, not a worker's
+        # Salts the call ids in those notes, so they say which calls are the same within a run and nothing else.
+        self.run_salt = os.urandom(16).hex()
         (STATE_DIR / "logs").mkdir(parents=True, exist_ok=True)
         (STATE_DIR / "traces").mkdir(parents=True, exist_ok=True)
 
@@ -893,6 +959,9 @@ class LocalExecutor:
         game_home.mkdir(parents=True)
         environment.setdefault("HORIZON_HOME", str(game_home))
         environment["PARITY_SHIM_OUTPUTS"] = str(outputs_listing(name, fresh=True))
+        if self.decisions:
+            environment.update(PARITY_SHIM_DECISIONS=str(self.decisions), PARITY_SHIM_HARNESS=name,
+                               PARITY_SHIM_RUN=self.run_salt)
         environment.pop("PARITY_SHARD", None)
         if shard:
             environment["PARITY_SHARD"] = shard
@@ -1165,6 +1234,10 @@ def run(selected, state, hasher, environment_digest, executors, reuse_oracles, r
                 # gets its own retry below instead, which keeps reusing oracle results afterwards.
                 retried.add(label)
                 queue.insert(0, label)
+                if os.environ.get("PARITY_KEEP_FIRST_LOGS") == "1":
+                    # A hosted runner (parity-hosted.yml) keeps nothing else: the first run's log is the only
+                    # evidence of why it failed.
+                    keep_first_log(label)
                 print(f"retry {label} without reused oracle results", flush=True)
                 continue
             # A harness that only passes fresh no longer reuses oracle results.
@@ -1191,7 +1264,7 @@ def run(selected, state, hasher, environment_digest, executors, reuse_oracles, r
                           rounds=len(runs))
             if name in second_chance:
                 record["retried"] = "known flaky"
-            elif label in retried:
+            elif any(harness_of(rl) == name for rl in retried):
                 record["retried"] = "reused oracle results"
             if len({run["status"] for run in runs}) > 1:
                 record["flaky"] = [run["status"] for run in runs]
@@ -1376,13 +1449,17 @@ def git_show(base, path):
     return result.stdout if result.returncode == 0 else None
 
 
+# A TOML line up to its comment: a "#" inside a basic ("...", with escapes) or literal ('...') string is kept.
+MANIFEST_COMMENT = re.compile(r'''^((?:[^#"']|"(?:[^"\\]|\\.)*"|'[^']*')*).*$''')
+
+
 def manifest_lines(text):
     """A Cargo.toml's lines that decide what is built: (section, line) pairs, without its package's identity and
     targets, comments, or workspace crates (whose code counts through its own sources)."""
     lines, section = set(), ""
     name = re.search(r'^\[package\][^\[]*?^name\s*=\s*"([^"]+)"', text or "", re.M | re.S)
     for raw in (text or "").splitlines():
-        line = re.sub(r"\s+", " ", raw.split("#", 1)[0]).strip()
+        line = re.sub(r"\s+", " ", MANIFEST_COMMENT.sub(r"\1", raw) if "#" in raw else raw).strip()
         if not line:
             continue
         if line.startswith("["):
@@ -1529,6 +1606,9 @@ def affected_harnesses(found, records, changed, reach=True, base=None):
         dependencies = [canonical_dependency_path(path) for path in dependencies]
         plain = {path.split(KEEP)[0] for path in dependencies}
         hit = (plain & changed) | parity_reach.unrecorded(ROOT, plain, changed)
+        # A group file added since the record was made isn't in it: the directory's other files stand for it.
+        hit |= {path for path in changed for directory in GROUP_DIRECTORIES
+                if path.startswith(directory) and any(known.startswith(directory) for known in plain)}
         if not hit:
             continue
         if graph is None or any(not path.startswith("crates/") for path in hit):
@@ -1572,6 +1652,46 @@ def known_flaky(config):
     return dict(config.get("known_flaky", {}))
 
 
+def known_failing(config):
+    """Harnesses tools/parity_hosts.json lists as failing on main until their issue is fixed ({name: "#issue: why"}):
+    they still run and report, but their failure doesn't fail the run, so main's parity-main and the Nightly it gates
+    stay held only by new failures. Without this, one regression on main kept every later parity-main red, each run
+    rechecked every merge since the last green one, and no Nightly shipped for days (2026-11-15 to 11-17)."""
+    return dict(config.get("known_failing", {}))
+
+
+def known_entry(name, known):
+    """The known_failing entry covering a harness or shard: the shard's own (datafix#2), else its harness's (datafix,
+    every shard), else None."""
+    return name if name in known else base_name(name) if base_name(name) in known else None
+
+
+def split_known_failing(results, known):
+    """(failures that fail the run, known failing harnesses that failed again, known failing entries all of whose
+    harnesses or shards that ran here passed)."""
+    failed = sorted(name for name, record in results.items() if record["status"] != "pass")
+    blocking = [name for name in failed if known_entry(name, known) is None]
+    again = [name for name in failed if known_entry(name, known) is not None]
+    passed = sorted({known_entry(name, known) for name, record in results.items()
+                     if record["status"] == "pass" and known_entry(name, known) is not None}
+                    - {known_entry(name, known) for name in again})
+    return blocking, again, passed
+
+
+def report_known_failing(again, passed, known):
+    """Say which known failing harnesses failed again, and which passed here, here and in the CI job's summary."""
+    lines = [f"KNOWN FAILING {name}: failed again, not counted ({known[known_entry(name, known)]})" for name in again]
+    # A run of some shards only can pass an entry whose other shards still fail: parity-main's full run decides.
+    lines += [f"KNOWN FAILING {name} passed here: once parity-main passes it too, take it off "
+              f"tools/parity_hosts.json's known_failing ({known[name]})" for name in passed]
+    for line in lines:
+        print(line, flush=True)
+    if lines and os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+            summary.write("### Known failing harnesses (tools/parity_hosts.json)\n" +
+                          "".join(f"- {line}\n" for line in lines))
+
+
 def solo_harnesses(config):
     """Harnesses tools/parity_hosts.json's "solo" lists ({name: reason}: those driving game windows, whose frames
     are drawn on the CPU on Linux runners) run alone on a machine with SOLO_CPUS CPUs or fewer for this process
@@ -1611,6 +1731,74 @@ def report_retries(results, flaky):
             summary.write("### Harnesses that failed once, then ran again\n" + "".join(f"- {line}\n" for line in lines))
 
 
+def fresh_decisions():
+    """An empty DECISIONS for this run's notes, or None (with a warning) if it can't be made: a summary is never worth
+    failing a run for, and a summary of an earlier run's notes would mislead."""
+    try:
+        DECISIONS.write_text("")
+        return DECISIONS
+    except OSError as error:
+        # The repository-relative name only: CI logs are public, and the checkout's path says nothing useful.
+        name = DECISIONS.relative_to(ROOT) if DECISIONS.is_relative_to(ROOT) else DECISIONS.name
+        print(f"warning: no oracle reuse summary this run ({name} can't be written: {type(error).__name__})",
+              flush=True)
+        return None
+
+
+def report_decisions(path):
+    """Sum up what tools/parity_shim.py did with this run's Java calls, here and in the CI job's summary: calls per
+    reason, Java seconds run and replayed, and the harnesses that ran the most Java seconds they might have replayed.
+    Only reasons, counts, seconds and harness names: nothing from the calls themselves. Harnesses run on other machines,
+    and fresh retries (no shim), are not counted. The notes are diagnostics: a line the shim could not write whole is
+    skipped and counted, and nothing here fails the run."""
+    if path is None:
+        return
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    decisions, unreadable = [], 0
+    for line in text.splitlines():
+        try:
+            decision = json.loads(line)
+            if not isinstance(decision, dict) or not isinstance(decision.get("reason"), str):
+                raise ValueError
+            seconds = decision.get("seconds")
+            decision["seconds"] = float(seconds) if isinstance(seconds, (int, float)) else None
+            decisions.append(decision)
+        except ValueError:
+            unreadable += line.strip() != ""
+    if not decisions and not unreadable:
+        return
+    reasons = Counter(decision["reason"] for decision in decisions)
+    replayed = sum(decision["seconds"] or 0 for decision in decisions if decision["reason"] == "hit")
+    ran = sum(decision["seconds"] or 0 for decision in decisions if decision["reason"] != "hit")
+    untimed = sum(decision["seconds"] is None for decision in decisions)
+    missed = Counter()
+    for decision in decisions:
+        if decision["reason"] != "hit" and decision["seconds"]:
+            missed[str(decision.get("harness"))] += decision["seconds"]
+    counts = ", ".join(f"{reason} {count}" for reason, count in reasons.most_common())
+    lines = [f"Java calls: {len(decisions)} ({counts})",
+             f"Java ran {ran:.0f} s, replayed {replayed:.0f} s; {untimed} calls untimed (passed straight to Java)"]
+    if missed:
+        lines.append("Most Java seconds not replayed: " +
+                     ", ".join(f"{harness} {seconds:.0f} s" for harness, seconds in missed.most_common(10)))
+    if unreadable:
+        lines.append(f"{unreadable} unreadable lines skipped")
+    print("\nOracle reuse (tools/parity_shim.py):")
+    for line in lines:
+        print(f"  {line}", flush=True)
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        try:
+            with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                summary.write("### Oracle reuse (tools/parity_shim.py)\n\n| Reason | Calls |\n|---|---:|\n" +
+                              "".join(f"| {reason} | {count} |\n" for reason, count in reasons.most_common()) + "\n" +
+                              "".join(f"- {line}\n" for line in lines[1:]))
+        except OSError:
+            pass
+
+
 def finished_run(failed):
     """Record that this run completed, for tools/gate.py: a crashed runner never writes it."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1626,6 +1814,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("names", nargs="*", help="harness names, e.g. food or block_update")
     parser.add_argument("--all", action="store_true", help="run every harness from scratch, ignoring earlier passes")
+    parser.add_argument("--exclude", action="append", default=[], help="exclude a harness and its shards")
     parser.add_argument("--fresh", action="store_true", help="run the vanilla oracles even if their inputs are unchanged")
     parser.add_argument("--failed", action="store_true", help="rerun the harnesses that failed last time")
     parser.add_argument("--list", action="store_true", help="print what would run, then stop")
@@ -1680,7 +1869,11 @@ def main():
         chosen = [name for name in found if records.get(name, {}).get("status") == "fail"]
     elif args.changed or args.changed_files:
         if args.changed_files:
-            changed, since = set(Path(args.changed_files).read_text(encoding="utf-8").split("\n")) - {""}, ""
+            try:
+                text = Path(args.changed_files).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as error:
+                parser.error(f"cannot read changed-files path {args.changed_files}: {error}")
+            changed, since = set(text.split("\n")) - {""}, ""
         else:
             changed, since = changed_files(args.changed), f" since the merge base with {args.changed}"
         if changed is None:
@@ -1699,6 +1892,7 @@ def main():
               f"depend on them, {len(chosen)} without a pass for their current inputs.", flush=True)
     else:
         chosen = [name for name in found if stale(name, state, hasher, environment)]
+    chosen = [name for name in chosen if base_name(name) not in args.exclude]
     skips = platform_skips(host_config())
     for name in [name for name in chosen if base_name(name) in skips and not args.names]:
         print(f"skipped on {HOST} ({sys.platform}): {name}: {skips[base_name(name)]}", flush=True)
@@ -1709,7 +1903,8 @@ def main():
         chosen.remove(name)
     rounds = {name: args.repeat for name in chosen} if args.repeat > 1 else {}
     if args.flake_check:
-        changed = {name for name in changed_harnesses(found, records, args.flake_check) if base_name(name) not in manual}
+        changed = {name for name in changed_harnesses(found, records, args.flake_check)
+                   if base_name(name) not in manual and base_name(name) not in args.exclude}
         for name in sorted(changed):
             # A pass counts for a changed harness only if it held over enough runs.
             if name not in chosen and records.get(name, {}).get("rounds", 1) < args.flake_rounds:
@@ -1768,9 +1963,12 @@ def main():
         where = "".join(f", plus {host}" for host in hosts)
         print(f"Running {len(selected)} harnesses, {jobs} at a time here{where}...", flush=True)
         reuse_oracles = not (args.fresh or args.all)
+        if reuse_oracles and os.name != "nt":
+            check_oracle_hashes(STATE_DIR / "oracle-cache", os.environ.get("PARITY_REPAIR_ORACLE_HASHES") == "1")
         local = LocalExecutor(jobs, int(memory_available() * 0.75), args.timeout,
                               REMOTE_LOCAL_PEAK if remotes and args.jobs is None else None)
         local.solo = solo_harnesses(config)
+        local.decisions = fresh_decisions()
         if os.name == "nt":
             packages = target_packages()
             local.builds = {name: executables(built, packages) for name, built in built_by.items()}
@@ -1787,7 +1985,12 @@ def main():
     finished_run(failed)
     print(f"\n{len(results) - len(failed)} passed, {len(failed)} failed in {elapsed / 60:.1f} min.")
     report_retries(results, known_flaky(config))
-    for index, name in enumerate(failed):
+    report_decisions(local.decisions if local else None)
+    known = known_failing(config)
+    blocking, again, passed = split_known_failing(results, known)
+    report_known_failing(again, passed, known)
+    # The new failures' logs first: they are what fails the run.
+    for index, name in enumerate(blocking + again):
         log = STATE_DIR / 'logs' / (name + '.log')
         print(f"  {name}: {log}")
         # The end of a harness's output says why it failed, and CI shows only this output.
@@ -1798,7 +2001,7 @@ def main():
                 lines = []
             for line in lines:
                 print(f"    {line[:300]}")
-    return 1 if failed else 0
+    return 1 if blocking else 0
 
 
 if __name__ == "__main__":

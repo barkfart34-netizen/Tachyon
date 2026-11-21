@@ -2037,7 +2037,14 @@ impl AndroidGame {
     /// 20 GUI pixels, centred at the bottom.
     fn hotbar_slot(&self, at: (f32, f32)) -> Option<usize> {
         let screen = self.screen();
-        let scale = HudBatch::new([screen.width as u32, screen.height as u32]).scale;
+        let inputs = match &self.app {
+            App::Ready(game) => game.settings.gui_scale_inputs(),
+            App::Loading(_) => horizon_client::hud::GuiScale {
+                requested: 0,
+                unicode: false,
+            },
+        };
+        let scale = HudBatch::new([screen.width as u32, screen.height as u32], inputs).scale;
         let slot = 20.0 * scale;
         let left = (screen.width - 9.0 * slot) / 2.0;
         if at.1 < screen.height - slot || at.0 < left || at.0 >= left + 9.0 * slot {

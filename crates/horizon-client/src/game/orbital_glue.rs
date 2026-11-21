@@ -4,13 +4,11 @@
 // which does the mod's world work (commands, block edits, height and column reads, the flying speed) in the level
 // being ticked, the two talking over mod messages (`orbital:work`, `orbital:answer`).
 use super::Game;
-use super::native_hooks::{NativeScreenView, NativeShake};
-use super::native_claimed_items::{NativeHeldItem, NativeHit, NativeModEvent};
-use super::native_world_columns::NativeColumnBlocks;
-use super::native_world_edit::{NativeBlockEdit, NativeBlockRun, NativeHeightmap};
-use horizon_client::text::{self, Text};
+use super::api_values::{TryIntoApi, TryIntoEngine};
 use horizon_client::block_sprites::{BlockSprites, FaceSprite, Lookup, SpriteRef};
 use horizon_client::mesher::TintSource;
+use horizon_client::text::{self, Text};
+use mod_api::game::{HeldItemSlot, ModEvent};
 use orbital_laser::horizon_sdk::{__host as host, atlas, game as g, hud, input, ui, world};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, VecDeque};
@@ -27,6 +25,8 @@ const ANSWER: &str = "orbital:answer";
 const MESSAGE: usize = 28_000;
 /// Columns a read or a height query asks in one message (8 bytes each); the answers are split by their own size.
 const READ_COLUMNS: usize = 3000;
+const FLYING_MAX: f32 = 50.0;
+const FLYING_VANILLA: f32 = 0.05;
 
 thread_local! {
     /// Started (its `init` ran) on this thread: the window's.
@@ -98,6 +98,7 @@ fn face(f: &FaceSprite) -> atlas::Face {
             Some(TintSource::DryFoliage) => atlas::Tint::DryFoliage,
             Some(TintSource::Water) => atlas::Tint::Water,
             Some(TintSource::Fixed(c)) => atlas::Tint::Fixed(c),
+            Some(_) => atlas::Tint::None,
         },
         translucent: f.translucent,
     }
@@ -116,7 +117,7 @@ fn block_faces(b: BlockSprites) -> atlas::BlockFaces {
 /// gives. (The mod calls `atlas` synchronously, while the glue holds the game mutably: the lookups own what they read.)
 fn sync_atlas(game: &Game<'_>) {
     let split = game.renderer.as_ref().map_or(u32::MAX, |r| r.sprite_split());
-    let version = game.native_block_sprites_version();
+    let version = game.block_sprites_version();
     thread_local! {
         static GIVEN: Cell<Option<(u64, u32)>> = const { Cell::new(None) };
     }
@@ -126,14 +127,16 @@ fn sync_atlas(game: &Game<'_>) {
     GIVEN.with(|g| g.set(Some((version, split))));
     let context = game.pack.context.clone();
     let textures = context.clone();
+    let block_names = game.pack.layer_names.clone();
+    let texture_names = block_names.clone();
     host::with(|s| {
         s.atlas = Some(host::Atlas {
             blocks: std::sync::Arc::new(move |names: &[String]| {
-                let lookup = Lookup::new(&context, split);
+                let lookup = Lookup::new(&context, split, &block_names);
                 names.iter().map(|n| lookup.block(n).map(block_faces)).collect()
             }),
             textures: std::sync::Arc::new(move |names: &[String]| {
-                let lookup = Lookup::new(&textures, split);
+                let lookup = Lookup::new(&textures, split, &texture_names);
                 names.iter().map(|n| lookup.texture(n).map(sprite)).collect()
             }),
             version,
@@ -144,7 +147,7 @@ fn sync_atlas(game: &Game<'_>) {
 // ---- starting -----------------------------------------------------------------------------------------------------
 
 fn running(game: &mut Game<'_>) -> bool {
-    if !game.native_window() || !game.native_on(ID) {
+    if !game.native_window() || !game.on(ID) {
         return false;
     }
     if let Some(on) = STARTED.with(Cell::get) {
@@ -169,16 +172,16 @@ fn running(game: &mut Game<'_>) -> bool {
     on
 }
 
-fn held(h: NativeHeldItem) -> input::HeldItem {
+fn held(h: HeldItemSlot) -> input::HeldItem {
     input::HeldItem {
-        id: h.id,
+        id: mod_api::__private::item_key_id(h.id).unwrap_or("").to_owned(),
         count: h.count,
         slot: h.slot,
         custom_name: h.custom_name,
         custom_data: h.custom_data,
     }
 }
-fn hit(h: NativeHit) -> world::Hit {
+fn hit(h: mod_api::Hit) -> world::Hit {
     world::Hit {
         block_x: h.block_x,
         block_y: h.block_y,
@@ -186,7 +189,7 @@ fn hit(h: NativeHit) -> world::Hit {
         x: h.x,
         y: h.y,
         z: h.z,
-        block: h.block,
+        block: mod_api::__private::block_key_id(h.block).unwrap_or("").to_owned(),
     }
 }
 
@@ -206,33 +209,38 @@ fn snapshot(game: &mut Game<'_>) {
             dimension: p.dimension.to_owned(),
         }),
         // The SDK keeps the fork's unsigned clock.
-        clock: game.native_clock().map(|c| g::Clock {
+        clock: game.clock().map(|c| g::Clock {
             game_time: c.game_time.max(0) as u64,
             day_time: c.day_time.max(0) as u64,
         }),
-        // API 9's native_held: the mod only asks the held item's id.
-        held: game.native_held().map(|(id, count, _)| input::HeldItem {
-            id,
-            count,
+        // API 9's held: the mod only asks the held item's id.
+        held: game.held().map(|s| input::HeldItem {
+            id: s.item.to_string(),
+            count: s.count,
             slot: game.selected as u32,
             custom_name: None,
             custom_data: None,
         }),
-        view_hit: game.native_view_hit().map(|(d, h)| (d, hit(h))),
+        view_hit: game.view_hit().map(|(d, h)| (d, hit(h))),
         // (the fork's `world.carry-player` answer and `game.player-flying`)
         carried: horizon_client::orbital_carry::carried(),
         flying: game.player.as_ref().is_some_and(|p| p.flying || p.spectator),
     };
     let mut events: Vec<input::Event> = game
-        .native_poll(ID)
+        .poll(ID)
         .into_iter()
-        .map(|e| match e {
-            NativeModEvent::UseStart(item, ticks) => input::Event::UseStart(input::ItemUse { item: held(item), ticks }),
-            NativeModEvent::UseStop(item, ticks) => input::Event::UseStop(input::ItemUse { item: held(item), ticks }),
+        .filter_map(|e| match e {
+            ModEvent::UseStart(item, ticks) => {
+                Some(input::Event::UseStart(input::ItemUse { item: held(item), ticks }))
+            }
+            ModEvent::UseStop(item, ticks) => {
+                Some(input::Event::UseStop(input::ItemUse { item: held(item), ticks }))
+            }
+            _ => None,
         })
         .collect();
     // the mod's screen closed by the game (Escape, another screen): `screen-closed`, as the fork's
-    let shown = game.native_mod_screen() == Some(ID);
+    let shown = game.mod_screen() == Some(ID);
     let typed = CLIENT.with(|c| {
         let mut c = c.borrow_mut();
         if c.screen_open && !shown {
@@ -245,7 +253,7 @@ fn snapshot(game: &mut Game<'_>) {
     });
     let cursor = shown.then(|| {
         let [cx, cy] = gui_centre(game);
-        let [x, y] = game.native_cursor();
+        let [x, y] = game.cursor();
         ui::Point { x: x - cx, y: y - cy }
     });
     host::with(|s| {
@@ -269,19 +277,19 @@ fn heightmap(h: world::Heightmap) -> u8 {
         world::Heightmap::OceanFloor => 4,
     }
 }
-fn heightmap_of(h: u8) -> Option<NativeHeightmap> {
+fn heightmap_of(h: u8) -> Option<mod_api::Heightmap> {
     Some(match h {
-        1 => NativeHeightmap::WorldSurface,
-        2 => NativeHeightmap::MotionBlocking,
-        3 => NativeHeightmap::MotionBlockingNoLeaves,
-        4 => NativeHeightmap::OceanFloor,
+        1 => mod_api::Heightmap::WorldSurface,
+        2 => mod_api::Heightmap::MotionBlocking,
+        3 => mod_api::Heightmap::MotionBlockingNoLeaves,
+        4 => mod_api::Heightmap::OceanFloor,
         _ => return None,
     })
 }
 /// The middle of the GUI, in GUI pixels: the origin of the fork's `ui.draw` and `ui.cursor`.
 fn gui_centre(game: &Game<'_>) -> [f32; 2] {
     let size = game.renderer.as_ref().map_or([1, 1], |r| [r.config.width, r.config.height]);
-    let b = horizon_client::hud::HudBatch::new(size);
+    let b = horizon_client::hud::HudBatch::new(size, game.settings.gui_scale_inputs());
     [b.width / 2.0, b.height / 2.0]
 }
 
@@ -338,13 +346,13 @@ fn show_output(game: &mut Game<'_>) {
             // (a push while a carry holds them is its throw: what they are let go with)
             host::Output::Push { velocity } => {
                 if !horizon_client::orbital_carry::push(velocity) {
-                    game.native_push_player(velocity);
+                    game.push_player(velocity);
                 }
             }
             // (made in the player's own tick: `carry.rs`)
             host::Output::Carry { delta, turn } => horizon_client::orbital_carry::ask(delta, turn),
             host::Output::Screen { open: false } => {
-                game.native_mod_screen_close(ID);
+                game.mod_screen_close(ID);
                 CLIENT.with(|c| c.borrow_mut().screen_open = false);
             }
             host::Output::Screen { open: true } => {}
@@ -352,7 +360,7 @@ fn show_output(game: &mut Game<'_>) {
     }
     if screen {
         // (`ui.show` opens it, or keeps it open; the hooks draw it from the mod's draws each frame)
-        let open = if out_opened { game.native_mod_screen_open(ID) } else { game.native_mod_screen() == Some(ID) };
+        let open = if out_opened { game.mod_screen_open(ID) } else { game.mod_screen() == Some(ID) };
         if open {
             CLIENT.with(|c| c.borrow_mut().screen_open = true);
         } else if out_opened {
@@ -371,11 +379,11 @@ fn show_output(game: &mut Game<'_>) {
         }
     }
     sync_flying_speed(game, fly);
-    game.native_claim_items(ID, &claims);
+    game.claim_items(ID, &claims);
     CLIENT.with(|c| {
         c.borrow_mut().keys = keys.iter().map(|k| [k.name.clone(), k.label.clone(), k.key.clone()]).collect();
     });
-    let day_time = game.native_clock().map_or(0, |c| c.day_time.max(0) as u64);
+    let day_time = game.clock().map_or(0, |c| c.day_time.max(0) as u64);
     let pass = match (post, params) {
         (Some((source, version)), Some(params)) => Some(horizon_client_render::orbital_post::Pass {
             source,
@@ -420,7 +428,7 @@ fn chat(game: &mut Game<'_>, line: Text) {
         line,
         None,
         horizon_client::chat::ChatSource::Client,
-        game.ticks,
+        game.visual_ticks(),
         focused,
     );
 }
@@ -585,9 +593,20 @@ fn send_columns(tag: u32, columns: &[(i32, i32)], h: u8, below: u32, above: u32)
 /// The client half: the work waiting goes to the server half, as much as the channel takes this tick, the requests
 /// packed into as few messages as they fit (a message, kind 9: requests, each its length then its bytes).
 fn flush_work(game: &mut Game<'_>) {
+    let connected = game
+        .remote
+        .as_ref()
+        .is_some_and(|r| r.joined && r.reconfiguring.is_none());
     CLIENT.with(|c| {
         let mut c = c.borrow_mut();
         while !c.out.is_empty() {
+            if !connected {
+                if c.out.len() > 512 {
+                    static SAID: std::sync::Once = std::sync::Once::new();
+                    SAID.call_once(|| log::warn!("[mod {ID}] world work waiting: not connected"));
+                }
+                break;
+            }
             let mut batch = vec![9u8];
             let mut taken = 0;
             for m in c.out.iter() {
@@ -598,13 +617,12 @@ fn flush_work(game: &mut Game<'_>) {
                 batch.extend_from_slice(m);
                 taken += 1;
             }
-            if let Err(e) = game.native_net_send_to_server(WORK, &batch) {
-                if c.out.len() > 512 {
-                    static SAID: std::sync::Once = std::sync::Once::new();
-                    SAID.call_once(|| log::warn!("[mod {ID}] world work waiting: {e}"));
-                }
-                break;
-            }
+            game.send(horizon_protocol::packets::play::Serverbound::CustomPayload(
+                horizon_protocol::packets::configuration::CustomPayload {
+                    channel: WORK.into(),
+                    data: batch,
+                },
+            ));
             c.out.drain(..taken);
         }
     });
@@ -717,7 +735,7 @@ struct Server {
 
 /// The `net_from_client` hook: a player's request, kept for the tick of their level.
 pub(super) fn from_client(game: &mut Game<'_>, player: u128, channel: &str, data: &[u8]) {
-    if channel != WORK || game.native_window() || !game.native_on(ID) {
+    if channel != WORK || game.native_window() || !game.on(ID) {
         return;
     }
     SERVER.with(|s| s.borrow_mut().work.entry(player).or_default().push_back(data.to_vec()));
@@ -730,12 +748,30 @@ fn uuid(u: u128) -> String {
 
 /// The `level_tick_post` hook: the requests of the players in this level, in order, and the answers that fit.
 pub(super) fn level_tick(game: &mut Game<'_>, dimension: &str) {
-    if game.native_window() || !game.native_on(ID) {
+    if game.native_window() || !game.on(ID) {
         return;
     }
-    let players = game.native_server_players();
-    let mine: Vec<(u128, u8)> =
-        players.iter().filter(|p| p.dimension == dimension).map(|p| (p.uuid, p.permission)).collect();
+    let mine: Vec<(u128, u8)> = game
+        .lan
+        .as_ref()
+        .map(|host| {
+            host.hub
+                .online_players()
+                .filter(|g| g.dimension == dimension)
+                .map(|g| {
+                    let perm = if game.serving.as_ref().is_some_and(|s| s.owner == g.uuid) {
+                        CONSOLE_LEVEL
+                    } else {
+                        host.hub
+                            .ops
+                            .get(&g.uuid)
+                            .map_or(0, |&level| level.clamp(0, 4))
+                    };
+                    (g.uuid, perm)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     for (player, permission) in mine {
         let work = SERVER.with(|s| s.borrow_mut().work.remove(&player)).unwrap_or_default();
         // (what a client sends is its own input, and it runs as the console: only a player at the console's level, who
@@ -766,6 +802,14 @@ pub(super) fn level_tick(game: &mut Game<'_>, dimension: &str) {
     // answers leave as the channel allows, the rest next tick
     let ids: Vec<u128> = SERVER.with(|s| s.borrow().answers.keys().copied().collect());
     for player in ids {
+        let conn = game
+            .lan
+            .as_ref()
+            .and_then(|host| host.hub.guests.iter().find(|g| g.uuid == player && g.placed).map(|g| g.conn));
+        let Some(conn) = conn else {
+            SERVER.with(|s| s.borrow_mut().answers.remove(&player));
+            continue;
+        };
         loop {
             let Some(m) = SERVER.with(|s| s.borrow_mut().answers.get_mut(&player).and_then(|q| q.pop_front())) else {
                 break;
@@ -774,10 +818,16 @@ pub(super) fn level_tick(game: &mut Game<'_>, dimension: &str) {
                 log::warn!("[mod {ID}] an answer of {} bytes left out", m.len());
                 continue;
             }
-            if let Err(e) = game.native_net_send_to_player(player, ANSWER, &m) {
-                log::debug!("[mod {ID}] answers waiting: {e}");
-                SERVER.with(|s| s.borrow_mut().answers.entry(player).or_default().push_front(m));
-                break;
+            if let Some(host) = game.lan.as_ref() {
+                host.hub.send_to(
+                    conn,
+                    &horizon_protocol::packets::play::Clientbound::CustomPayload(
+                        horizon_protocol::packets::configuration::CustomPayload {
+                            channel: ANSWER.into(),
+                            data: m,
+                        },
+                    ),
+                );
             }
         }
     }
@@ -786,6 +836,54 @@ pub(super) fn level_tick(game: &mut Game<'_>, dimension: &str) {
 
 fn answer(player: u128, message: Vec<u8>) {
     SERVER.with(|s| s.borrow_mut().answers.entry(player).or_default().push_back(message));
+}
+
+fn parse_edit(
+    game: &Game<'_>,
+    palette_strs: Vec<String>,
+    filter_strs: Vec<String>,
+    runs: Vec<mod_api::BlockRun>,
+) -> Result<mod_api::BlockEdit, String> {
+    let mut palette = Vec::with_capacity(palette_strs.len());
+    for s in palette_strs {
+        let id = game
+            .block_state_id(&s)
+            .ok_or_else(|| format!("unknown block state: {s}"))?;
+        palette.push(id.try_into_api().map_err(|e| format!("{s}: {e:?}"))?);
+    }
+    let mut filters = Vec::with_capacity(filter_strs.len());
+    for s in filter_strs {
+        let mut reader = horizon_client::command::Reader::new(&s);
+        let input = horizon_client::command::block::parse(&mut reader, &game.pack.block_registries, true)
+            .map_err(|e| format!("bad filter {s}: {e:?}"))?;
+        if reader.can_read() || input.nbt.is_some() {
+            return Err(format!("bad filter {s}"));
+        }
+        let target = if input.tag {
+            let id = mod_api::Identifier::parse(&input.id)
+                .map_err(|_| format!("bad tag: {}", input.id))?;
+            let key = mod_api::__private::tag_key(&id)
+                .ok_or_else(|| format!("unknown tag: {}", input.id))?;
+            mod_api::StatePredicateTarget::Tag(key)
+        } else {
+            let key = mod_api::__private::block_key(&input.id)
+                .ok_or_else(|| format!("unknown block: {}", input.id))?;
+            mod_api::StatePredicateTarget::Block(key)
+        };
+        let constraints = input
+            .properties
+            .into_iter()
+            .map(|(k, v)| mod_api::StateConstraint::new(k, v))
+            .collect();
+        filters.push(mod_api::StatePredicate::from(
+            mod_api::StatePredicateRecord::new(target, constraints),
+        ));
+    }
+    Ok(mod_api::BlockEdit {
+        palette,
+        filters,
+        runs,
+    })
 }
 
 fn serve(game: &mut Game<'_>, player: u128, dimension: &str, request: &[u8]) -> Option<()> {
@@ -808,26 +906,18 @@ fn serve(game: &mut Game<'_>, player: u128, dimension: &str, request: &[u8]) -> 
                 let surface = heightmap_of(r.u8()?);
                 let block = r.u32()?;
                 let only = r.i32()?;
-                runs.push(NativeBlockRun { x, z, y, height, surface, block, only: u32::try_from(only).ok() });
+                runs.push(mod_api::BlockRun { x, z, y, height, surface, block, only: u32::try_from(only).ok() });
             }
-            if let Err(e) = game.native_edit_blocks(
-                dimension,
-                &NativeBlockEdit {
-                    palette,
-                    filters,
-                    runs,
-                    neighbour_updates: false,
-                    block_entities: Vec::new(),
-                },
-            ) {
-                log::warn!("[mod {ID}] edit-blocks left out: {e}");
+            match parse_edit(game, palette, filters, runs).and_then(|edit| game.edit_blocks(dimension, &edit)) {
+                Ok(_) => {}
+                Err(e) => log::warn!("[mod {ID}] edit-blocks left out: {e}"),
             }
         }
         2 => {
             let (tag, h, offset, total) = (r.u32()?, r.u8()?, r.u32()?, r.u32()?);
             let columns = r.columns()?;
             let heights = game
-                .native_surface_heights(dimension, &columns, heightmap_of(h)?)
+                .surface_heights(dimension, &columns, heightmap_of(h)?)
                 .unwrap_or_else(|_| vec![None; columns.len()]);
             for (k, part) in heights.chunks(MESSAGE / 5).enumerate() {
                 let mut w = Writer::new(10);
@@ -847,14 +937,24 @@ fn serve(game: &mut Game<'_>, player: u128, dimension: &str, request: &[u8]) -> 
             let columns = r.columns()?;
             let span = (below + above) as usize;
             let read = game
-                .native_read_columns(dimension, &columns, heightmap_of(h)?, (below, above))
-                .unwrap_or_else(|_| NativeColumnBlocks {
+                .read_columns(dimension, &columns, heightmap_of(h)?, (below, above))
+                .unwrap_or_else(|_| mod_api::ColumnBlocks {
                     bases: vec![None; columns.len()],
                     blocks: vec![0; columns.len() * span],
                     tints: vec![0; columns.len() * 3],
-                    ..NativeColumnBlocks::default()
+                    ..mod_api::ColumnBlocks::default()
                 });
-            let palette_bytes: usize = read.palette.iter().map(|p| p.len() + 4).sum();
+            let palette_strs: Vec<String> = read
+                .palette
+                .iter()
+                .map(|s| {
+                    s.try_into_engine(&())
+                        .ok()
+                        .and_then(|id| game.block_state_string(id))
+                        .unwrap_or_else(|| "minecraft:air".to_owned())
+                })
+                .collect();
+            let palette_bytes: usize = palette_strs.iter().map(|p| p.len() + 4).sum();
             let per = ((MESSAGE.saturating_sub(palette_bytes + 32)) / (5 + 2 * span + 12)).max(1);
             for start in (0..columns.len()).step_by(per) {
                 let end = (start + per).min(columns.len());
@@ -863,7 +963,7 @@ fn serve(game: &mut Game<'_>, player: u128, dimension: &str, request: &[u8]) -> 
                 w.u32(offset + start as u32);
                 w.u32(total);
                 w.u32(span as u32);
-                w.strs(&read.palette);
+                w.strs(&palette_strs);
                 w.u32((end - start) as u32);
                 for i in start..end {
                     let base = read.bases.get(i).copied().flatten();
@@ -881,7 +981,23 @@ fn serve(game: &mut Game<'_>, player: u128, dimension: &str, request: &[u8]) -> 
         }
         4 => {
             let speed = r.f32()?;
-            game.native_set_flying_speed(player, speed.is_finite().then_some(speed));
+            let speed = speed
+                .is_finite()
+                .then_some(speed)
+                .map_or(FLYING_VANILLA, |s| s.clamp(0.0, FLYING_MAX));
+            if let Some(host) = game.lan.as_mut()
+                && let Some(conn) = host
+                    .hub
+                    .guests
+                    .iter()
+                    .find(|g| g.uuid == player && g.placed)
+                    .map(|g| g.conn)
+            {
+                let _ = host.hub.update_guest(conn, |g| {
+                    g.abilities.flying_speed = speed;
+                    g.send(&g.abilities_packet());
+                });
+            }
         }
         _ => return None,
     }
@@ -948,7 +1064,7 @@ fn shake_noise(x: f32) -> f32 {
 }
 
 /// The `camera_shake` hook.
-pub(super) fn camera_shake(game: &Game<'_>, partial: f32, shake: &mut NativeShake) {
+pub(super) fn camera_shake(game: &Game<'_>, partial: f32, shake: &mut mod_api::Shake) {
     if !game.native_window() {
         return;
     }
@@ -962,11 +1078,16 @@ pub(super) fn camera_shake(game: &Game<'_>, partial: f32, shake: &mut NativeShak
 
 // ---- the hooks ----------------------------------------------------------------------------------------------------
 
-/// The `mods` hook: the mod's row on Options > Mods, with its keys (the wheel's), which the player rebinds there.
-pub(super) fn mods(game: &mut Game<'_>, mods: &mut Vec<super::native_hooks::NativeMod>) {
+/// The mod's row on Options > Mods, with its keys (the wheel's), which the player rebinds there.
+pub(super) fn installed_row(
+    game: &mut Game<'_>,
+) -> (
+    horizon_client::mod_list::Installed,
+    Vec<horizon_client::mod_list::KeyMapping>,
+) {
     // (started here, so its keys are known when the page is first drawn)
     running(game);
-    mods.push(super::native_hooks::NativeMod {
+    let row = horizon_client::mod_list::Installed {
         id: ID.to_owned(),
         title: format!("{NAME} {VERSION}"),
         description: if no_content(game) {
@@ -974,8 +1095,25 @@ pub(super) fn mods(game: &mut Game<'_>, mods: &mut Vec<super::native_hooks::Nati
         } else {
             "Call down an orbital strike that drills a crater to bedrock.".to_owned()
         },
-        keys: CLIENT.with(|c| c.borrow().keys.clone()),
+        problem: None,
+        dev: false,
+        native: None,
+    };
+    let keys = CLIENT.with(|c| {
+        c.borrow()
+            .keys
+            .iter()
+            .map(|[id, label, key]| horizon_client::mod_list::KeyMapping {
+                id: id.clone(),
+                label: label.clone(),
+                key: key.clone(),
+                modifiers: 0,
+                context: horizon_client::mod_list::KeyConflictContext::Universal,
+                category: String::new(),
+            })
+            .collect()
     });
+    (row, keys)
 }
 /// The `key` hook: a key the player pressed or released, while playing, for the mod's keys bound to it.
 pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) {
@@ -984,7 +1122,7 @@ pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) {
     }
     let keys = CLIENT.with(|c| c.borrow().keys.clone());
     for [name, _, default] in keys {
-        if game.native_mod_key(ID, &name, &default) == key {
+        if game.tachyon_mod_key(ID, &name, &default) == key {
             let event = if pressed { input::Event::KeyDown(name) } else { input::Event::KeyUp(name) };
             CLIENT.with(|c| c.borrow_mut().key_events.push(event));
         }
@@ -1091,21 +1229,21 @@ pub(super) fn hud(
 // ---- the mod's screen on the screen hooks (#5543) ----------------------------------------------------------------
 
 /// Whether `screen` is this mod's own.
-fn mine(game: &Game<'_>, screen: &NativeScreenView<'_>) -> bool {
-    screen.id == "mod" && game.native_mod_screen() == Some(ID)
+fn mine(game: &Game<'_>, screen: &mod_api::ScreenView<'_>) -> bool {
+    screen.id == "mod" && game.mod_screen() == Some(ID)
 }
 
 /// The `screen_render_post` hook: the mod's draws (`ui.show`), from the screen's centre.
 pub(super) fn screen_render_post(
     game: &Game<'_>,
     batch: &mut horizon_client::hud::HudBatch,
-    screen: &NativeScreenView<'_>,
+    screen: &mod_api::ScreenView<'_>,
 ) {
-    if screen.id == "title" && game.native_window() && game.native_on(ID) && no_content(game) {
+    if screen.id == "title" && game.native_window() && game.on(ID) && no_content(game) {
         // (on the title screen, before a world: the two lines of the notice at the top, centred)
         for (i, line) in NO_CONTENT_LINES.iter().enumerate() {
-            let x = ((batch.width - game.native_text_width(line)) / 2.0).floor();
-            game.native_text(batch, line, [x, 4.0 + 11.0 * i as f32], 0xFF5555, true);
+            let x = ((batch.width - game.native_text_width(batch, line)) / 2.0).floor();
+            game.native_text(batch, line, [x, 4.0 + 11.0 * i as f32], 0xFFFF_5555, true);
         }
     }
     if !mine(game, screen) {
@@ -1123,8 +1261,8 @@ pub(super) fn screen_render_post(
             }
             ui::Draw::Quad(_) => {}
             ui::Draw::Sprite((name, r, _)) => {
-                let [w, h] = game.native_sprite_size(name).unwrap_or([r.w, r.h]);
-                game.native_sprite(batch, name, [0.0, 0.0, w, h], [cx + r.x, cy + r.y, r.w, r.h]);
+                let [w, h] = game.gui_sprite_pixels(name).unwrap_or([r.w, r.h]);
+                game.native_sprite(batch, name, [0.0, 0.0, w, h], [cx + r.x, cy + r.y, r.w, r.h], None);
             }
             ui::Draw::Item((item, model, at, scale)) => {
                 let at = [cx + at.x, cy + at.y];
@@ -1135,15 +1273,16 @@ pub(super) fn screen_render_post(
                 }
             }
             ui::Draw::Text((text, at, c, centred)) => {
-                let x = if *centred { cx + at.x - (game.native_text_width(text) / 2.0).floor() } else { cx + at.x };
-                game.native_text(batch, text, [x, cy + at.y], *c, true);
+                let x = if *centred { cx + at.x - (game.native_text_width(batch, text) / 2.0).floor() } else { cx + at.x };
+                let argb = if (*c & 0xFF00_0000) == 0 { 0xFF00_0000 | *c } else { *c };
+                game.native_text(batch, text, [x, cy + at.y], argb, true);
             }
         }
     }
 }
 
 /// The `screen_mouse_button_pressed_pre` hook: a click on the mod's screen, from its centre (`screen-click`).
-pub(super) fn screen_click(game: &Game<'_>, screen: &NativeScreenView<'_>, button: i32, canceled: &mut bool) {
+pub(super) fn screen_click(game: &Game<'_>, screen: &mod_api::ScreenView<'_>, button: i32, canceled: &mut bool) {
     if !mine(game, screen) || !(0..=2).contains(&button) {
         return;
     }
@@ -1156,7 +1295,7 @@ pub(super) fn screen_click(game: &Game<'_>, screen: &NativeScreenView<'_>, butto
 
 /// The `screen_key_pressed_pre` hook: a key on the mod's screen is its name for `input.poll-typed` when it types no
 /// text (Backspace, Enter, the arrows: the character hook gives the rest); Escape stays the game's and closes it.
-pub(super) fn screen_key(game: &Game<'_>, screen: &NativeScreenView<'_>, key: &str, canceled: &mut bool) {
+pub(super) fn screen_key(game: &Game<'_>, screen: &mod_api::ScreenView<'_>, key: &str, canceled: &mut bool) {
     if !mine(game, screen) || key == "key.keyboard.escape" {
         return;
     }
@@ -1169,7 +1308,7 @@ pub(super) fn screen_key(game: &Game<'_>, screen: &NativeScreenView<'_>, key: &s
 }
 
 /// The `screen_char_typed_pre` hook: a character typed on the mod's screen.
-pub(super) fn screen_char(game: &Game<'_>, screen: &NativeScreenView<'_>, c: char, canceled: &mut bool) {
+pub(super) fn screen_char(game: &Game<'_>, screen: &mod_api::ScreenView<'_>, c: char, canceled: &mut bool) {
     if !mine(game, screen) {
         return;
     }
@@ -1246,9 +1385,9 @@ const USAGES: &[&str] = &[
 ];
 
 /// The `register_commands` hook: `/orbital` and its usages in the server's command tree.
-pub(super) fn register_commands(game: &mut Game<'_>, commands: &mut Vec<crate::mod_api::NativeCommand>) {
-    if game.native_on(ID) {
-        commands.extend(USAGES.iter().map(|u| crate::mod_api::NativeCommand::op(u, CONSOLE_LEVEL)));
+pub(super) fn register_commands(game: &mut Game<'_>, commands: &mut Vec<mod_api::Command>) {
+    if game.on(ID) {
+        commands.extend(USAGES.iter().map(|u| mod_api::Command::op(u, CONSOLE_LEVEL)));
     }
 }
 
@@ -1294,14 +1433,29 @@ pub(super) fn client_level_unload(game: &mut Game<'_>, dimension: &str) {
     game.audio.stop_all();
 }
 
-/// The `perform_command` hook: `/orbital` reaching the server through its command tree (the owner's console,
+/// The `run_mod_command` hook: `/orbital` reaching the server through its command tree (the owner's console,
 /// `horizon-ctl command`), handed to the window as the `command` hook hands it.
-pub(super) fn perform_command(game: &mut Game<'_>, command: &str, ran: &mut bool) {
-    let line = command.trim_start_matches('/');
-    if *ran || game.native_window() || (line != ID && !line.starts_with("orbital ")) {
+pub(super) fn run_mod_command(
+    game: &mut Game<'_>,
+    command: &mod_api::CommandInvocation,
+    ran: &mut bool,
+) {
+    if *ran || game.native_window() || command.literals.first().map(String::as_str) != Some(ID) {
         return;
     }
-    *ran = from_owner(game, line);
+    let mut parts = command.literals.clone();
+    for arg in &command.arguments {
+        match &arg.value {
+            mod_api::CommandArgumentValue::String(s) => parts.push(s.clone()),
+            mod_api::CommandArgumentValue::Integer(n) => parts.push(n.to_string()),
+            mod_api::CommandArgumentValue::Number(n) => parts.push(n.to_string()),
+            mod_api::CommandArgumentValue::Boolean(b) => parts.push(b.to_string()),
+            mod_api::CommandArgumentValue::Id(id) => parts.push(id.to_string()),
+            _ => {}
+        }
+    }
+    let line = parts.join(" ");
+    *ran = from_owner(game, &line);
 }
 
 /// `/orbital …` heard on the server: for the window, which runs the mod, when the owner sent it (a guest's own window

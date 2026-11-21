@@ -16,7 +16,7 @@ mod tests {
         }
     }
     fn batch(window: [u32; 2], scale: f32) -> HudBatch {
-        let mut b = HudBatch::new(window);
+        let mut b = HudBatch::scratch(window);
         b.scale = scale;
         b.width = window[0] as f32 / scale;
         b.height = window[1] as f32 / scale;
@@ -356,7 +356,7 @@ mod tests {
                         .unwrap();
                     let a = HudAtlas::loading();
                     for scale in [1.0, 2.0, 3.0, 4.0] {
-                        let mut b = HudBatch::new(window);
+                        let mut b = HudBatch::scratch(window);
                         b.scale = scale;
                         hud::draw(&mut b, &a, &[offhand], &State::default(), 1.0);
                         near(b.vertices[0].pos[0] * scale / w, offhand.bounds[0] / w);

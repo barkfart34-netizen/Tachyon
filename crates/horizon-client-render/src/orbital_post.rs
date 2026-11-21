@@ -1077,15 +1077,20 @@ pub fn capture(frame: &crate::gfx::Frame<'_>) {
     }
 }
 
+/// Whether Orbital Laser currently has a post-processing pass active.
+pub fn active() -> bool {
+    PASS.lock().is_ok_and(|p| p.is_some())
+}
+
 /// `native_render_needs`: the world's depth, while a pass is set.
-pub fn needs(needs: &mut crate::gfx::native_render::RenderNeeds) {
-    if PASS.lock().is_ok_and(|p| p.is_some()) {
+pub fn needs(needs: &mut crate::render_slots::RenderNeeds) {
+    if active() {
         needs.world_depth = true;
     }
 }
 
 /// `native_world_drawn`: the pass over the world.
-pub fn draw(world: &mut crate::gfx::native_render::WorldDrawn<'_>) {
+pub fn draw(world: &mut crate::render_slots::WorldDrawn<'_>) {
     let Some(pass) = PASS.lock().ok().and_then(|p| p.clone()) else {
         return;
     };
