@@ -1,0 +1,79 @@
+{
+  "id": "lost_realms",
+  "title": "chronicles.chapter.lost_realms",
+  "icon": "minecraft:compass",
+  "group": "chronicles",
+  "order": 3,
+  "quests": [
+    {
+      "id": "lost_workshop",
+      "title": "chronicles.quest.lost_workshop",
+      "description": [
+        "chronicles.quest.lost_workshop.text"
+      ],
+      "icon": "kinetica:cogwheel",
+      "x": 0.0,
+      "y": -1.0,
+      "dependencies": [
+        "machine_age/welcome"
+      ],
+      "tasks": [
+        {
+          "id": "structure",
+          "type": "structure",
+          "structure": "lost_realms:workshop_ruin",
+          "title": "chronicles.task.lost_workshop.find"
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_spyglass",
+          "type": "item",
+          "item": "minecraft:spyglass",
+          "count": 1
+        },
+        {
+          "id": "reward_2_ferrostone_alloy",
+          "type": "item",
+          "item": "kinetica:ferrostone_alloy",
+          "count": 8
+        }
+      ]
+    },
+    {
+      "id": "watchtower",
+      "title": "chronicles.quest.watchtower",
+      "description": [
+        "chronicles.quest.watchtower.text"
+      ],
+      "icon": "minecraft:spyglass",
+      "x": 0.0,
+      "y": 1.0,
+      "dependencies": [
+        "machine_age/welcome"
+      ],
+      "tasks": [
+        {
+          "id": "structure",
+          "type": "structure",
+          "structure": "lost_realms:watchtower",
+          "title": "chronicles.task.watchtower.find"
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_arrow",
+          "type": "item",
+          "item": "minecraft:arrow",
+          "count": 16
+        },
+        {
+          "id": "reward_2_tin_ingot",
+          "type": "item",
+          "item": "kinetica:tin_ingot",
+          "count": 6
+        }
+      ]
+    }
+  ]
+}

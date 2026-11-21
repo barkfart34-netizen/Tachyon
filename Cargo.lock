@@ -1848,6 +1848,7 @@ dependencies = [
  "horizon-mod-api-gen",
  "horizon-mod-api-macros",
  "horizon-mod-package",
+ "horizon-mod-points",
  "horizon-mod-runtime",
  "horizon-mod-vocab",
  "horizon-mod-wasm",
@@ -1857,6 +1858,7 @@ dependencies = [
  "horizon-perf-format",
  "horizon-port-pack",
  "horizon-protocol",
+ "horizon-quests",
  "horizon-server-files",
  "horizon-shader-api",
  "horizon-shaders",
@@ -2724,6 +2726,17 @@ dependencies = [
  "sha1",
  "sha2",
  "socket2 0.5.10",
+]
+
+[[package]]
+name = "horizon-quests"
+version = "0.22.2"
+dependencies = [
+ "horizon-mod-api",
+ "log",
+ "serde",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]

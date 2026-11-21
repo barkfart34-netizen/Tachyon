@@ -61,6 +61,20 @@ pub fn read_native(path: &Path) -> Result<AdjacentManifest, ReadError> {
     })
 }
 
+/// Reads a statically-linked bundled native mod's content/assets folder (no `[native]`
+/// section or Rust sources required on disk). The caller owns compiled-identity checks.
+pub fn read_bundled_native(path: &Path) -> Result<AdjacentManifest, ReadError> {
+    let package = Package::read(path).map_err(|reason| ReadError::Package {
+        path: path.to_owned(),
+        reason,
+    })?;
+    Ok(AdjacentManifest {
+        path: path.to_owned(),
+        manifest: package.manifest,
+        has_icon: package.icon.is_some(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

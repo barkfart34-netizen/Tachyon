@@ -1,0 +1,17 @@
+[package]
+name = "horizon-quests"
+version = "0.22.2"
+edition.workspace = true
+license = "MIT"
+publish = false
+description = "Horizon Quests: an FTB Quests-style quest book for Horizon, statically linked into Tachyon."
+
+[dependencies]
+horizon-mod-api = { path = "../horizon-mod-api" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1.1"
+log = "0.4"
+
+[lints]
+workspace = true

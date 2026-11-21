@@ -1,0 +1,561 @@
+{
+  "id": "machine_age",
+  "title": "chronicles.chapter.machine_age",
+  "icon": "kinetica:cogwheel",
+  "group": "chronicles",
+  "order": 1,
+  "quests": [
+    {
+      "id": "welcome",
+      "title": "chronicles.quest.welcome",
+      "description": [
+        "chronicles.quest.welcome.text"
+      ],
+      "icon": "minecraft:writable_book",
+      "x": 0.0,
+      "y": 0.0,
+      "dependencies": [],
+      "tasks": [
+        {
+          "id": "ready",
+          "type": "checkmark",
+          "title": "chronicles.task.welcome.ready"
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_bread",
+          "type": "item",
+          "item": "minecraft:bread",
+          "count": 6
+        },
+        {
+          "id": "reward_2_torch",
+          "type": "item",
+          "item": "minecraft:torch",
+          "count": 16
+        }
+      ],
+      "shape": "circle",
+      "size": 1.25
+    },
+    {
+      "id": "first_alloy",
+      "title": "chronicles.quest.first_alloy",
+      "description": [
+        "chronicles.quest.first_alloy.text"
+      ],
+      "icon": "kinetica:ferrostone_alloy",
+      "x": 1.5,
+      "y": 0.0,
+      "dependencies": [
+        "welcome"
+      ],
+      "tasks": [
+        {
+          "id": "item_1_ferrostone_alloy",
+          "type": "item",
+          "item": "kinetica:ferrostone_alloy",
+          "count": 4
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_shaft",
+          "type": "item",
+          "item": "kinetica:shaft",
+          "count": 6
+        },
+        {
+          "id": "reward_2_iron_nugget",
+          "type": "item",
+          "item": "minecraft:iron_nugget",
+          "count": 9
+        }
+      ]
+    },
+    {
+      "id": "shafts_and_cogs",
+      "title": "chronicles.quest.shafts_and_cogs",
+      "description": [
+        "chronicles.quest.shafts_and_cogs.text"
+      ],
+      "icon": "kinetica:shaft",
+      "x": 3.0,
+      "y": 0.0,
+      "dependencies": [
+        "first_alloy"
+      ],
+      "tasks": [
+        {
+          "id": "item_1_shaft",
+          "type": "item",
+          "item": "kinetica:shaft",
+          "count": 8
+        },
+        {
+          "id": "item_2_cogwheel",
+          "type": "item",
+          "item": "kinetica:cogwheel",
+          "count": 2
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_large_cogwheel",
+          "type": "item",
+          "item": "kinetica:large_cogwheel",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "id": "goggles",
+      "title": "chronicles.quest.goggles",
+      "description": [
+        "chronicles.quest.goggles.text"
+      ],
+      "icon": "kinetica:engineers_goggles",
+      "x": 3.0,
+      "y": -1.5,
+      "dependencies": [
+        "shafts_and_cogs"
+      ],
+      "tasks": [
+        {
+          "id": "item_1_engineers_goggles",
+          "type": "item",
+          "item": "kinetica:engineers_goggles",
+          "count": 1
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_ferrostone_alloy",
+          "type": "item",
+          "item": "kinetica:ferrostone_alloy",
+          "count": 8
+        }
+      ],
+      "shape": "diamond"
+    },
+    {
+      "id": "hand_power",
+      "title": "chronicles.quest.hand_power",
+      "description": [
+        "chronicles.quest.hand_power.text"
+      ],
+      "icon": "kinetica:hand_crank",
+      "x": 4.5,
+      "y": 0.0,
+      "dependencies": [
+        "shafts_and_cogs"
+      ],
+      "tasks": [
+        {
+          "id": "item_1_hand_crank",
+          "type": "item",
+          "item": "kinetica:hand_crank",
+          "count": 1
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_cogwheel",
+          "type": "item",
+          "item": "kinetica:cogwheel",
+          "count": 4
+        }
+      ]
+    },
+    {
+      "id": "in_motion",
+      "title": "chronicles.quest.in_motion",
+      "description": [
+        "chronicles.quest.in_motion.text"
+      ],
+      "icon": "kinetica:cogwheel",
+      "x": 6.0,
+      "y": 0.0,
+      "dependencies": [
+        "hand_power"
+      ],
+      "tasks": [
+        {
+          "id": "rpm",
+          "type": "kinetic_speed",
+          "rpm": 16,
+          "title": "chronicles.task.in_motion.rpm"
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_ferrostone_casing",
+          "type": "item",
+          "item": "kinetica:ferrostone_casing",
+          "count": 4
+        }
+      ],
+      "shape": "hexagon"
+    },
+    {
+      "id": "millstone",
+      "title": "chronicles.quest.millstone",
+      "description": [
+        "chronicles.quest.millstone.text"
+      ],
+      "icon": "kinetica:millstone",
+      "x": 7.5,
+      "y": -1.0,
+      "dependencies": [
+        "in_motion"
+      ],
+      "tasks": [
+        {
+          "id": "item_1_wheat_flour",
+          "type": "item",
+          "item": "kinetica:wheat_flour",
+          "count": 4
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_wheat",
+          "type": "item",
+          "item": "minecraft:wheat",
+          "count": 16
+        },
+        {
+          "id": "reward_2_large_cogwheel",
+          "type": "item",
+          "item": "kinetica:large_cogwheel",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "id": "crushed_ore",
+      "title": "chronicles.quest.crushed_ore",
+      "description": [
+        "chronicles.quest.crushed_ore.text"
+      ],
+      "icon": "kinetica:crushed_iron",
+      "x": 9.0,
+      "y": -1.0,
+      "dependencies": [
+        "millstone"
+      ],
+      "tasks": [
+        {
+          "id": "item_1_crushed_iron",
+          "type": "item",
+          "item": "kinetica:crushed_iron",
+          "count": 4
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_hopper",
+          "type": "item",
+          "item": "minecraft:hopper",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "id": "pressing",
+      "title": "chronicles.quest.pressing",
+      "description": [
+        "chronicles.quest.pressing.text"
+      ],
+      "icon": "kinetica:mechanical_press",
+      "x": 7.5,
+      "y": 1.0,
+      "dependencies": [
+        "in_motion"
+      ],
+      "tasks": [
+        {
+          "id": "item_1_iron_sheet",
+          "type": "item",
+          "item": "kinetica:iron_sheet",
+          "count": 4
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_depot",
+          "type": "item",
+          "item": "kinetica:depot",
+          "count": 2
+        },
+        {
+          "id": "reward_2_iron_ingot",
+          "type": "item",
+          "item": "minecraft:iron_ingot",
+          "count": 8
+        }
+      ]
+    },
+    {
+      "id": "mixing",
+      "title": "chronicles.quest.mixing",
+      "description": [
+        "chronicles.quest.mixing.text"
+      ],
+      "icon": "kinetica:mechanical_mixer",
+      "x": 9.0,
+      "y": 0.5,
+      "dependencies": [
+        "pressing"
+      ],
+      "tasks": [
+        {
+          "id": "item_1_mechanical_mixer",
+          "type": "item",
+          "item": "kinetica:mechanical_mixer",
+          "count": 1
+        },
+        {
+          "id": "item_2_basin",
+          "type": "item",
+          "item": "kinetica:basin",
+          "count": 1
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_andesite",
+          "type": "item",
+          "item": "minecraft:andesite",
+          "count": 16
+        },
+        {
+          "id": "reward_2_iron_nugget",
+          "type": "item",
+          "item": "minecraft:iron_nugget",
+          "count": 16
+        }
+      ]
+    },
+    {
+      "id": "bulk_washing",
+      "title": "chronicles.quest.bulk_washing",
+      "description": [
+        "chronicles.quest.bulk_washing.text"
+      ],
+      "icon": "kinetica:encased_fan",
+      "x": 9.0,
+      "y": 1.5,
+      "dependencies": [
+        "pressing"
+      ],
+      "tasks": [
+        {
+          "id": "item_1_encased_fan",
+          "type": "item",
+          "item": "kinetica:encased_fan",
+          "count": 1
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_crushed_iron",
+          "type": "item",
+          "item": "kinetica:crushed_iron",
+          "count": 8
+        },
+        {
+          "id": "reward_2_water_bucket",
+          "type": "item",
+          "item": "minecraft:water_bucket",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "conveyor",
+      "title": "chronicles.quest.conveyor",
+      "description": [
+        "chronicles.quest.conveyor.text"
+      ],
+      "icon": "kinetica:belt",
+      "x": 10.5,
+      "y": 1.5,
+      "dependencies": [
+        "bulk_washing"
+      ],
+      "tasks": [
+        {
+          "id": "item_1_belt",
+          "type": "item",
+          "item": "kinetica:belt",
+          "count": 4
+        },
+        {
+          "id": "item_2_funnel",
+          "type": "item",
+          "item": "kinetica:funnel",
+          "count": 1
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_chest",
+          "type": "item",
+          "item": "minecraft:chest",
+          "count": 2
+        },
+        {
+          "id": "reward_2_dried_kelp_block",
+          "type": "item",
+          "item": "minecraft:dried_kelp_block",
+          "count": 4
+        }
+      ]
+    },
+    {
+      "id": "water_power",
+      "title": "chronicles.quest.water_power",
+      "description": [
+        "chronicles.quest.water_power.text"
+      ],
+      "icon": "kinetica:water_wheel",
+      "x": 4.5,
+      "y": 1.5,
+      "dependencies": [
+        "hand_power"
+      ],
+      "tasks": [
+        {
+          "id": "item_1_water_wheel",
+          "type": "item",
+          "item": "kinetica:water_wheel",
+          "count": 1
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_gearbox",
+          "type": "item",
+          "item": "kinetica:gearbox",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "wind_power",
+      "title": "chronicles.quest.wind_power",
+      "description": [
+        "chronicles.quest.wind_power.text"
+      ],
+      "icon": "kinetica:windmill",
+      "x": 4.5,
+      "y": -1.5,
+      "dependencies": [
+        "hand_power"
+      ],
+      "tasks": [
+        {
+          "id": "item_1_windmill",
+          "type": "item",
+          "item": "kinetica:windmill",
+          "count": 1
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_clutch",
+          "type": "item",
+          "item": "kinetica:clutch",
+          "count": 1
+        },
+        {
+          "id": "reward_2_gearshift",
+          "type": "item",
+          "item": "kinetica:gearshift",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "control",
+      "title": "chronicles.quest.control",
+      "description": [
+        "chronicles.quest.control.text"
+      ],
+      "icon": "kinetica:gearshift",
+      "x": 6.0,
+      "y": 2.5,
+      "dependencies": [
+        "water_power",
+        "wind_power"
+      ],
+      "tasks": [
+        {
+          "id": "item_1_gearbox",
+          "type": "item",
+          "item": "kinetica:gearbox",
+          "count": 1
+        },
+        {
+          "id": "item_2_clutch",
+          "type": "item",
+          "item": "kinetica:clutch",
+          "count": 1
+        },
+        {
+          "id": "item_3_gearshift",
+          "type": "item",
+          "item": "kinetica:gearshift",
+          "count": 1
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_ferrostone_casing",
+          "type": "item",
+          "item": "kinetica:ferrostone_casing",
+          "count": 8
+        }
+      ]
+    },
+    {
+      "id": "full_speed",
+      "title": "chronicles.quest.full_speed",
+      "description": [
+        "chronicles.quest.full_speed.text"
+      ],
+      "icon": "kinetica:large_cogwheel",
+      "x": 7.5,
+      "y": 2.5,
+      "dependencies": [
+        "control"
+      ],
+      "tasks": [
+        {
+          "id": "rpm",
+          "type": "kinetic_speed",
+          "rpm": 128,
+          "title": "chronicles.task.full_speed.rpm"
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_bronze_ingot",
+          "type": "item",
+          "item": "kinetica:bronze_ingot",
+          "count": 8
+        },
+        {
+          "id": "reward_2_ferrostone_alloy",
+          "type": "item",
+          "item": "kinetica:ferrostone_alloy",
+          "count": 16
+        }
+      ],
+      "shape": "hexagon",
+      "size": 1.25
+    }
+  ]
+}

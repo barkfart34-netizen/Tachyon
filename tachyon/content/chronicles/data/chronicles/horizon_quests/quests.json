@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "progression": "flexible",
+  "default_shape": "square",
+  "default_size": 1.0,
+  "auto_claim_rewards": false,
+  "detection_delay": 20,
+  "groups": [
+    {
+      "id": "chronicles",
+      "title": "chronicles.title"
+    }
+  ]
+}

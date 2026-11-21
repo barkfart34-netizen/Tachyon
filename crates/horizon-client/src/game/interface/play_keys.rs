@@ -38,9 +38,6 @@ impl Game<'_> {
         if key == KeyCode::Escape && self.mod_browser_back() {
             return Ok(());
         }
-        if self.screen == Screen::Quests && self.tachyon_screen_key(key) {
-            return Ok(());
-        }
         if self.remote.is_some() && self.remote_key(key)? {
             return Ok(());
         }
@@ -96,7 +93,6 @@ impl Game<'_> {
                 Screen::BlockEditor => self.close_block_editor(),
                 Screen::Chat => self.close_chat(chat::ChatExit::Intentional),
                 Screen::Win => self.close_win_screen()?,
-                Screen::Quests => self.tachyon_screen_close(),
                 Screen::DebugOptions => self.close_debug_options(),
                 Screen::Mod => self.close_mod_screen(),
                 Screen::Studio => self.close_studio_screen(),

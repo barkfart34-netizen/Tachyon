@@ -2659,10 +2659,6 @@ impl Game<'_> {
 
     /// A `tachyon:*` payload from the server.
     pub(super) fn tachyon_payload(&mut self, channel: &str, data: &[u8]) {
-        if channel == chronicles::PROGRESS {
-            self.tachyon_quests_payload(data);
-            return;
-        }
         if channel != KINETIC {
             return;
         }

@@ -60,7 +60,6 @@ pub(super) fn loading_mods(disabled: &std::collections::BTreeSet<String>) -> Vec
         (minimap::ID, minimap::NAME),
         (recipes::ID, recipes::NAME),
         (zoom::ID, "Zoom"),
-        (super::tachyon_engine::chronicles::ID, "Chronicles"),
         (super::orbital_glue::ID, "Orbital Laser"),
     ]
     .into_iter()
@@ -87,7 +86,6 @@ impl Game<'_> {
     }
     pub(super) fn tachyon_key(&mut self, key: &str, pressed: bool) {
         zoom_key(self, key, pressed);
-        self.tachyon_quests_key(key, pressed);
     }
     pub(super) fn tachyon_wheel(&self, steps: f32, claimed: &mut bool) {
         if self.on(zoom::ID) && zoom::wheel(steps) {
@@ -125,7 +123,6 @@ impl Game<'_> {
     }
     /// Options > Mods rows for Tachyon's built-in native mods and Orbital Laser.
     pub(super) fn tachyon_list_mods(&mut self) {
-        use super::tachyon_engine::chronicles;
         let mut built_in: Vec<(Installed, Vec<KeyMapping>)> = Vec::new();
         built_in.push(super::orbital_glue::installed_row(self));
         let row = |id: &str, name: &str, version: &str, description: &str| Installed {
@@ -184,19 +181,6 @@ impl Game<'_> {
         built_in.push((
             row(zoom::ID, "Zoom", zoom::VERSION, zoom::DESCRIPTION),
             vec![key_mapping([zoom::KEY, "Zoom key", zoom::DEFAULT_KEY])],
-        ));
-        built_in.push((
-            row(
-                chronicles::ID,
-                "Chronicles",
-                "0.1.0",
-                "The modpack's quests: a book of what to do next, and rewards.",
-            ),
-            vec![key_mapping([
-                chronicles::KEY,
-                "Quest book",
-                chronicles::DEFAULT_KEY,
-            ])],
         ));
         self.settings
             .mods
@@ -282,7 +266,7 @@ impl Game<'_> {
                     toggle("sensitivity", "Slower turning", s.sensitivity),
                 ]
             }
-            super::tachyon_engine::chronicles::ID | super::orbital_glue::ID => Vec::new(),
+            super::orbital_glue::ID => Vec::new(),
             _ => return None,
         })
     }

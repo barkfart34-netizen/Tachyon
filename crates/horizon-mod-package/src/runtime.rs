@@ -24,6 +24,13 @@ impl Runtime {
         &self.packages
     }
 
+    /// Constructs a runtime from statically linked built-in mods and their bundled
+    /// content packages (used by Tachyon on Desktop and Android where packages live
+    /// under `brand::content()` without on-disk Rust sources).
+    pub fn from_bundled(built: &'static [BuiltMod], packages: Vec<AdjacentManifest>) -> Self {
+        Self { built, packages }
+    }
+
     pub fn load(executable: &Path, built: &'static [BuiltMod]) -> Result<Self, RuntimeError> {
         let root = executable.with_file_name(NATIVE_DIR);
         let mut packages = Vec::with_capacity(built.len());

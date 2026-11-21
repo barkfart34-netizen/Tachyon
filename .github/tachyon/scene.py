@@ -744,18 +744,25 @@ def lost_realms(control, out):
 
 
 def chronicles(control, out):
-    """Chronicles' book: opened with its key, the first quest's rewards
-    claimed. Whether Claim was there to click."""
+    """Horizon Quests book with Chronicles quests: opened with its key (J),
+    welcome quest ticked and claimed via /quests, and pictured before/after."""
     control.send("key j tap")
     time.sleep(3)
-    control.send("screenshot " + os.path.join(out, "quests.png"))
-    reply = control.send("click-button Claim")
-    print("claim:", reply)
-    time.sleep(3)
-    control.send("screenshot " + os.path.join(out, "quests-claimed.png"))
+    shot = control.send("screenshot " + os.path.join(out, "quests.png"))
     control.send("key escape tap")
     time.sleep(1)
-    return bool(reply.get("ok"))
+    control.send("chat /quests check machine_age/welcome/ready")
+    time.sleep(2)
+    control.send("chat /quests claim")
+    time.sleep(2)
+    chat = " ".join(str(line) for line in control.send("chat-log 6").get("chat", []))
+    print("quests chat:", chat)
+    control.send("key j tap")
+    time.sleep(3)
+    shot_after = control.send("screenshot " + os.path.join(out, "quests-claimed.png"))
+    control.send("key escape tap")
+    time.sleep(1)
+    return bool(shot.get("ok") and shot_after.get("ok"))
 
 
 def orbital(control, out):
@@ -886,19 +893,26 @@ def finish_tachyon(home, failed):
         print(path, open(path, encoding="utf-8").read())
     if not kept:
         failed.append("motor speed kept")
-    # The first quest's rewards were taken, in the world's folder.
+    # Horizon Quests progress in the world's folder (<world>/horizon-quests/progress/*.json).
     quests = [os.path.join(d, f) for d, _, files in os.walk(home) for f in files
-              if os.path.basename(d) == "chronicles" and f.endswith(".json")]
+              if os.path.basename(d) == "progress"
+              and os.path.basename(os.path.dirname(d)) == "horizon-quests"
+              and f.endswith(".json")]
     for path in quests:
         print(path, open(path, encoding="utf-8").read())
     progress = [json.load(open(p, encoding="utf-8")) for p in quests]
-    if not any("welcome" in p.get("claimed", []) for p in progress):
+    if not any(any(r.startswith("machine_age/welcome/") for r in p.get("claimed", {})) for p in progress):
         failed.append("quest claimed")
     # Done by the motor turning near the player, and by standing in the
     # structures the world made.
-    for quest in ["in_motion", "full_speed", "millstone", "crushed_ore", "pressing", "mixing", "bulk_washing",
-                  "conveyor", "lost_workshop", "watchtower"]:
-        if not any(quest in p.get("done", []) for p in progress):
+    for quest in [
+        "machine_age/welcome",
+        "machine_age/in_motion",
+        "machine_age/full_speed",
+        "lost_realms/lost_workshop",
+        "lost_realms/watchtower",
+    ]:
+        if not any(quest in p.get("completed", {}) or quest in p.get("tasks", {}) for p in progress):
             failed.append("quest " + quest)
     finish(failed, "the scene is done")
 

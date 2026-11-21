@@ -808,9 +808,6 @@ impl Game<'_> {
             S::CustomPayload(p) if p.channel == horizon_protocol::quiet::CHANNEL => {
                 self.guest_quiet_commands(conn, &p.data)
             }
-            S::CustomPayload(p) if p.channel.starts_with("tachyon:") => {
-                self.tachyon_guest_payload(conn, &p.channel, &p.data)
-            }
             S::CustomPayload(p) if p.channel == "orbital:work" => {
                 if let Some(uuid) = self.lan.as_ref().and_then(|l| l.hub.guest(conn)).map(|g| g.uuid) {
                     crate::game::orbital_glue::from_client(self, uuid, &p.channel, &p.data);

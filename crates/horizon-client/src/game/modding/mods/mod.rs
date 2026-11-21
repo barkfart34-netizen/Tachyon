@@ -116,7 +116,10 @@ pub(super) struct ModsState {
 }
 
 /// Tachyon's built-in content mods (`horizon_client::brand::content()`), always on and first.
-fn built_in_packages() -> Vec<horizon_mod_package::selection::SelectedPackage> {
+/// Statically linked native mods (`native.built()`) are owned by `native.packages()`, not duplicated here.
+fn built_in_packages(
+    native: &horizon_mod_package::runtime::Runtime,
+) -> Vec<horizon_mod_package::selection::SelectedPackage> {
     let Some(dir) = horizon_client::brand::content() else {
         return Vec::new();
     };
@@ -124,6 +127,9 @@ fn built_in_packages() -> Vec<horizon_mod_package::selection::SelectedPackage> {
         .into_iter()
         .filter_map(|path| {
             let package = horizon_mod_package::Package::read(&path).ok()?;
+            if native.built().iter().any(|b| b.id == package.manifest.id) {
+                return None;
+            }
             Some(horizon_mod_package::selection::SelectedPackage { path, package })
         })
         .collect()
@@ -164,7 +170,7 @@ impl ModsState {
         &self,
         accepted_content: impl Fn(&str) -> bool,
     ) -> horizon_mod_package::enabled::EnabledMods {
-        let built_in = built_in_packages();
+        let built_in = built_in_packages(&self.native);
         let built_in_iter = built_in.iter().map(|selected| (&selected.package.manifest, false));
         let native = self
             .native
@@ -716,7 +722,7 @@ pub(super) fn content_overlay(
     let here = std::env::current_dir().unwrap_or_default();
     let original_base = root.to_owned();
 
-    let built_in_all = built_in_packages();
+    let built_in_all = built_in_packages(&sources.native);
     let built_in_ids: std::collections::HashSet<&str> = built_in_all
         .iter()
         .map(|p| p.package.manifest.id.as_str())

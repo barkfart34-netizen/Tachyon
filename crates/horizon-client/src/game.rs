@@ -267,8 +267,6 @@ enum Screen {
     DialogWarning,
     /// WinScreen: the end poem and the credits (game/interface/win.rs).
     Win,
-    /// Tachyon: Chronicles' quest book (game/tachyon_engine/chronicles.rs).
-    Quests,
     /// DebugOptionsScreen, F3+F6 (game/interface/debug_options.rs).
     DebugOptions,
     /// A screen of a native mod's own (`mod_screen_open`): it draws and
@@ -309,7 +307,6 @@ impl Screen {
             Screen::DebugOptions => "debug_options",
             Screen::Mod => "mod",
             Screen::HudEditor => "hud_editor",
-            Screen::Quests => "quests",
             Screen::Studio => "studio",
         }
     }
@@ -5158,7 +5155,6 @@ impl Game<'_> {
                 self.draw_pad_menu_guide(&mut batch, from);
             }
             Screen::Chat => self.draw_chat_screen(&mut batch),
-            Screen::Quests => self.tachyon_screen_draw(&mut batch),
             Screen::Playing | Screen::Options | Screen::Win => {}
         }
         // ScreenEvent.Render.Post: the open screen has drawn itself and its
@@ -9517,9 +9513,6 @@ impl Game<'_> {
                     if self.screen == Screen::Options && d != 0.0 {
                         self.options_scroll(d)?;
                     }
-                    if self.screen == Screen::Quests && d != 0.0 {
-                        self.tachyon_screen_scroll(d);
-                    }
                     // AbstractContainerScreen.mouseScrolled: a bundle under the
                     // cursor takes the wheel before the screen's own scrolling.
                     let bundle = bundles::takes_bundle_wheel(self.screen)
@@ -9844,7 +9837,6 @@ impl Game<'_> {
                             self.stats_click(size);
                         }
                         Screen::Stats if button == MouseButton::Left => self.stats_release(),
-                        Screen::Quests if pressed => self.tachyon_screen_click(button),
                         Screen::GameModeSwitcher if !pressed => self.switcher_release(button),
                         _ => {}
                     }
@@ -11166,6 +11158,72 @@ pub fn run_tachyon(native: horizon_mod_package::runtime::Runtime) -> Result<()> 
     run_with(options, native)
 }
 
+/// Runs the `horizon-mod-api` registration and setup pipeline for both Desktop (`run_with`)
+/// and Android (`AndroidGame::start`) before any world or resource pack loads.
+pub(in crate::game) fn bootstrap_mods(
+    options: &mut Options,
+    settings: &Settings,
+    vanilla_root: &std::path::Path,
+    game_dir: &std::path::Path,
+) -> Result<()> {
+    native_hooks::install_block_contact_hooks();
+    options
+        .mods
+        .capture_code_switches(&settings.mods.disabled);
+    options.mods.select(game_dir, &settings.mods.enabled);
+    let mod_phase = mod_api::__private::PhaseOwner::new(mod_api::__private::ModPhase::Packages);
+    api_values::install_packages(options.mods.native.packages(), &options.mods.selected)?;
+    mods::install_registration_data(vanilla_root)?;
+    {
+        use mod_api::__private::game::RegistrationContextNew;
+        let context = mod_api::RegistrationContext::new();
+        let inventory: Vec<_> = context.mods().iter().cloned().collect();
+        crate::entry::initialize_code(&inventory);
+    }
+    horizon_engine_slots::seal().expect("engine registration seals once at startup");
+    arm_points!();
+    mod_phase.advance(mod_api::__private::ModPhase::Registration)?;
+    crate::game::part_admission::admit_parts(mod_api::__private::mods())?;
+    // The structure types those mods registered, handed to the engine before
+    // any world opens, as its StructureRegistry reads them.
+    if horizon_world::worldgen::structure::mod_types::install_mod_structure_types(
+        native_structure_types::installed_structure_types(),
+    )
+    .is_err()
+    {
+        log::warn!("Mod structure types already installed; keeping the first table");
+    }
+    // The levels they registered, below the data packs of every world opened.
+    if horizon_world::worldgen::overrides::install_mod_dimensions(
+        native_dimensions::installed_dimensions(),
+    )
+    .is_err()
+    {
+        log::warn!("Mod dimensions already installed; keeping the first table");
+    }
+    // Their chunk generators and biome sources, which those levels' and the packs' stems name,
+    // and density function types, which the packs' density JSON names.
+    native_chunk_generator::install();
+    native_biome_source::install();
+    native_density_function::install();
+    mods::register_components(vanilla_root)?;
+    mods::register_standalone_models(options.execution_role);
+    mods::register_layer_definitions(options.execution_role, vanilla_root);
+    mods::register_debug_entries(options.execution_role);
+    mods::register_gui_layers(options.execution_role);
+    mods::register_map_decoration_types();
+    mods::register_range_select_item_model_properties(options.execution_role);
+    mods::register_select_item_model_properties(options.execution_role);
+    mods::register_resource_sources(options.execution_role);
+    mods::register_enchantment_damage_effects();
+    mods::register_client_presentations(options.execution_role);
+    mods::register_meshing(options.execution_role);
+    mods::register_particles(options.execution_role);
+    mods::freeze_declarations()?;
+    mod_phase.advance(mod_api::__private::ModPhase::Setup)?;
+    Ok(())
+}
+
 pub(crate) fn run_with(
     options: Options,
     native: horizon_mod_package::runtime::Runtime,
@@ -11177,7 +11235,6 @@ pub(crate) fn run_with(
     {
         return Ok(());
     }
-    native_hooks::install_block_contact_hooks();
     // Before any worker starts: on Linux they go behind the server thread
     // and the render thread.
     horizon_threads::put_helpers_behind();
@@ -11228,62 +11285,12 @@ pub(crate) fn run_with(
         return Err(error.into());
     }
     let mut early_settings = Settings::load(&Game::options_path());
-    options
-        .mods
-        .capture_code_switches(&early_settings.mods.disabled);
-    options
-        .mods
-        .select(&std::env::current_dir()?, &early_settings.mods.enabled);
-    let mod_phase = mod_api::__private::PhaseOwner::new(mod_api::__private::ModPhase::Packages);
-    api_values::install_packages(options.mods.native.packages(), &options.mods.selected)?;
-    mods::install_registration_data(&vanilla_root)?;
-    {
-        use mod_api::__private::game::RegistrationContextNew;
-        let context = mod_api::RegistrationContext::new();
-        let inventory: Vec<_> = context.mods().iter().cloned().collect();
-        crate::entry::initialize_code(&inventory);
-    }
-    horizon_engine_slots::seal().expect("engine registration seals once at startup");
-    arm_points!();
-    mod_phase.advance(mod_api::__private::ModPhase::Registration)?;
-    crate::game::part_admission::admit_parts(mod_api::__private::mods())?;
-    // The structure types those mods registered, handed to the engine before
-    // any world opens, as its StructureRegistry reads them.
-    if horizon_world::worldgen::structure::mod_types::install_mod_structure_types(
-        native_structure_types::installed_structure_types(),
-    )
-    .is_err()
-    {
-        log::warn!("Mod structure types already installed; keeping the first table");
-    }
-    // The levels they registered, below the data packs of every world opened.
-    if horizon_world::worldgen::overrides::install_mod_dimensions(
-        native_dimensions::installed_dimensions(),
-    )
-    .is_err()
-    {
-        log::warn!("Mod dimensions already installed; keeping the first table");
-    }
-    // Their chunk generators and biome sources, which those levels' and the packs' stems name,
-    // and density function types, which the packs' density JSON names.
-    native_chunk_generator::install();
-    native_biome_source::install();
-    native_density_function::install();
-    mods::register_components(&vanilla_root)?;
-    mods::register_standalone_models(options.execution_role);
-    mods::register_layer_definitions(options.execution_role, &vanilla_root);
-    mods::register_debug_entries(options.execution_role);
-    mods::register_gui_layers(options.execution_role);
-    mods::register_map_decoration_types();
-    mods::register_range_select_item_model_properties(options.execution_role);
-    mods::register_select_item_model_properties(options.execution_role);
-    mods::register_resource_sources(options.execution_role);
-    mods::register_enchantment_damage_effects();
-    mods::register_client_presentations(options.execution_role);
-    mods::register_meshing(options.execution_role);
-    mods::register_particles(options.execution_role);
-    mods::freeze_declarations()?;
-    mod_phase.advance(mod_api::__private::ModPhase::Setup)?;
+    bootstrap_mods(
+        &mut options,
+        &early_settings,
+        &vanilla_root,
+        &std::env::current_dir()?,
+    )?;
     // Minecraft.<init>: read the last start's flag, then mark this one as not
     // finished until onGameLoadFinished. A dedicated server has no options.txt.
     if options.execution_role.is_client() {

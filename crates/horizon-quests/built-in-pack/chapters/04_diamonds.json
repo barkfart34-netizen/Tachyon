@@ -1,0 +1,566 @@
+{
+  "id": "diamonds",
+  "title": "Diamonds",
+  "subtitle": "The deep and the shiny",
+  "icon": "minecraft:diamond",
+  "group": "main",
+  "quests": [
+    {
+      "id": "deepslate",
+      "title": "The deep dark rock",
+      "description": [
+        "Below level 0 the stone turns to deepslate: harder to mine, and home to the best ores.",
+        "Mine your way down and bring some back."
+      ],
+      "x": 0, "y": 0,
+      "shape": "circle",
+      "size": 1.25,
+      "dependencies": ["iron_age/iron_block"],
+      "tasks": [ { "id": "deepslate", "type": "item", "item": "minecraft:cobbled_deepslate", "count": 32 } ],
+      "rewards": [ { "id": "torches", "type": "item", "item": "minecraft:torch", "count": 32 } ]
+    },
+    {
+      "id": "diamonds",
+      "title": "Diamonds!",
+      "description": [
+        "Diamond ore sparkles pale blue, mostly very deep down. Only an iron pickaxe or better can break it."
+      ],
+      "x": 0, "y": 1.5,
+      "shape": "hexagon",
+      "size": 1.25,
+      "dependencies": ["deepslate"],
+      "tasks": [ { "id": "diamonds", "type": "item", "item": "minecraft:diamond", "count": 3 } ],
+      "rewards": [ { "id": "levels", "type": "xp_levels", "levels": 2 } ]
+    },
+    {
+      "id": "diamond_pickaxe",
+      "title": "The best pickaxe",
+      "description": [
+        "Three diamonds and two sticks. This pickaxe can mine obsidian."
+      ],
+      "x": 0, "y": 3,
+      "shape": "hexagon",
+      "size": 1.25,
+      "dependencies": ["diamonds"],
+      "tasks": [ { "id": "pickaxe", "type": "item", "item": "minecraft:diamond_pickaxe" } ],
+      "rewards": [ { "id": "xp", "type": "xp", "points": 50 } ]
+    },
+    {
+      "id": "obsidian",
+      "title": "Obsidian",
+      "description": [
+        "Pour water over still lava and mine the obsidian with your diamond pickaxe. Ten blocks build a portal."
+      ],
+      "x": 0, "y": 4.5,
+      "shape": "hexagon",
+      "size": 1.25,
+      "dependencies": ["diamond_pickaxe"],
+      "tasks": [ { "id": "obsidian", "type": "item", "item": "minecraft:obsidian", "count": 10 } ],
+      "rewards": [ { "id": "flint_and_steel", "type": "item", "item": "minecraft:flint_and_steel" } ]
+    },
+    {
+      "id": "diamond_sword",
+      "title": "A sharper edge",
+      "description": [
+        "Two diamonds and a stick. Nothing in the Overworld stands up to it for long."
+      ],
+      "x": -1.25, "y": 4,
+      "shape": "square",
+      "dependencies": ["diamonds"],
+      "tasks": [ { "id": "sword", "type": "item", "item": "minecraft:diamond_sword" } ],
+      "rewards": [ { "id": "xp", "type": "xp", "points": 40 } ]
+    },
+    {
+      "id": "diamond_armor",
+      "title": "Diamond-clad",
+      "description": [
+        "A full set of diamond armour. You will want it where you are going next."
+      ],
+      "icon": "minecraft:diamond_chestplate",
+      "x": -2.5, "y": 1,
+      "shape": "square",
+      "dependencies": ["diamond_sword"],
+      "tasks": [
+        { "id": "helmet", "type": "item", "item": "minecraft:diamond_helmet" },
+        { "id": "chestplate", "type": "item", "item": "minecraft:diamond_chestplate" },
+        { "id": "leggings", "type": "item", "item": "minecraft:diamond_leggings" },
+        { "id": "boots", "type": "item", "item": "minecraft:diamond_boots" }
+      ],
+      "rewards": [ { "id": "levels", "type": "xp_levels", "levels": 3 } ]
+    },
+    {
+      "id": "enchanting_table",
+      "title": "A table of spells",
+      "description": [
+        "A book, two diamonds and four obsidian make an enchanting table. Lapis lazuli pays for the spells."
+      ],
+      "x": 0, "y": 6,
+      "shape": "hexagon",
+      "size": 1.25,
+      "dependencies": ["obsidian"],
+      "tasks": [ { "id": "table", "type": "item", "item": "minecraft:enchanting_table" } ],
+      "rewards": [ { "id": "lapis", "type": "item", "item": "minecraft:lapis_lazuli", "count": 16 } ]
+    },
+    {
+      "id": "bookshelves",
+      "title": "A proper library",
+      "description": [
+        "Fifteen bookshelves around the table, one block away, unlock the strongest enchantments."
+      ],
+      "x": 0, "y": 7.5,
+      "shape": "hexagon",
+      "size": 1.25,
+      "dependencies": ["enchanting_table"],
+      "tasks": [ { "id": "shelves", "type": "item", "item": "minecraft:bookshelf", "count": 15 } ],
+      "rewards": [ { "id": "levels", "type": "xp_levels", "levels": 5 } ]
+    },
+    {
+      "id": "enchant",
+      "title": "Enchanter",
+      "description": [
+        "Put a tool or a piece of armour on the table and pick an enchantment."
+      ],
+      "icon": "minecraft:enchanted_book",
+      "x": 1.25, "y": 5,
+      "shape": "square",
+      "dependencies": ["enchanting_table"],
+      "tasks": [ { "id": "enchant", "type": "advancement", "advancement": "minecraft:story/enchant_item" } ],
+      "rewards": [ { "id": "bottles", "type": "item", "item": "minecraft:experience_bottle", "count": 8 } ]
+    },
+    {
+      "id": "ready_for_nether",
+      "title": "Ready for the heat",
+      "description": [
+        "Obsidian, enchanted gear, diamond armour: you have everything you need to open a portal to the Nether.",
+        "Build a frame of obsidian, four wide and five tall, and light it."
+      ],
+      "icon": "minecraft:flint_and_steel",
+      "x": 0, "y": 9,
+      "shape": "hexagon",
+      "size": 1.25,
+      "dependencies": ["bookshelves", "enchant", "diamond_armor"],
+      "tasks": [ { "id": "ready", "type": "checkmark", "title": "I am ready" } ],
+      "rewards": [ { "id": "golden_apples", "type": "item", "item": "minecraft:golden_apple", "count": 2 } ]
+    },
+    {
+      "id": "bedrock",
+      "title": "Rock bottom",
+      "description": [
+        "Dig all the way down, until you see bedrock. Diamonds are most common just above it, around Y -58."
+      ],
+      "icon": "minecraft:deepslate",
+      "x": 1.25, "y": 0,
+      "shape": "square",
+      "dependencies": ["deepslate"],
+      "tasks": [ { "id": "location", "type": "location", "title": "Stand at Y -58 or below", "from": [-30000000, -64, -30000000], "to": [30000000, -58, 30000000], "dimension": "minecraft:overworld" } ],
+      "rewards": [ { "id": "torch", "type": "item", "item": "minecraft:torch", "count": 32 } ]
+    },
+    {
+      "id": "diamond_tools",
+      "title": "Diamond toolkit",
+      "description": [
+        "The best tools you can make at a crafting table. Put enchantments on them later."
+      ],
+      "icon": "minecraft:diamond_axe",
+      "x": 1.25, "y": 3,
+      "shape": "square",
+      "dependencies": ["diamond_pickaxe"],
+      "tasks": [
+        { "id": "diamond_axe", "type": "item", "item": "minecraft:diamond_axe" },
+        { "id": "diamond_shovel", "type": "item", "item": "minecraft:diamond_shovel" }
+      ],
+      "rewards": [ { "id": "diamond", "type": "item", "item": "minecraft:diamond" } ]
+    },
+    {
+      "id": "jukebox",
+      "title": "Music to dig to",
+      "description": [
+        "One diamond and some planks make a jukebox. Here is a disc to go with it."
+      ],
+      "x": 1.25, "y": 1.5,
+      "shape": "square",
+      "dependencies": ["diamonds"],
+      "tasks": [ { "id": "jukebox", "type": "item", "item": "minecraft:jukebox" } ],
+      "rewards": [ { "id": "music_disc_cat", "type": "item", "item": "minecraft:music_disc_cat" } ]
+    },
+    {
+      "id": "golden_apple",
+      "title": "A golden apple",
+      "description": [
+        "Eight gold ingots around an apple. Eating it gives a burst of healing and extra hearts: keep one for a hard fight."
+      ],
+      "x": -3.75, "y": -1,
+      "shape": "square",
+      "dependencies": ["diamond_armor"],
+      "tasks": [ { "id": "golden_apple", "type": "item", "item": "minecraft:golden_apple" } ],
+      "rewards": [ { "id": "gold_ingot", "type": "item", "item": "minecraft:gold_ingot", "count": 8 } ]
+    },
+    {
+      "id": "fifteen_levels",
+      "title": "Saving up",
+      "description": [
+        "With fifteen bookshelves around the table, the best enchantments cost thirty levels. Save them up."
+      ],
+      "icon": "minecraft:experience_bottle",
+      "x": 1.25, "y": 7.5,
+      "shape": "square",
+      "dependencies": ["bookshelves"],
+      "tasks": [ { "id": "levels", "type": "xp_levels", "levels": 30 } ],
+      "rewards": [ { "id": "lapis_lazuli", "type": "item", "item": "minecraft:lapis_lazuli", "count": 16 } ]
+    },
+    {
+      "id": "deep_dark",
+      "title": "The deep dark",
+      "description": [
+        "Far below, sculk spreads over everything. Sensors hear your steps; shriekers call the Warden.",
+        "Move crouching, and throw wool on the sensors to keep them quiet."
+      ],
+      "icon": "minecraft:sculk_catalyst",
+      "x": -3.75, "y": 1.5,
+      "shape": "square",
+      "dependencies": ["diamond_armor"],
+      "tasks": [ { "id": "kill_mob_near_sculk_catalyst", "type": "advancement", "advancement": "minecraft:adventure/kill_mob_near_sculk_catalyst", "title": "Kill a mob next to a sculk catalyst" } ],
+      "rewards": [ { "id": "white_wool", "type": "item", "item": "minecraft:white_wool", "count": 16 } ]
+    },
+    {
+      "id": "silk_sensor",
+      "title": "Silent listener",
+      "description": [
+        "Sculk only drops itself to a silk touch tool. A sensor feels vibrations; calibrated, it listens to one kind only."
+      ],
+      "x": -5, "y": 0,
+      "shape": "diamond",
+      "optional": true,
+      "dependencies": ["deep_dark"],
+      "tasks": [
+        { "id": "sculk_sensor", "type": "item", "item": "minecraft:sculk_sensor" },
+        { "id": "calibrated_sculk_sensor", "type": "item", "item": "minecraft:calibrated_sculk_sensor" }
+      ],
+      "rewards": [ { "id": "redstone", "type": "item", "item": "minecraft:redstone", "count": 16 } ]
+    },
+    {
+      "id": "ancient_city",
+      "title": "Ancient city",
+      "description": [
+        "A ruined city of deepslate in the deep dark, with chests full of rare loot. Echo shards are only found here."
+      ],
+      "icon": "minecraft:echo_shard",
+      "x": -5, "y": 2,
+      "shape": "square",
+      "dependencies": ["deep_dark"],
+      "tasks": [ { "id": "echo_shard", "type": "item", "item": "minecraft:echo_shard", "count": 2 } ],
+      "rewards": [ { "id": "candle", "type": "item", "item": "minecraft:candle", "count": 8 } ]
+    },
+    {
+      "id": "recovery_compass",
+      "title": "Find your way back",
+      "description": [
+        "Eight echo shards around a compass. It points to where you last died."
+      ],
+      "x": -6.25, "y": 1,
+      "shape": "square",
+      "dependencies": ["ancient_city"],
+      "tasks": [ { "id": "recovery_compass", "type": "item", "item": "minecraft:recovery_compass" } ],
+      "rewards": [ { "id": "xp", "type": "xp", "points": 80 } ]
+    },
+    {
+      "id": "disc_5",
+      "title": "Fragments of a song",
+      "description": [
+        "Nine disc fragments from the city's chests make a strange, unsettling music disc."
+      ],
+      "x": -6.25, "y": 2,
+      "shape": "diamond",
+      "optional": true,
+      "dependencies": ["ancient_city"],
+      "tasks": [ { "id": "music_disc_5", "type": "item", "item": "minecraft:music_disc_5" } ],
+      "rewards": [ { "id": "jukebox", "type": "item", "item": "minecraft:jukebox" } ]
+    },
+    {
+      "id": "warden",
+      "title": "The Warden",
+      "description": [
+        "The Warden is blind, but it smells and hears. It hits harder than anything else in the game.",
+        "Most players run. Beat it, with your best gear and potions."
+      ],
+      "icon": "minecraft:sculk_shrieker",
+      "x": -6.25, "y": 3,
+      "shape": "square",
+      "dependencies": ["ancient_city"],
+      "tasks": [ { "id": "warden", "type": "kill", "entity": "minecraft:warden" } ],
+      "rewards": [
+        { "id": "diamond", "type": "item", "item": "minecraft:diamond", "count": 4 },
+        { "id": "levels", "type": "xp_levels", "levels": 10 }
+      ]
+    },
+    {
+      "id": "lapis",
+      "title": "Lapis supply",
+      "description": [
+        "Every enchantment costs lapis. Keep a good stock next to the table."
+      ],
+      "x": 1.25, "y": 6,
+      "shape": "square",
+      "dependencies": ["enchanting_table"],
+      "tasks": [ { "id": "lapis_lazuli", "type": "item", "item": "minecraft:lapis_lazuli", "count": 32 } ],
+      "rewards": [ { "id": "experience_bottle", "type": "item", "item": "minecraft:experience_bottle", "count": 4 } ]
+    },
+    {
+      "id": "anvil",
+      "title": "Anvil",
+      "description": [
+        "Combine enchanted books with tools, repair them, and rename things. Mind the cost: it grows each time."
+      ],
+      "x": 2.5, "y": 5.5,
+      "shape": "square",
+      "dependencies": ["lapis"],
+      "tasks": [ { "id": "anvil", "type": "item", "item": "minecraft:anvil" } ],
+      "rewards": [ { "id": "iron_ingot", "type": "item", "item": "minecraft:iron_ingot", "count": 8 } ]
+    },
+    {
+      "id": "books",
+      "title": "Spell books",
+      "description": [
+        "Enchant plain books at the table, buy them from librarians, or fish them up."
+      ],
+      "icon": "minecraft:enchanted_book",
+      "x": 3.75, "y": 5.5,
+      "shape": "square",
+      "dependencies": ["anvil"],
+      "tasks": [ { "id": "enchanted_book", "type": "item", "item": "minecraft:enchanted_book", "count": 3 } ],
+      "rewards": [ { "id": "book", "type": "item", "item": "minecraft:book", "count": 6 } ]
+    },
+    {
+      "id": "grindstone",
+      "title": "Clean slate",
+      "description": [
+        "A grindstone strips enchantments from an item and gives back some experience."
+      ],
+      "x": 5, "y": 5.5,
+      "shape": "square",
+      "dependencies": ["books"],
+      "tasks": [ { "id": "grindstone", "type": "item", "item": "minecraft:grindstone" } ],
+      "rewards": [ { "id": "xp", "type": "xp", "points": 50 } ]
+    },
+    {
+      "id": "bottles",
+      "title": "Bottled experience",
+      "description": [
+        "Clerics sell bottles of experience. Throw them at your feet."
+      ],
+      "x": 2.5, "y": 6.5,
+      "shape": "square",
+      "dependencies": ["lapis"],
+      "tasks": [ { "id": "experience_bottle", "type": "item", "item": "minecraft:experience_bottle", "count": 8 } ],
+      "rewards": [ { "id": "lapis_lazuli", "type": "item", "item": "minecraft:lapis_lazuli", "count": 16 } ]
+    },
+    {
+      "id": "trial_key",
+      "title": "Trial chambers",
+      "description": [
+        "Copper and tuff halls are buried deep underground. Their spawners release waves of mobs.",
+        "Beat a wave and the spawner drops loot, sometimes a trial key."
+      ],
+      "x": -2.5, "y": 6.5,
+      "shape": "square",
+      "dependencies": ["diamond_sword"],
+      "tasks": [ { "id": "trial_key", "type": "item", "item": "minecraft:trial_key" } ],
+      "rewards": [ { "id": "cooked_beef", "type": "item", "item": "minecraft:cooked_beef", "count": 8 } ]
+    },
+    {
+      "id": "breeze",
+      "title": "The breeze",
+      "description": [
+        "A mob made of wind that jumps around and shoots gusts. Its arrows bounce off; get close."
+      ],
+      "x": -3.75, "y": 4,
+      "shape": "square",
+      "dependencies": ["trial_key"],
+      "tasks": [
+        { "id": "breeze", "type": "kill", "entity": "minecraft:breeze", "count": 3 },
+        { "id": "breeze_rod", "type": "item", "item": "minecraft:breeze_rod", "count": 4 }
+      ],
+      "rewards": [ { "id": "shield", "type": "item", "item": "minecraft:shield" } ]
+    },
+    {
+      "id": "wind_charge",
+      "title": "Gusts",
+      "description": [
+        "A breeze rod makes four wind charges. Throw one at your feet to fly up, or at a mob to push it away."
+      ],
+      "icon": "minecraft:wind_charge",
+      "x": -5, "y": 4,
+      "shape": "square",
+      "dependencies": ["breeze"],
+      "tasks": [ { "id": "wind_charge", "type": "craft", "item": "minecraft:wind_charge", "count": 16 } ],
+      "rewards": [ { "id": "xp", "type": "xp", "points": 40 } ]
+    },
+    {
+      "id": "rocket_jump",
+      "title": "Who needs rockets?",
+      "description": [
+        "Jump, throw a wind charge straight down, and go up and up."
+      ],
+      "icon": "minecraft:feather",
+      "x": -6.25, "y": 4,
+      "shape": "diamond",
+      "optional": true,
+      "dependencies": ["wind_charge"],
+      "tasks": [ { "id": "who_needs_rockets", "type": "advancement", "advancement": "minecraft:adventure/who_needs_rockets", "title": "Fly 8 blocks up with a wind charge" } ],
+      "rewards": [ { "id": "wind_charge", "type": "item", "item": "minecraft:wind_charge", "count": 16 } ]
+    },
+    {
+      "id": "bogged",
+      "title": "Bogged",
+      "description": [
+        "Mossy skeletons whose arrows poison you. They live in swamps and in trial chambers."
+      ],
+      "icon": "minecraft:bow",
+      "x": -3.75, "y": 6.5,
+      "shape": "square",
+      "dependencies": ["trial_key"],
+      "tasks": [ { "id": "bogged", "type": "kill", "entity": "minecraft:bogged", "count": 5 } ],
+      "rewards": [ { "id": "random", "type": "random", "table": "hunter_loot" } ]
+    },
+    {
+      "id": "vault",
+      "title": "Under lock and key",
+      "description": [
+        "The chambers' vaults open with a trial key, once for each player."
+      ],
+      "icon": "minecraft:vault",
+      "x": -5, "y": 6.5,
+      "shape": "square",
+      "dependencies": ["bogged"],
+      "tasks": [ { "id": "under_lock_and_key", "type": "advancement", "advancement": "minecraft:adventure/under_lock_and_key", "title": "Open a vault" } ],
+      "rewards": [ { "id": "trial_key", "type": "item", "item": "minecraft:trial_key" } ]
+    },
+    {
+      "id": "vault_prizes",
+      "title": "Vault prizes",
+      "description": [
+        "Vaults give food, tools, enchanted books, and some rare things you will not find elsewhere."
+      ],
+      "icon": "minecraft:guster_banner_pattern",
+      "x": -6.25, "y": 5,
+      "shape": "diamond",
+      "optional": true,
+      "dependencies": ["vault"],
+      "tasks": [
+        { "id": "bolt_armor_trim_smithing_template", "type": "item", "item": "minecraft:bolt_armor_trim_smithing_template" },
+        { "id": "guster_banner_pattern", "type": "item", "item": "minecraft:guster_banner_pattern" }
+      ],
+      "rewards": [ { "id": "diamond", "type": "item", "item": "minecraft:diamond", "count": 2 } ]
+    },
+    {
+      "id": "crafter",
+      "title": "Crafters",
+      "description": [
+        "The chambers are lit by copper bulbs. Make your own: they toggle on and off with each redstone pulse."
+      ],
+      "icon": "minecraft:copper_bulb",
+      "x": -3.75, "y": 9,
+      "shape": "square",
+      "dependencies": ["trial_key"],
+      "tasks": [ { "id": "copper_bulb", "type": "item", "item": "minecraft:copper_bulb", "count": 4 } ],
+      "rewards": [ { "id": "copper_ingot", "type": "item", "item": "minecraft:copper_ingot", "count": 8 } ]
+    },
+    {
+      "id": "ominous",
+      "title": "Ominous",
+      "description": [
+        "Raid captains drop ominous bottles. Drink one and enter a trial chamber: its trials become ominous."
+      ],
+      "icon": "minecraft:ominous_bottle",
+      "x": -6.25, "y": 7,
+      "shape": "square",
+      "dependencies": ["vault"],
+      "tasks": [ { "id": "ominous_bottle", "type": "item", "item": "minecraft:ominous_bottle" } ],
+      "rewards": [ { "id": "milk_bucket", "type": "item", "item": "minecraft:milk_bucket" } ]
+    },
+    {
+      "id": "ominous_key",
+      "title": "Ominous key",
+      "description": [
+        "Ominous spawners send harder waves and drop ominous keys, for the ominous vaults."
+      ],
+      "icon": "minecraft:ominous_trial_key",
+      "x": -7.5, "y": 7,
+      "shape": "square",
+      "dependencies": ["ominous"],
+      "tasks": [ { "id": "ominous_trial_key", "type": "item", "item": "minecraft:ominous_trial_key" } ],
+      "rewards": [ { "id": "golden_apple", "type": "item", "item": "minecraft:golden_apple", "count": 2 } ]
+    },
+    {
+      "id": "heavy_core",
+      "title": "Heavy core",
+      "description": [
+        "The rarest thing an ominous vault gives. Very dense, very heavy, very valuable."
+      ],
+      "x": -8.75, "y": 6.5,
+      "shape": "square",
+      "dependencies": ["ominous_key"],
+      "tasks": [ { "id": "heavy_core", "type": "item", "item": "minecraft:heavy_core" } ],
+      "rewards": [ { "id": "levels", "type": "xp_levels", "levels": 5 } ]
+    },
+    {
+      "id": "ominous_prizes",
+      "title": "Ominous prizes",
+      "description": [
+        "Ominous vaults also give the flow trim and banner pattern, found nowhere else."
+      ],
+      "icon": "minecraft:flow_banner_pattern",
+      "x": -8.75, "y": 8,
+      "shape": "diamond",
+      "optional": true,
+      "dependencies": ["ominous_key"],
+      "tasks": [
+        { "id": "flow_armor_trim_smithing_template", "type": "item", "item": "minecraft:flow_armor_trim_smithing_template" },
+        { "id": "flow_banner_pattern", "type": "item", "item": "minecraft:flow_banner_pattern" }
+      ],
+      "rewards": [ { "id": "diamond", "type": "item", "item": "minecraft:diamond", "count": 3 } ]
+    },
+    {
+      "id": "mace",
+      "title": "The mace",
+      "description": [
+        "A heavy core on a breeze rod makes a mace. The further you fall before you hit, the harder it hits.",
+        "Wind charges and a mace go well together."
+      ],
+      "x": -10, "y": 6.5,
+      "shape": "square",
+      "dependencies": ["heavy_core", "breeze"],
+      "tasks": [ { "id": "mace", "type": "item", "item": "minecraft:mace" } ],
+      "rewards": [ { "id": "wind_charge", "type": "item", "item": "minecraft:wind_charge", "count": 32 } ]
+    },
+    {
+      "id": "smash",
+      "title": "Over-overkill",
+      "description": [
+        "Climb high, fall far, and bring the mace down on something. Fifty hearts of damage in a single hit."
+      ],
+      "icon": "minecraft:mace",
+      "x": -11.25, "y": 6,
+      "shape": "diamond",
+      "optional": true,
+      "dependencies": ["mace"],
+      "tasks": [ { "id": "overoverkill", "type": "advancement", "advancement": "minecraft:adventure/overoverkill", "title": "Deal 50 hearts in one mace hit" } ],
+      "rewards": [ { "id": "levels", "type": "xp_levels", "levels": 10 } ]
+    },
+    {
+      "id": "trials_done",
+      "title": "Trial by fire",
+      "description": [
+        "You beat the chambers and their ominous trials, and you have the mace to show for it."
+      ],
+      "icon": "minecraft:trial_spawner",
+      "x": -11.25, "y": 7,
+      "shape": "hexagon",
+      "size": 1.5,
+      "visibility": "until_deps_complete",
+      "dependencies": ["mace", "heavy_core", "crafter", "bogged"],
+      "tasks": [],
+      "rewards": [ { "id": "choice", "type": "choice", "table": "treasure_choice" } ]
+    }
+  ]
+}

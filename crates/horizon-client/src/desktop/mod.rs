@@ -123,7 +123,8 @@ fn game() -> i32 {
     );
     horizon_client::spans::startup::init(std::time::Instant::now());
     horizon_client::entry::install_hooks();
-    let code = match horizon_client::game::run_tachyon(horizon_mod_package::runtime::Runtime::default()) {
+    let native = horizon_client::tachyon_native_mods::install();
+    let code = match horizon_client::game::run_tachyon(native) {
         Ok(()) => 0,
         Err(error) => {
             log::error!("Tachyon: {error}");

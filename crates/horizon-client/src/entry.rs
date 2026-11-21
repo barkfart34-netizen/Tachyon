@@ -189,7 +189,8 @@ fn install_platform() {
         // The controller glyphs' pictures: Horizon's own art, until a platform crate registers its own.
         horizon_client::pad_glyph::install();
         // horizon-extras (docs/forking.md): without the feature, no Horizon Settings or Mods page.
-        if !cfg!(feature = "horizon-extras") {
+        // Tachyon on Android builds without `friends`/`horizon-extras` but keeps Mods & Settings visible.
+        if !cfg!(any(feature = "horizon-extras", feature = "android")) {
             horizon_client::options_ui::HORIZON_EXTRAS
                 .store(false, std::sync::atomic::Ordering::Relaxed);
         }

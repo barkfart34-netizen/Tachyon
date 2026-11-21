@@ -85,7 +85,6 @@ impl Screen {
             | Self::CommandBlock
             | Self::BlockEditor
             | Self::DebugOptions
-            | Self::Quests
             | Self::HudEditor => true,
         }
     }
@@ -110,7 +109,6 @@ impl Screen {
             | Self::ServerLinks
             | Self::ConfirmLink
             | Self::DialogWarning
-            | Self::Quests
             | Self::DebugOptions => true,
             Self::Playing
             | Self::GameModeSwitcher

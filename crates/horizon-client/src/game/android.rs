@@ -463,14 +463,19 @@ fn save_layout(home: &Path, layout: &controls::layout::Layout) -> std::io::Resul
 impl AndroidGame {
     /// The game with `args` (`--resources`, `--session-file`), at its loading screen.
     pub fn start(args: Vec<String>) -> Result<Self> {
-        let options = Options::from_args(args.into_iter())?.ok_or("no options")?;
+        let mut options = Options::from_args(args.into_iter())?.ok_or("no options")?;
+        options.mods.native = Arc::new(crate::tachyon_native_mods::install());
         horizon_threads::put_helpers_behind();
         horizon_threads::favour_current();
         let started = Instant::now();
         let vanilla_root = options.resources.clone();
+        horizon_world::datafix::set_resources(
+            &std::path::absolute(&vanilla_root).unwrap_or_else(|_| vanilla_root.clone()),
+        );
         fetch_bedrock_textures(vanilla_root.clone());
         let home = std::env::current_dir()?;
         let settings = Settings::load(&home.join("options.txt"));
+        super::bootstrap_mods(&mut options, &settings, &vanilla_root, &home)?;
         Behaviours::set_cache_dir(home.join(".horizon-cache"));
         let enabled = flag(&home, "touchControls", true);
         let engine = Engine::preference(preference(&home, "touchEngine").as_deref());

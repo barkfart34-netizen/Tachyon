@@ -1,0 +1,68 @@
+{
+  "id": "metals",
+  "title": "chronicles.chapter.metals",
+  "icon": "kinetica:tin_ingot",
+  "group": "chronicles",
+  "order": 2,
+  "quests": [
+    {
+      "id": "tin",
+      "title": "chronicles.quest.tin",
+      "description": [
+        "chronicles.quest.tin.text"
+      ],
+      "icon": "kinetica:raw_tin",
+      "x": 0.0,
+      "y": 0.0,
+      "dependencies": [
+        "machine_age/welcome"
+      ],
+      "tasks": [
+        {
+          "id": "item_1_tin_ingot",
+          "type": "item",
+          "item": "kinetica:tin_ingot",
+          "count": 8
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_copper_ingot",
+          "type": "item",
+          "item": "minecraft:copper_ingot",
+          "count": 12
+        }
+      ]
+    },
+    {
+      "id": "bronze",
+      "title": "chronicles.quest.bronze",
+      "description": [
+        "chronicles.quest.bronze.text"
+      ],
+      "icon": "kinetica:bronze_ingot",
+      "x": 2.0,
+      "y": 0.0,
+      "dependencies": [
+        "tin"
+      ],
+      "tasks": [
+        {
+          "id": "item_1_bronze_ingot",
+          "type": "item",
+          "item": "kinetica:bronze_ingot",
+          "count": 8
+        }
+      ],
+      "rewards": [
+        {
+          "id": "reward_1_engineers_goggles",
+          "type": "item",
+          "item": "kinetica:engineers_goggles",
+          "count": 1
+        }
+      ],
+      "shape": "hexagon"
+    }
+  ]
+}
