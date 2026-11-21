@@ -712,7 +712,8 @@ impl AndroidGame {
                 if !game.touch_input.keyboard_keys.contains(&key) {
                     game.physical_keys.remove(&key);
                     game.debug_key(key, horizon_client::debug_keys::KeyAction::Release);
-                    game.native_key_event(key, false, false);
+                    game.native_panel_key_event(key, false, false);
+                    game.socket_key_input(key, "up");
                 }
             }
             if pointer_held && !game.physical_buttons.contains(&MouseButton::Left) {
@@ -1529,8 +1530,11 @@ impl AndroidGame {
                         if last_owner && game.debug_key(key, action) {
                             continue;
                         }
-                        // The native mods' keys (zoom, the quest book) too.
-                        if last_owner { game.native_key_event(key, pressed, false); }
+                        // The native mods' keys (zoom, megamap, the quest book) too.
+                        if last_owner {
+                            game.native_panel_key_event(key, pressed, false);
+                            game.socket_key_input(key, if pressed { "down" } else { "up" });
+                        }
                         if key == KeyCode::Escape {
                             if pressed {
                                 let _ = game.pad_back();

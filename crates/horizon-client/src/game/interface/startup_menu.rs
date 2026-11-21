@@ -53,7 +53,7 @@ pub(super) struct StartupMenu {
     pub reload_packs: bool,
     /// Browse mods' worker (`mod_browser`).
     mod_jobs: super::mod_browser::Jobs,
-    perf: horizon_client::telemetry::Session,
+    pub(in crate::game) perf: horizon_client::telemetry::Session,
 }
 
 /// `QuickPlay.joinMultiplayerWorld`: an address the server list lacks is saved
