@@ -1750,6 +1750,22 @@ impl Lod {
             Some((surface.height, surface.state))
         })
     }
+    /// The finest sampled LOD surface at block column (x, z), including water
+    /// depth, underwater ground, and biome for Megamap's far terrain layer.
+    pub fn megamap_surface(&self, x: i32, z: i32) -> Option<Surface> {
+        (0..=MAX_LEVEL).find_map(|level| {
+            let size = 16 << level;
+            let key = TileKey {
+                x: x.div_euclid(size),
+                z: z.div_euclid(size),
+                level,
+            };
+            let columns = self.ready.get(&key).filter(|c| c.len() == CELLS * CELLS)?;
+            let cell = size / CELLS as i32;
+            let (cx, cz) = ((x - key.x * size) / cell, (z - key.z * size) / cell);
+            columns[cz as usize * CELLS + cx as usize].surface
+        })
+    }
     pub fn stats(&self) -> (usize, usize) {
         (self.active.len(), self.ready.len())
     }

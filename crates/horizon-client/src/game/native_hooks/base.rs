@@ -575,6 +575,7 @@ impl Game<'_> {
     /// server's levels have `native_level_load`.
     pub(in crate::game) fn native_client_level_load(&mut self, dimension: &str) {
         crate::game::orbital_glue::client_level_load(self, dimension);
+        self.tachyon_client_level_load(dimension);
         self.fire_client_level_load(dimension);
     }
     /// The client dropped its level for `dimension` (`LevelEvent.Unload`
@@ -880,6 +881,7 @@ impl Game<'_> {
         &mut self,
         commands: &mut Vec<mod_api::Command>,
     ) {
+        self.tachyon_client_commands(commands);
         self.fire_register_client_commands(commands);
     }
     /// World field of view, after normal calculation and zoom and before projection/Nausea.
@@ -998,7 +1000,6 @@ impl Game<'_> {
     }
     /// The minimap a native mod shows: set `minimap` when it is none yet.
     pub(in crate::game) fn native_minimap(&self, minimap: &mut Option<mod_api::Minimap>) {
-        self.tachyon_minimap(minimap);
         self.fire_minimap(minimap);
     }
     /// Register namespaced NBT component types before content loads.
@@ -1265,6 +1266,7 @@ impl Game<'_> {
         screen: &ScreenView<'_>,
     ) {
         crate::game::orbital_glue::screen_render_post(self, draw, screen);
+        self.tachyon_screen_render_post(draw, screen);
         self.fire_screen_render_post(draw, screen);
     }
     /// A mouse button went down over the open screen
@@ -1295,6 +1297,7 @@ impl Game<'_> {
         canceled: &mut bool,
     ) {
         crate::game::orbital_glue::screen_click(self, screen, button, canceled);
+        self.tachyon_screen_press(screen, button, canceled);
         self.fire_screen_mouse_button_pressed_pre(screen, button, modifiers, canceled);
     }
     /// A mouse button went up over the open screen
@@ -1316,6 +1319,7 @@ impl Game<'_> {
         modifiers: u32,
         canceled: &mut bool,
     ) {
+        self.tachyon_screen_release(button, canceled);
         self.fire_screen_mouse_button_released_pre(screen, button, modifiers, canceled);
     }
     /// Before a real held-button movement reaches screen drag handlers.
@@ -1329,6 +1333,7 @@ impl Game<'_> {
         modifiers: u32,
         canceled: &mut bool,
     ) {
+        self.tachyon_screen_drag(screen, delta, canceled);
         self.fire_screen_mouse_dragged_pre(screen, button, delta, modifiers, canceled);
     }
     /// The wheel turned over the open screen (`ScreenEvent.MouseScrolled.Pre`,
@@ -1362,6 +1367,7 @@ impl Game<'_> {
         modifiers: u32,
         canceled: &mut bool,
     ) {
+        self.tachyon_screen_scroll(screen, scroll, canceled);
         self.fire_screen_mouse_scrolled_pre(screen, scroll, modifiers, canceled);
     }
     /// A key went down over the open screen (`ScreenEvent.KeyPressed.Pre`,
@@ -1395,6 +1401,7 @@ impl Game<'_> {
         canceled: &mut bool,
     ) {
         crate::game::orbital_glue::screen_key(self, screen, key, canceled);
+        self.tachyon_screen_key(key, canceled);
         self.fire_screen_key_pressed_pre(screen, key, repeat, modifiers, canceled);
     }
     /// Before an open screen handles a named key's release (same screen gate as key presses).
@@ -1451,6 +1458,7 @@ impl Game<'_> {
         canceled: &mut bool,
     ) {
         crate::game::orbital_glue::screen_char(self, screen, c, canceled);
+        self.tachyon_screen_char(c, canceled);
         self.fire_screen_char_typed_pre(screen, c, modifiers, field, canceled);
     }
     /// A left or right (`right`) press at `at` (GUI pixels from the screen's

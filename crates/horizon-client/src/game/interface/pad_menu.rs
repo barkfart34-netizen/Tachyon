@@ -2048,6 +2048,7 @@ impl Game<'_> {
             || self.station_typing()
             || self.dialog_typing()
             || self.mod_browser_typing()
+            || (self.screen == Screen::Mod && self.tachyon_mod_screen_typing())
             || matches!(
                 self.screen,
                 Screen::CommandBlock | Screen::BlockEditor | Screen::Social | Screen::DebugOptions
@@ -2211,6 +2212,16 @@ impl Game<'_> {
                 Some(t) => self.debug_options_type(t),
                 None if backspace => self.debug_options_backspace(),
                 None => {}
+            }
+        } else if self.screen == Screen::Mod && self.tachyon_mod_screen_typing() {
+            if let Some(t) = text {
+                for c in t.chars() {
+                    self.tachyon_mod_screen_char(c);
+                }
+            } else if backspace {
+                self.tachyon_mod_screen_key("key.keyboard.backspace");
+            } else if key == Some(KeyCode::Enter) {
+                self.tachyon_mod_screen_key("key.keyboard.enter");
             }
         } else if self.screen == Screen::Options {
             let result = match text {

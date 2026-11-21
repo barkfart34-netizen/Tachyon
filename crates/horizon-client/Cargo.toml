@@ -35,6 +35,8 @@ horizon-client-input = { path = "../horizon-client-input" }
 horizon-client-render = { path = "../horizon-client-render" }
 # Tachyon: Orbital Laser's engine (Stink-O/orbital-laser, MIT), built in.
 orbital-laser = { path = "../orbital-laser" }
+# Tachyon: Megamap's pure engine (Teiwazik/teiwaziks-all-in-one-map, MIT), built in.
+megamap-engine = { path = "../megamap-engine" }
 horizon-command = { path = "../horizon-command" }
 horizon-items = { path = "../horizon-items" }
 horizon-core = { path = "../horizon-core" }

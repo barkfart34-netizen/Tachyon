@@ -26,6 +26,7 @@ impl Game<'_> {
         world_partial_tick: f32,
         partial_tick: f32,
     ) {
+        self.tachyon_megamap_frame();
         self.fire_render_frame_pre(elapsed, world_partial_tick, partial_tick);
     }
 }

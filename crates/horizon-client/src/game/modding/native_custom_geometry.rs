@@ -91,6 +91,7 @@ impl Game<'_> {
         for id in &self.debug_renderers {
             self.native_debug_renderer_draw(id, &view, draw);
         }
+        self.submit_megamap_primitives(alpha, draw);
         self.native_render_level_stage(*last, &view, draw);
         self.commit_model_instances(draw, DVec3::from(camera), entities);
     }

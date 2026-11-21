@@ -149,7 +149,8 @@ impl Game<'_> {
 /// no opt-in (arismoko/horizon#4437). A game with no mod pays none of its 4 MiB. Read where the atlas is built:
 /// at the first load and on a resource reload.
 pub(in crate::game) fn mod_image_slot() -> bool {
-    !mod_api::__private::mods().is_empty()
+    // Tachyon always bundles Megamap, which renders into `horizon/modimage`.
+    true
 }
 
 impl UiResources {

@@ -1934,7 +1934,13 @@ impl AndroidGame {
                         }
                     }
                     Role::Look { gestures, held, bedrock } => {
-                        if let App::Ready(game) = &mut self.app {
+                        let tap_minimap = quick
+                            && held.is_none()
+                            && self.on_minimap(contact.start)
+                            && self.on_minimap(at);
+                        if tap_minimap {
+                            super::tachyon_mods::megamap_glue::open_world_map();
+                        } else if let App::Ready(game) = &mut self.app {
                             if let Some(button) = held {
                                 let _ = game.input_from(Source::ZalithGesture(finger.id, button), Vec::new(), false, false);
                             } else if gestures && quick {
@@ -2056,6 +2062,27 @@ impl AndroidGame {
             return None;
         }
         Some((((at.0 - left) / slot) as usize).min(8))
+    }
+
+    /// True when `at` (physical pixels) falls inside Megamap's last-drawn HUD minimap frame.
+    fn on_minimap(&self, at: (f32, f32)) -> bool {
+        let Some([x, y, w, h]) = super::tachyon_mods::megamap_glue::minimap_hud_rect() else {
+            return false;
+        };
+        let screen = self.screen();
+        let inputs = match &self.app {
+            App::Ready(game) => game.settings.gui_scale_inputs(),
+            App::Loading(_) => horizon_client::hud::GuiScale {
+                requested: 0,
+                unicode: false,
+            },
+        };
+        let scale = HudBatch::new([screen.width as u32, screen.height as u32], inputs)
+            .scale
+            .max(1.0);
+        let gx = at.0 / scale;
+        let gy = at.1 / scale;
+        gx >= x && gx <= x + w && gy >= y && gy <= y + h
     }
 
     fn select_slot(&mut self, slot: usize) {

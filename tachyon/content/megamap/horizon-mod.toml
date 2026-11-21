@@ -1,0 +1,9 @@
+# Teiwazik's All in One Map (megamap v0.3.11, MIT), statically linked into Tachyon.
+id = "megamap"
+name = "Megamap"
+version = "0.3.11"
+description = "HUD minimap, fullscreen world map, waypoints, entity radar, cave layers, and far terrain."
+authors = ["Teiwazik"]
+api = "0.2"
+side = "client"
+capabilities = ["registries"]

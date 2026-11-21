@@ -1,0 +1,14 @@
+[package]
+name = "megamap-engine"
+version = "0.3.11"
+edition.workspace = true
+license = "MIT"
+publish = false
+description = "Teiwazik's All in One Map pure-std map engine, statically linked into Tachyon."
+
+[dev-dependencies]
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs", "runtime_detection"] }
+serde_json = "1"
+
+[lints]
+workspace = true

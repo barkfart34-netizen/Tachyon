@@ -6,6 +6,7 @@ impl Game<'_> {
     /// NeoForge's `ClientPlayerNetworkEvent.LoggingOut`, told here after
     /// `native_client_level_unload` and only when a connection ends.
     pub(in crate::game) fn native_client_disconnecting(&self) {
+        self.tachyon_client_disconnecting();
         self.fire_client_disconnecting();
     }
     /// The normal menu blur request, before finite/range validation. None disables it.

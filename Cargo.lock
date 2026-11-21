@@ -1870,6 +1870,7 @@ dependencies = [
  "jni 0.22.4",
  "libc",
  "log",
+ "megamap-engine",
  "naga",
  "ndk-context",
  "objc2 0.6.5",
@@ -3505,6 +3506,14 @@ name = "maybe-owned"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4facc753ae494aeb6e3c22f839b158aebd4f9270f55cd3c79906c45476c47ab4"
+
+[[package]]
+name = "megamap-engine"
+version = "0.3.11"
+dependencies = [
+ "flate2",
+ "serde_json",
+]
 
 [[package]]
 name = "memchr"

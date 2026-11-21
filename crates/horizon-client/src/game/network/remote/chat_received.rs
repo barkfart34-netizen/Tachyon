@@ -55,6 +55,7 @@ impl Game<'_> {
         player: Option<&mod_api::PlayerChatInfo>,
         line: &mut horizon_client::text::Text,
     ) -> bool {
+        self.tachyon_client_chat_received(line);
         if !mod_api::__private::listened(mod_api::HookId::ClientChatReceived) {
             return true;
         }

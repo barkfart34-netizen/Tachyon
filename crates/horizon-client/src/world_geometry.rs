@@ -117,6 +117,26 @@ impl WorldGeometry {
     pub fn camera(&self) -> [f64; 3] {
         self.camera
     }
+    pub fn view(&self) -> Mat4 {
+        self.view
+    }
+    /// Appends pre-tessellated camera-relative quads (4 vertices per quad), staying within capacity.
+    pub fn push_raw_quads(&mut self, through_walls: bool, verts: &[Vertex]) {
+        let count = verts.len() / 4;
+        let room = CAPACITY.saturating_sub(self.usage().quads) as usize;
+        let take = count.min(room) * 4;
+        if take > 0 {
+            self.quads[usize::from(through_walls)].extend_from_slice(&verts[..take]);
+        }
+    }
+    /// Appends pre-tessellated camera-relative gizmo lines, staying within capacity.
+    pub fn push_raw_lines(&mut self, through_walls: bool, lines: &[[f32; 8]]) {
+        let room = CAPACITY.saturating_sub(self.usage().lines) as usize;
+        let take = lines.len().min(room);
+        if take > 0 {
+            self.lines[usize::from(through_walls)].extend_from_slice(&lines[..take]);
+        }
+    }
     /// The current counts and setup-time limits across both depth modes.
     pub fn usage(&self) -> WorldDrawUsage {
         WorldDrawUsage::new(

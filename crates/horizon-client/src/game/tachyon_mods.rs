@@ -1,6 +1,7 @@
 //! Horizon's official native mods (horizon-rust/horizon-mods, `native/`),
-//! built into Tachyon: Coordinates HUD, FPS Counter, Keystrokes, Minimap,
-//! Recipes and Zoom. Each bundle's module is here as it is (MIT, Copyright
+//! built into Tachyon: Coordinates HUD, FPS Counter, Keystrokes, Recipes and
+//! Zoom, plus Teiwazik's All in One Map (`megamap`, MIT) replacing the old
+//! minimal minimap. Each Horizon native module is here as it is (MIT, Copyright
 //! (c) 2026 Ludovic Marie and the Horizon contributors: `tachyon_mods/LICENSE`);
 //! its hooks, which horizon-mixins would weave into the hook points, are the
 //! functions below, which the hook points call. Several mods on one hook run
@@ -10,7 +11,8 @@
 mod coords_hud;
 mod fps_overlay;
 mod keystrokes;
-mod minimap;
+pub(super) mod megamap_glue;
+mod megamap_world;
 mod recipes;
 mod recipes_glue;
 mod zoom;
@@ -57,7 +59,7 @@ pub(super) fn loading_mods(disabled: &std::collections::BTreeSet<String>) -> Vec
         (coords_hud::ID, coords_hud::NAME),
         (fps_overlay::ID, fps_overlay::NAME),
         (keystrokes::ID, keystrokes::NAME),
-        (minimap::ID, minimap::NAME),
+        (megamap_glue::ID, "Megamap"),
         (recipes::ID, recipes::NAME),
         (zoom::ID, "Zoom"),
         (super::orbital_glue::ID, "Orbital Laser"),
@@ -70,9 +72,20 @@ pub(super) fn loading_mods(disabled: &std::collections::BTreeSet<String>) -> Vec
 
 /// The hooks, for `native_hooks`.
 impl Game<'_> {
+    /// Whether a built-in Tachyon native mod is enabled in Options > Mods.
+    pub(super) fn tachyon_mod_on(&self, mod_id: &str) -> bool {
+        self.on(mod_id)
+    }
     /// Reads a Tachyon built-in mod's saved key binding, or its default.
     pub(in crate::game) fn tachyon_mod_key(&self, mod_id: &str, name: &str, default: &str) -> String {
         self.settings.mods.binding(mod_id, name, (default, 0)).0
+    }
+    pub(super) fn tachyon_megamap_frame(&mut self) {
+        if self.on(megamap_glue::ID) {
+            megamap_glue::frame(self);
+        } else {
+            megamap_glue::close_if_open(self);
+        }
     }
     pub(super) fn tachyon_frame(&mut self, _elapsed: Duration) {
         recipes_glue::frame(self);
@@ -81,10 +94,16 @@ impl Game<'_> {
         coords_hud_box(self, batch, corners);
         fps_hud(self, batch, corners);
         keystrokes_hud(self, batch, corners);
+        if self.on(megamap_glue::ID) {
+            megamap_glue::hud(self, batch, corners);
+        }
         self.tachyon_engine_hud(batch, corners);
         self.tachyon_assist_hud(batch);
     }
     pub(super) fn tachyon_key(&mut self, key: &str, pressed: bool) {
+        if self.on(megamap_glue::ID) {
+            megamap_glue::key(self, key, pressed);
+        }
         zoom_key(self, key, pressed);
     }
     pub(super) fn tachyon_wheel(&self, steps: f32, claimed: &mut bool) {
@@ -94,6 +113,119 @@ impl Game<'_> {
     }
     pub(super) fn tachyon_command(&mut self, command: &str, ran: &mut bool) {
         coords_hud_command(self, command, ran);
+        if !*ran
+            && self.on(megamap_glue::ID)
+            && megamap_glue::command(self, command)
+        {
+            *ran = true;
+        }
+    }
+    pub(super) fn tachyon_client_commands(&self, commands: &mut Vec<mod_api::Command>) {
+        if self.on(megamap_glue::ID) {
+            let mut names = Vec::new();
+            megamap_glue::commands(&mut names);
+            for name in names {
+                commands.push(mod_api::Command::new(&format!("{name} [args:text]")));
+            }
+        }
+    }
+    pub(super) fn tachyon_client_level_load(&mut self, dimension: &str) {
+        if self.on(megamap_glue::ID) {
+            megamap_glue::level_load(self, dimension);
+        }
+    }
+    pub(super) fn tachyon_client_disconnecting(&self) {
+        megamap_glue::disconnecting();
+    }
+    pub(super) fn tachyon_client_chat_received(&self, message: &horizon_client::text::Text) {
+        if self.on(megamap_glue::ID) {
+            megamap_glue::chat(message);
+        }
+    }
+    pub(super) fn tachyon_screen_render_post(
+        &self,
+        draw: &mut HudBatch,
+        screen: &mod_api::ScreenView<'_>,
+    ) {
+        if self.on(megamap_glue::ID) {
+            megamap_glue::screen_draw(self, draw, screen);
+        }
+    }
+    pub(super) fn tachyon_screen_press(
+        &self,
+        screen: &mod_api::ScreenView<'_>,
+        button: i32,
+        canceled: &mut bool,
+    ) {
+        if !*canceled
+            && self.on(megamap_glue::ID)
+            && megamap_glue::screen_press(self, screen, button)
+        {
+            *canceled = true;
+        }
+    }
+    pub(super) fn tachyon_screen_release(&self, button: i32, canceled: &mut bool) {
+        if !*canceled
+            && self.on(megamap_glue::ID)
+            && megamap_glue::screen_release(self, button)
+        {
+            *canceled = true;
+        }
+    }
+    pub(super) fn tachyon_screen_drag(
+        &self,
+        screen: &mod_api::ScreenView<'_>,
+        delta: [f32; 2],
+        canceled: &mut bool,
+    ) {
+        if !*canceled
+            && self.on(megamap_glue::ID)
+            && megamap_glue::screen_drag(self, screen, delta)
+        {
+            *canceled = true;
+        }
+    }
+    pub(super) fn tachyon_screen_scroll(
+        &self,
+        screen: &mod_api::ScreenView<'_>,
+        scroll: [f64; 2],
+        canceled: &mut bool,
+    ) {
+        if !*canceled
+            && self.on(megamap_glue::ID)
+            && megamap_glue::screen_scroll(self, screen, scroll)
+        {
+            *canceled = true;
+        }
+    }
+    pub(super) fn tachyon_screen_key(&self, key: &str, canceled: &mut bool) {
+        if !*canceled
+            && self.on(megamap_glue::ID)
+            && megamap_glue::screen_key(self, key)
+        {
+            *canceled = true;
+        }
+    }
+    pub(super) fn tachyon_screen_char(&self, c: char, canceled: &mut bool) {
+        if !*canceled
+            && self.on(megamap_glue::ID)
+            && megamap_glue::screen_char(self, c)
+        {
+            *canceled = true;
+        }
+    }
+    pub(super) fn tachyon_mod_screen_typing(&self) -> bool {
+        self.mod_screen() == Some(megamap_glue::ID) && megamap_glue::is_typing()
+    }
+    pub(super) fn tachyon_mod_screen_key(&self, key: &str) {
+        if self.on(megamap_glue::ID) {
+            let _ = megamap_glue::screen_key(self, key);
+        }
+    }
+    pub(super) fn tachyon_mod_screen_char(&self, c: char) {
+        if self.on(megamap_glue::ID) {
+            let _ = megamap_glue::screen_char(self, c);
+        }
     }
     pub(super) fn tachyon_zoom(&self, out: &mut Option<mod_api::Zoom>) {
         if out.is_none()
@@ -107,24 +239,11 @@ impl Game<'_> {
             });
         }
     }
-    pub(super) fn tachyon_minimap(&self, out: &mut Option<mod_api::Minimap>) {
-        if out.is_some() || !self.on(minimap::ID) {
-            return;
-        }
-        let settings = minimap::settings(|key| self.stored_setting(minimap::ID, key));
-        let (size, blocks_per_pixel) = settings.view();
-        *out = Some(mod_api::Minimap {
-            corner: mod_api::Corner::ALL[settings.corner],
-            size,
-            blocks_per_pixel,
-            rotate: settings.rotate,
-            round: settings.round,
-        });
-    }
-    /// Options > Mods rows for Tachyon's built-in native mods and Orbital Laser.
+    /// Options > Mods rows for Tachyon's built-in native mods, Megamap and Orbital Laser.
     pub(super) fn tachyon_list_mods(&mut self) {
         let mut built_in: Vec<(Installed, Vec<KeyMapping>)> = Vec::new();
         built_in.push(super::orbital_glue::installed_row(self));
+        built_in.push(megamap_glue::installed_row());
         let row = |id: &str, name: &str, version: &str, description: &str| Installed {
             id: id.into(),
             title: format!("{name} {version}"),
@@ -157,15 +276,6 @@ impl Game<'_> {
                 keystrokes::NAME,
                 keystrokes::VERSION,
                 keystrokes::DESCRIPTION,
-            ),
-            Vec::new(),
-        ));
-        built_in.push((
-            row(
-                minimap::ID,
-                minimap::NAME,
-                minimap::VERSION,
-                minimap::DESCRIPTION,
             ),
             Vec::new(),
         ));
@@ -227,30 +337,7 @@ impl Game<'_> {
                     toggle("cps", "Clicks per second", s.cps),
                 ]
             }
-            minimap::ID => {
-                let s = minimap::settings(|k| get(minimap::ID, k));
-                let sizes = minimap::SIZES.iter().map(|sz| sz.1.to_owned()).collect();
-                let shapes = vec!["Square".to_owned(), "Round".to_owned()];
-                let zooms = minimap::ZOOMS
-                    .iter()
-                    .map(|&n| {
-                        if n < 1.0 {
-                            "½ block per pixel".to_owned()
-                        } else if n == 1.0 {
-                            "1 block per pixel".to_owned()
-                        } else {
-                            format!("{n} blocks per pixel")
-                        }
-                    })
-                    .collect();
-                vec![
-                    choice("corner", "Corner", corner_options(), s.corner),
-                    choice("size", "Size", sizes, s.size),
-                    choice("shape", "Shape", shapes, usize::from(s.round)),
-                    choice("zoom", "Zoom", zooms, s.zoom),
-                    toggle("rotate", "Turn with the player", s.rotate),
-                ]
-            }
+            megamap_glue::ID => megamap_glue::page_settings(),
             recipes::ID => vec![toggle(
                 "give",
                 "Click gives items (creative)",
@@ -311,26 +398,7 @@ impl Game<'_> {
                 self.keep(keystrokes::ID, s.stored());
                 true
             }
-            minimap::ID => {
-                let mut s = minimap::settings(|k| self.stored_setting(minimap::ID, k));
-                match (key, value) {
-                    ("corner", NativeSettingValue::Choice { index, .. }) => {
-                        s.corner = (*index).min(minimap::CORNERS.len() - 1);
-                    }
-                    ("size", NativeSettingValue::Choice { index, .. }) => {
-                        s.size = (*index).min(minimap::SIZES.len() - 1);
-                    }
-                    ("shape", NativeSettingValue::Choice { index, .. }) => s.round = *index == 1,
-                    ("zoom", NativeSettingValue::Choice { index, .. }) => {
-                        s.zoom = (*index).min(minimap::ZOOMS.len() - 1);
-                    }
-                    ("rotate", NativeSettingValue::Toggle(on)) => s.rotate = *on,
-                    _ => return true,
-                }
-                minimap::set_settings(s);
-                self.keep(minimap::ID, s.stored());
-                true
-            }
+            megamap_glue::ID => megamap_glue::setting_event(key, value),
             recipes::ID if key == "give" => {
                 if let NativeSettingValue::Toggle(give) = *value {
                     self.store_setting(recipes::ID, "give", flag(give));
