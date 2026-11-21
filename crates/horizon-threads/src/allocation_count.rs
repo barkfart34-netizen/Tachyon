@@ -14,30 +14,36 @@ fn record() {
     });
 }
 
+// Android has no mimalloc (Bionic refuses its initial-exec TLS): the system's.
+#[cfg(not(target_os = "android"))]
+use mimalloc::MiMalloc as BackingAlloc;
+#[cfg(target_os = "android")]
+use std::alloc::System as BackingAlloc;
+
 /// The normal game allocator with a test-only, thread-local call counter.
 pub struct Allocator;
 /// The allocator installed by the game while allocation counting is enabled.
 pub const ALLOCATOR: Allocator = Allocator;
 
-// SAFETY: every operation delegates the unchanged arguments to mimalloc.
+// SAFETY: every operation delegates the unchanged arguments to the backing allocator.
 unsafe impl GlobalAlloc for Allocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         record();
-        unsafe { mimalloc::MiMalloc.alloc(layout) }
+        unsafe { BackingAlloc.alloc(layout) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         record();
-        unsafe { mimalloc::MiMalloc.alloc_zeroed(layout) }
+        unsafe { BackingAlloc.alloc_zeroed(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { mimalloc::MiMalloc.dealloc(ptr, layout) }
+        unsafe { BackingAlloc.dealloc(ptr, layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         record();
-        unsafe { mimalloc::MiMalloc.realloc(ptr, layout, size) }
+        unsafe { BackingAlloc.realloc(ptr, layout, size) }
     }
 }
 
