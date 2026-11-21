@@ -1,0 +1,539 @@
+spec:
+  inputs:
+    profile:
+      type: string
+      default: tachyon
+      options:
+        - tachyon
+        - android
+        - release
+      description: "Cargo profile for Android APK (tachyon=thin LTO, android=fast no-LTO, release=full)"
+    apk_runner:
+      type: string
+      default: saas-linux-medium-amd64
+      options:
+        - saas-linux-medium-amd64
+        - saas-linux-small-amd64
+      description: "Linux SaaS runner for APK build (medium: 4vCPU/16GB/50GB @ 2x mins; small: 2vCPU/8GB/30GB @ 1x mins)"
+    force_prepare:
+      type: boolean
+      default: false
+      description: "Force re-preparing Minecraft 26.3 resources even if Generic Package already exists"
+    windows_profile:
+      type: string
+      default: fast
+      options:
+        - fast
+        - tachyon
+        - release
+      description: "Cargo profile for manual Windows build (fast recommended on 2vCPU/7.5GB runner)"
+---
+
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+  rules:
+    # Avoid duplicate pipelines when release-apk creates tag tachyon-<pipeline_iid>
+    - if: '$CI_COMMIT_TAG =~ /^tachyon-/'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+default:
+  interruptible: true
+
+stages:
+  - prepare
+  - build
+  - release
+
+variables:
+  GIT_DEPTH: "1"
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo-cache"
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: "always"
+  # Shadow origin/main's .cargo/config.toml (`-Zthreads=8`) to prevent OOM on 8-16 GB runners
+  # (must be non-empty: Cargo treats an empty RUSTFLAGS as unset and falls back to config.toml)
+  RUSTFLAGS: "-C debuginfo=0"
+  GRADLE_VERSION: "8.14.3"
+  GRADLE_USER_HOME: "$CI_PROJECT_DIR/.gradle-cache"
+  ANDROID_CMDLINE_BUILD: "15859902"
+  ANDROID_COMPILE_SDK: "36"
+  ANDROID_BUILD_TOOLS: "36.0.0"
+  ANDROID_NDK_VERSION: "27.2.12479018"
+  TACHYON_PROFILE: "$[[ inputs.profile ]]"
+  FORCE_PREPARE: "$[[ inputs.force_prepare ]]"
+  WINDOWS_PROFILE: "$[[ inputs.windows_profile ]]"
+  APK_PKG_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/tachyon-apk/${CI_PIPELINE_IID}"
+  WIN_PKG_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/tachyon-windows/${CI_PIPELINE_IID}"
+
+.apk_rules: &apk_rules
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - crates/**/*
+        - android/**/*
+        - tachyon/**/*
+        - third_party/**/*
+        - mods/horizon/src/test/java/dev/horizonlab/parity/**/*
+        - Cargo.toml
+        - Cargo.lock
+        - research-lock.json
+        - .github/tachyon/prepare.sh
+        - .github/tachyon/fetch-minecraft.py
+        - .gitlab-ci.yml
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+      allow_failure: true
+
+# Stage 1: Prepare Minecraft 26.3 resources once per (version, OUTPUT_VERSION, digest)
+# and persist in GitLab Generic Package Registry (5 GB limit, immune to cache eviction
+# and protected-branch cache separation, and downloadable locally on Windows without Java 25).
+prepare-resources:
+  stage: prepare
+  image: rust:1-bookworm
+  tags:
+    - saas-linux-small-amd64
+  timeout: 1h 30m
+  <<: *apk_rules
+  cache:
+    - key:
+        files:
+          - Cargo.lock
+        prefix: cargo-reg
+      paths:
+        - .cargo-cache/registry/cache
+        - .cargo-cache/registry/index
+        - .cargo-cache/git/db
+      policy: pull-push
+      when: always
+  script:
+    - set -euo pipefail
+    - |
+      MC_VER=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' research-lock.json | head -n 1)
+      OUT_VER=$(sed -n 's/^pub const OUTPUT_VERSION: u32 = \([0-9]*\);/\1/p' crates/horizon-prepare/src/lib.rs | head -n 1)
+      OUT_DIGEST=$(grep -E '^[0-9]+ [0-9a-f]+' crates/horizon-prepare/output-versions.txt | tail -n 1 | awk '{print substr($2,1,12)}')
+      RES_PKG_VER="${MC_VER}-v${OUT_VER}-${OUT_DIGEST}"
+      RES_PKG_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/tachyon-resources/${RES_PKG_VER}"
+      cat > resources.env <<EOF
+      MC_VER=${MC_VER}
+      RES_PKG_VER=${RES_PKG_VER}
+      RES_PKG_URL=${RES_PKG_URL}
+      EOF
+      cat resources.env
+    - |
+      if [ "$FORCE_PREPARE" != "true" ] && curl --silent --fail --head \
+        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        "${RES_PKG_URL}/resources-${MC_VER}.zip" >/dev/null; then
+        echo "== Resources package ${RES_PKG_VER} already exists in Generic Package Registry; skipping prepare."
+        exit 0
+      fi
+    - df -h . && free -h
+    - apt-get update && apt-get install -y --no-install-recommends python3 zip unzip ca-certificates curl
+    - rm -rf /var/lib/apt/lists/*
+    - |
+      echo "== Installing Eclipse Temurin JDK 25"
+      mkdir -p /opt/jdk-25
+      curl -fsSL "https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jdk/hotspot/normal/eclipse" \
+        | tar -xz --strip-components=1 -C /opt/jdk-25
+      export JAVA_HOME="/opt/jdk-25"
+      export JAVA_HOME_25_X64="/opt/jdk-25"
+      export PATH="$JAVA_HOME/bin:$PATH"
+      java -version
+      javac -version
+    - |
+      export RUNNER_TEMP="$CI_PROJECT_DIR/.tachyon/tmp"
+      mkdir -p "$RUNNER_TEMP"
+      export CARGO_BUILD_JOBS=2
+      bash .github/tachyon/prepare.sh "$CI_PROJECT_DIR/.tachyon/resources"
+      "$CI_PROJECT_DIR/target/release/horizon-prepare" --check \
+        --root "$CI_PROJECT_DIR" \
+        --output "$CI_PROJECT_DIR/.tachyon/resources/horizon-client/${MC_VER}"
+    - |
+      echo "== Packing resources-${MC_VER}.zip (storing already-compressed assets)"
+      (cd "$CI_PROJECT_DIR/.tachyon/resources" && zip -q -r -X -n .ogg:.png:.jar:.zip "$CI_PROJECT_DIR/resources-${MC_VER}.zip" horizon-client)
+      ls -lh "$CI_PROJECT_DIR/resources-${MC_VER}.zip"
+    - |
+      echo "== Uploading to GitLab Generic Package Registry: ${RES_PKG_URL}/resources-${MC_VER}.zip"
+      curl --fail-with-body --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --upload-file "$CI_PROJECT_DIR/resources-${MC_VER}.zip" \
+        "${RES_PKG_URL}/resources-${MC_VER}.zip"
+    - df -h .
+  after_script:
+    - rm -rf .tachyon target resources-*.zip .cargo-cache/registry/src
+  artifacts:
+    reports:
+      dotenv: resources.env
+
+# Stage 2a: Build Android arm64 APK via android/build-apk.sh (direct NDK clang/llvm-strip,
+# no cargo-ndk needed), attach as artifact, and publish to Generic Package Registry.
+build-apk:
+  stage: build
+  image: rust:1-bookworm
+  tags:
+    - "$[[ inputs.apk_runner ]]"
+  timeout: 3h
+  needs:
+    - job: prepare-resources
+      artifacts: true
+  <<: *apk_rules
+  cache:
+    - key:
+        files:
+          - Cargo.lock
+        prefix: cargo-reg
+      paths:
+        - .cargo-cache/registry/cache
+        - .cargo-cache/registry/index
+        - .cargo-cache/git/db
+      policy: pull-push
+      when: always
+    - key:
+        files:
+          - Cargo.lock
+        prefix: "target-android-$[[ inputs.profile ]]"
+      fallback_keys:
+        - "target-android-$[[ inputs.profile ]]-default"
+      paths:
+        - "target/aarch64-linux-android/$[[ inputs.profile ]]/deps"
+        - "target/aarch64-linux-android/$[[ inputs.profile ]]/build"
+        - "target/aarch64-linux-android/$[[ inputs.profile ]]/.fingerprint"
+        - "target/$[[ inputs.profile ]]/deps"
+        - "target/$[[ inputs.profile ]]/build"
+        - "target/$[[ inputs.profile ]]/.fingerprint"
+      policy: pull-push
+      when: always
+    - key:
+        files:
+          - android/build.gradle
+          - android/app/build.gradle
+        prefix: gradle
+      paths:
+        - .gradle-cache/caches/modules-2
+        - .gradle-cache/dist
+      policy: pull-push
+      when: always
+  script:
+    - set -euo pipefail
+    - df -h . && free -h
+    - apt-get update && apt-get install -y --no-install-recommends python3 zip unzip ca-certificates curl
+    - rm -rf /var/lib/apt/lists/*
+    - rustup target add aarch64-linux-android
+    - |
+      echo "== Installing Eclipse Temurin JDK 17 (for sdkmanager + Gradle/AGP 8.10.1)"
+      mkdir -p /opt/jdk-17
+      curl -fsSL "https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse" \
+        | tar -xz --strip-components=1 -C /opt/jdk-17
+      export JAVA_HOME="/opt/jdk-17"
+      export PATH="$JAVA_HOME/bin:$PATH"
+      java -version
+    - |
+      echo "== Installing Gradle ${GRADLE_VERSION}"
+      mkdir -p "$GRADLE_USER_HOME/dist" /opt/gradle
+      GRADLE_ZIP="$GRADLE_USER_HOME/dist/gradle-${GRADLE_VERSION}-bin.zip"
+      if [ ! -f "$GRADLE_ZIP" ]; then
+        curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o "$GRADLE_ZIP"
+      fi
+      unzip -q "$GRADLE_ZIP" -d /opt/gradle
+      export GRADLE="/opt/gradle/gradle-${GRADLE_VERSION}/bin/gradle"
+    - |
+      echo "== Installing Android SDK (${ANDROID_COMPILE_SDK}) + NDK (${ANDROID_NDK_VERSION})"
+      export ANDROID_HOME="/opt/android-sdk"
+      mkdir -p "$ANDROID_HOME/cmdline-tools"
+      curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDLINE_BUILD}_latest.zip" \
+        -o /tmp/cmdline-tools.zip
+      unzip -q /tmp/cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
+      mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+      rm -f /tmp/cmdline-tools.zip
+      yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+      "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" \
+        "platforms;android-${ANDROID_COMPILE_SDK}" \
+        "build-tools;${ANDROID_BUILD_TOOLS}" \
+        "ndk;${ANDROID_NDK_VERSION}" >/dev/null
+      export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/${ANDROID_NDK_VERSION}"
+    - |
+      echo "== Fetching prepared Minecraft ${MC_VER} resources (${RES_PKG_VER})"
+      mkdir -p "$CI_PROJECT_DIR/.tachyon/resources"
+      curl --fail-with-body --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        "${RES_PKG_URL}/resources-${MC_VER}.zip" -o /tmp/resources.zip
+      unzip -q /tmp/resources.zip -d "$CI_PROJECT_DIR/.tachyon/resources"
+      rm -f /tmp/resources.zip
+    - |
+      if [ -n "${TACHYON_KEYSTORE_B64:-}" ]; then
+        echo "$TACHYON_KEYSTORE_B64" | base64 -d > /tmp/tachyon.keystore
+        export TACHYON_KEYSTORE="/tmp/tachyon.keystore"
+      fi
+    - export CARGO_BUILD_JOBS="$(nproc)"
+    - export TACHYON_RESOURCES="$CI_PROJECT_DIR/.tachyon/resources"
+    - export TACHYON_VERSION_CODE="$(( $(date +%s) / 60 ))"
+    - bash android/build-apk.sh
+    - ls -lh android/build/Tachyon.apk
+    - sha256sum android/build/Tachyon.apk
+    - |
+      echo "== Uploading APK to Generic Package Registry: ${APK_PKG_URL}/Tachyon.apk"
+      curl --fail-with-body --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --upload-file android/build/Tachyon.apk \
+        "${APK_PKG_URL}/Tachyon.apk"
+    - df -h .
+  after_script:
+    # Runs BEFORE cache upload: strip secrets, temp assets, and workspace crate outputs
+    # so target/ cache stays ~1-1.5 GB (third-party crates only) and never overflows disk.
+    - rm -f /tmp/tachyon.keystore /tmp/resources.zip /tmp/cmdline-tools.zip
+    - rm -rf .tachyon/resources android/build/stage .cargo-cache/registry/src
+    - |
+      for base in "target/aarch64-linux-android/${TACHYON_PROFILE}" "target/${TACHYON_PROFILE}"; do
+        if [ -d "$base" ]; then
+          rm -rf "$base/incremental" "$base/examples"
+          find "$base/deps" -maxdepth 1 \( -name '*horizon*' -o -name '*tachyon*' -o -name '*orbital_laser*' -o -name '*horizon_quests*' -o -name '*megamap_engine*' \) -delete 2>/dev/null || true
+          find "$base/.fingerprint" -maxdepth 1 \( -name 'horizon-*' -o -name 'tachyon*' -o -name 'orbital-laser*' -o -name 'horizon-quests*' -o -name 'megamap-engine*' \) -exec rm -rf {} + 2>/dev/null || true
+        fi
+      done
+  artifacts:
+    name: "tachyon-apk-${CI_PIPELINE_IID}-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - android/build/Tachyon.apk
+    expire_in: 14 days
+
+# Stage 3: Publish GitLab Release on main using glab image (release-cli is deprecated in GitLab 18+)
+release-apk:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/cli:latest
+  tags:
+    - saas-linux-small-amd64
+  timeout: 15m
+  needs:
+    - job: build-apk
+      artifacts: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - crates/**/*
+        - android/**/*
+        - tachyon/**/*
+        - third_party/**/*
+        - mods/horizon/src/test/java/dev/horizonlab/parity/**/*
+        - Cargo.toml
+        - Cargo.lock
+        - research-lock.json
+        - .github/tachyon/prepare.sh
+        - .github/tachyon/fetch-minecraft.py
+        - .gitlab-ci.yml
+  script:
+    - echo "Creating GitLab Release tachyon-${CI_PIPELINE_IID} for ${CI_COMMIT_SHORT_SHA}"
+  release:
+    tag_name: "tachyon-${CI_PIPELINE_IID}"
+    ref: "$CI_COMMIT_SHA"
+    name: "Tachyon #${CI_PIPELINE_IID}"
+    description: >-
+      Tachyon untuk Android (arm64, Android 10+, Vulkan), profil `$[[ inputs.profile ]]`,
+      dari commit `${CI_COMMIT_SHORT_SHA}`.
+      Resource Minecraft 26.3 sudah di dalam APK: pasang, buka, tunggu bongkar resource sekali (~1 menit), lalu Play.
+    assets:
+      links:
+        - name: "Tachyon.apk"
+          url: "${APK_PKG_URL}/Tachyon.apk"
+          filepath: "/Tachyon.apk"
+          link_type: "package"
+
+# Optional manual job: Exports a ready-to-drop Windows `resources/` archive (26.3 + tachyon/content)
+# as a 7-day Pipeline artifact + Generic Package so local Windows builds never need Java 25.
+resources-pack:
+  stage: build
+  image: alpine:3.21
+  tags:
+    - saas-linux-small-amd64
+  timeout: 20m
+  needs:
+    - job: prepare-resources
+      artifacts: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+      allow_failure: true
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - crates/**/*
+        - android/**/*
+        - tachyon/**/*
+        - third_party/**/*
+        - mods/horizon/src/test/java/dev/horizonlab/parity/**/*
+        - Cargo.toml
+        - Cargo.lock
+        - research-lock.json
+        - .github/tachyon/prepare.sh
+        - .github/tachyon/fetch-minecraft.py
+        - .gitlab-ci.yml
+      when: manual
+      allow_failure: true
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+      allow_failure: true
+  script:
+    - |
+      set -euo pipefail
+      apk add --no-cache curl zip unzip
+      mkdir -p work/stage
+      curl --fail-with-body --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        "${RES_PKG_URL}/resources-${MC_VER}.zip" -o work/raw.zip
+      unzip -q work/raw.zip -d work/stage
+      mv "work/stage/horizon-client/${MC_VER}" work/resources
+      cp -r tachyon/content work/resources/tachyon-mods
+      (cd work && zip -q -r -X -n .ogg:.png:.jar:.zip "$CI_PROJECT_DIR/Tachyon-resources-${MC_VER}-windows.zip" resources)
+      ls -lh "Tachyon-resources-${MC_VER}-windows.zip"
+      curl --fail-with-body --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --upload-file "Tachyon-resources-${MC_VER}-windows.zip" \
+        "${RES_PKG_URL}/Tachyon-resources-${MC_VER}-windows.zip"
+  artifacts:
+    name: "tachyon-resources-${MC_VER}-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - "Tachyon-resources-*.zip"
+    expire_in: 7 days
+
+# Optional manual job: Windows x64 build on GitLab SaaS Windows runner (2vCPU, 7.5GB RAM, 75GB disk, 1x mins, max 2h).
+# Tip: keep windows_profile=fast on SaaS Windows (thin LTO can approach 2h / 7.5GB RAM limit).
+windows-build:
+  stage: build
+  tags:
+    - saas-windows-medium-amd64
+  timeout: 2h
+  needs:
+    - job: prepare-resources
+      artifacts: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+      allow_failure: true
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - crates/**/*
+        - android/**/*
+        - tachyon/**/*
+        - third_party/**/*
+        - mods/horizon/src/test/java/dev/horizonlab/parity/**/*
+        - Cargo.toml
+        - Cargo.lock
+        - research-lock.json
+        - .github/tachyon/prepare.sh
+        - .github/tachyon/fetch-minecraft.py
+        - .gitlab-ci.yml
+      when: manual
+      allow_failure: true
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+      allow_failure: true
+  variables:
+    RUSTFLAGS: "-C target-feature=+crt-static"
+    RUSTUP_HOME: "$CI_PROJECT_DIR\\.rustup-cache"
+    CARGO_HOME: "$CI_PROJECT_DIR\\.cargo-cache"
+    CARGO_BUILD_JOBS: "2"
+    TACHYON_BUILD: "windows-$CI_PIPELINE_IID"
+  cache:
+    - key:
+        files:
+          - Cargo.lock
+        prefix: cargo-reg-win
+      paths:
+        - .cargo-cache/registry/cache
+        - .cargo-cache/registry/index
+        - .cargo-cache/git/db
+      policy: pull-push
+      when: always
+  script:
+    - $ErrorActionPreference = "Stop"
+    - |
+      if (-not (Test-Path "$env:CARGO_HOME\bin\cargo.exe")) {
+        curl.exe -fsSL https://win.rustup.rs/x86_64 -o rustup-init.exe
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        .\rustup-init.exe -y --default-toolchain stable --profile minimal --no-modify-path
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Remove-Item -Force rustup-init.exe
+      }
+      $env:PATH = "$env:CARGO_HOME\bin;$env:PATH"
+      rustc --version
+      cargo --version
+    - |
+      cargo build -p horizon-client --bin tachyon-desktop --profile "$env:WINDOWS_PROFILE"
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    - |
+      New-Item -ItemType Directory -Force -Path dist\Tachyon, .tachyon\resources | Out-Null
+      Copy-Item "target\$env:WINDOWS_PROFILE\tachyon-desktop.exe" "dist\Tachyon\Tachyon.exe"
+      curl.exe --fail -H "JOB-TOKEN: $env:CI_JOB_TOKEN" "$env:RES_PKG_URL/resources-$env:MC_VER.zip" -o resources.zip
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      7z x -y resources.zip -o.tachyon\resources | Out-Null
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      Move-Item ".tachyon\resources\horizon-client\$env:MC_VER" "dist\Tachyon\resources"
+      Copy-Item -Recurse -Force "tachyon\content" "dist\Tachyon\resources\tachyon-mods"
+      Set-Content -Path "dist\Tachyon\README.txt" -Value @(
+        "Tachyon for Windows: Minecraft: Java Edition $env:MC_VER, native, built on Horizon (Rust).",
+        "Start Tachyon.exe, add an offline account and press PLAY.",
+        "Keep the resources folder next to Tachyon.exe. Worlds/options/logs are in %APPDATA%\.tachyon."
+      )
+      Push-Location dist
+      7z a -tzip -mx=5 Tachyon-windows.zip Tachyon | Out-Null
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      Pop-Location
+      Get-Item dist\Tachyon-windows.zip
+    - |
+      curl.exe --fail -H "JOB-TOKEN: $env:CI_JOB_TOKEN" --upload-file dist\Tachyon-windows.zip "$env:WIN_PKG_URL/Tachyon-windows.zip"
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  after_script:
+    - Remove-Item -Recurse -Force -ErrorAction SilentlyContinue resources.zip, .tachyon, .cargo-cache\registry\src
+  artifacts:
+    name: "tachyon-windows-${CI_PIPELINE_IID}-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - dist/Tachyon-windows.zip
+    expire_in: 14 days
+
+# Optional manual job: Mirrors .github/workflows/tachyon-check.yml (Linux unit tests + Android cargo check)
+check-linux:
+  stage: build
+  image: rust:1-bookworm
+  tags:
+    - saas-linux-medium-amd64
+  timeout: 1h
+  when: manual
+  allow_failure: true
+  cache:
+    - key:
+        files:
+          - Cargo.lock
+        prefix: cargo-reg
+      paths:
+        - .cargo-cache/registry/cache
+        - .cargo-cache/registry/index
+        - .cargo-cache/git/db
+      policy: pull-push
+      when: always
+  script:
+    - set -euo pipefail
+    - apt-get update && apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config unzip curl ca-certificates
+    - rm -rf /var/lib/apt/lists/*
+    - export CARGO_BUILD_JOBS="$(nproc)"
+    - cargo test -p horizon-quests
+    - cargo test -p megamap-engine --release -- --test-threads=1
+    - cargo test -p horizon-client --lib -- tachyon native_hooks
+    - cargo test -p horizon-client --bin tachyon-desktop -- tachyon desktop
+    - cargo test -p horizon-port-pack
+    - cargo test -p horizon-client-lib --lib -- mod_content creative
+    - |
+      echo "== Android compile check"
+      rustup target add aarch64-linux-android
+      mkdir -p /opt/jdk-17 /opt/android-sdk/cmdline-tools
+      curl -fsSL "https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse" \
+        | tar -xz --strip-components=1 -C /opt/jdk-17
+      export JAVA_HOME="/opt/jdk-17" PATH="/opt/jdk-17/bin:$PATH" ANDROID_HOME="/opt/android-sdk"
+      curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDLINE_BUILD}_latest.zip" -o /tmp/ct.zip
+      unzip -q /tmp/ct.zip -d "$ANDROID_HOME/cmdline-tools"
+      mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+      rm -f /tmp/ct.zip
+      yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+      "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" "ndk;${ANDROID_NDK_VERSION}" >/dev/null
+      llvm="$ANDROID_HOME/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+      export CC_aarch64_linux_android="$llvm/aarch64-linux-android29-clang"
+      export CXX_aarch64_linux_android="$llvm/aarch64-linux-android29-clang++"
+      export AR_aarch64_linux_android="$llvm/llvm-ar"
+      cargo check -p horizon-client --example tachyon --target aarch64-linux-android \
+        --no-default-features --features audio,android
