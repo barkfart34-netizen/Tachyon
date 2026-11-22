@@ -9,6 +9,9 @@ on:
     branches: [main]
     paths:
       - "crates/horizon-client/src/desktop/**"
+      - "crates/horizon-client/src/entry/**"
+      - "crates/horizon-client/src/entry.rs"
+      - "crates/horizon-client/src/game.rs"
       - "crates/horizon-client/src/tachyon/**"
       - "crates/horizon-client/src/tachyon_main.rs"
       - "crates/horizon-client/src/tachyon_native_mods.rs"
@@ -167,18 +170,22 @@ jobs:
       # creative world for a few frames, with its report and log in the artifact.
       - name: The game starts
         shell: bash
-        continue-on-error: true
         run: |
           home="$RUNNER_TEMP/game"
           mkdir -p "$home" snapshots
           cd "$home"
           export TACHYON_GAME=1 HORIZON_HOME="$home" HORIZON_NO_HEARTBEAT=1 HORIZON_NO_DISCORD=1
-          args=(--world Smoke --creative --seed 5 --render-distance 4 --world-frames 20)
+          args=(--world Smoke --creative --seed 5 --render-distance 4 --world-frames 20 --name SmokePlayer)
+          code=0
           timeout 600 "$GITHUB_WORKSPACE/dist/Tachyon/Tachyon.exe" "${args[@]}" \
-            --smoke-report "$home/report.json" || echo "the game ended with $?"
+            --smoke-report "$home/report.json" || code=$?
           cat "$home/report.json" || true
           tail -40 "$home/logs/latest.log" || true
           cp "$home/report.json" "$home/logs/latest.log" "$GITHUB_WORKSPACE/snapshots/" || true
+          if [ "$code" -ne 0 ] || [ ! -f "$home/report.json" ]; then
+            echo "::error::Tachyon.exe failed to start or finish smoke run (exit $code)"
+            exit 1
+          fi
 
       # The built-in mods in a world, through the game's control socket: the
       # Minimap and Coordinates HUD in a picture, /where in chat, and their

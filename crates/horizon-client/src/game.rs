@@ -11148,11 +11148,20 @@ fn hwnd(window: &Window) -> Option<isize> {
 
 pub use launch_api::{UsageError, exit_code};
 
-/// Entry point for Tachyon's desktop launcher: parses CLI arguments and starts the game
-/// with the supplied compiled-in native mod runtime.
+/// Entry point for Tachyon's desktop launcher: parses CLI arguments (skipping argv[0]),
+/// captures the process runtime environment, and starts the game with the supplied
+/// compiled-in native mod runtime.
 pub fn run_tachyon(native: horizon_mod_package::runtime::Runtime) -> Result<()> {
     crate::entry::install_noop_code_runtime();
-    let Some(options) = Options::from_args(std::env::args())? else {
+    let launch = LaunchArguments::parse(
+        std::env::args().skip(1),
+        &std::env::current_dir()?,
+        &horizon_client::logging::game_home(),
+        std::env::var_os("HORIZON_HOME").as_deref(),
+    )
+    .map_err(|e| UsageError(e.to_string()))?;
+    crate::entry::runtime_environment::capture_if_unset(&launch);
+    let Some(options) = Options::validate(launch)? else {
         return Ok(());
     };
     run_with(options, native)
@@ -11166,11 +11175,17 @@ pub(in crate::game) fn bootstrap_mods(
     vanilla_root: &std::path::Path,
     game_dir: &std::path::Path,
 ) -> Result<()> {
+    crate::entry::runtime_environment::capture_client_if_unset();
     native_hooks::install_block_contact_hooks();
     options
         .mods
         .capture_code_switches(&settings.mods.disabled);
     options.mods.select(game_dir, &settings.mods.enabled);
+    static PROCESS_BOOTSTRAPPED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    if PROCESS_BOOTSTRAPPED.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return Ok(());
+    }
     let mod_phase = mod_api::__private::PhaseOwner::new(mod_api::__private::ModPhase::Packages);
     api_values::install_packages(options.mods.native.packages(), &options.mods.selected)?;
     mods::install_registration_data(vanilla_root)?;

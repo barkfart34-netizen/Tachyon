@@ -461,9 +461,18 @@ fn save_layout(home: &Path, layout: &controls::layout::Layout) -> std::io::Resul
 }
 
 impl AndroidGame {
-    /// The game with `args` (`--resources`, `--session-file`), at its loading screen.
+    /// The game with `args` (`--resources`, `--name`, `--session-file`), at its loading screen.
     pub fn start(args: Vec<String>) -> Result<Self> {
-        let mut options = Options::from_args(args.into_iter())?.ok_or("no options")?;
+        let launch = LaunchArguments::parse(
+            args.into_iter(),
+            &std::env::current_dir()?,
+            &horizon_client::logging::game_home(),
+            std::env::var_os("HORIZON_HOME").as_deref(),
+        )
+        .map_err(|e| super::UsageError(e.to_string()))?;
+        crate::entry::runtime_environment::capture_if_unset(&launch);
+        let options = Options::validate(launch)?.ok_or("no options")?;
+        let mut options = Options::read(options)?;
         options.mods.native = Arc::new(crate::tachyon_native_mods::install());
         horizon_threads::put_helpers_behind();
         horizon_threads::favour_current();

@@ -108,6 +108,7 @@ impl Options {
     /// A bad command line is a [`launch_api::UsageError`] (exit code 2, no crash report).
     /// The options from the game's arguments (the Android or desktop launcher's),
     /// then what they ask of the process: the game folder, the account.
+    #[allow(dead_code)]
     pub(super) fn from_args(args: impl Iterator<Item = String>) -> Result<Option<Self>> {
         let Some(mut o) =
             Self::parse(args).map_err(|e| launch_api::UsageError(e.to_string()))?
@@ -430,5 +431,15 @@ mod tests {
             limit(&["--frames", "10", "--timeout-seconds", "30"]),
             secs(30)
         );
+    }
+
+    #[test]
+    fn tachyon_launcher_args_parse_resources_and_name() {
+        let args = ["--resources", "resources", "--name", "Rxuser"];
+        let o = Options::parse(args.into_iter().map(str::to_owned))
+            .unwrap()
+            .unwrap();
+        assert_eq!(o.resources, PathBuf::from("resources"));
+        assert_eq!(o.player_name.as_deref(), Some("Rxuser"));
     }
 }

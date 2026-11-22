@@ -832,7 +832,7 @@ mod tests {
             "keystrokes".to_owned(),
         ]);
         let native = crate::game::tachyon_mods::loading_mods(&disabled);
-        assert_eq!(native.len(), 6);
+        assert_eq!(native.len(), 5);
         let mut status = Status::default();
         status.natives(native);
         status.mods(vec![
@@ -844,13 +844,13 @@ mod tests {
         let names = status.mods.as_ref().unwrap();
         assert_eq!(names.count, 9);
         assert_eq!(names.wide.matches("Chronicles").count(), 1);
-        assert!(names.wide.contains("Minimap"));
+        assert!(names.wide.contains("Megamap"));
         assert!(!names.wide.contains("FPS Counter"));
         assert!(!names.wide.contains("Keystrokes"));
 
         status.mods(Vec::new());
         let names = status.mods.as_ref().unwrap();
-        assert_eq!(names.count, 6);
+        assert_eq!(names.count, 5);
         assert!(!names.wide.contains("Create"));
         let all: std::collections::BTreeSet<String> =
             crate::game::tachyon_mods::loading_mods(&Default::default())

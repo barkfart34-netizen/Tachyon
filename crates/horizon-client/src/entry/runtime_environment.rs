@@ -37,6 +37,27 @@ pub(crate) fn capture(launch: &LaunchArguments) {
         .expect("process runtime environment captured once");
 }
 
+/// Captures the runtime environment from `launch` if not yet captured (used by
+/// Tachyon's desktop and Android launchers, which bypass `entry::start`).
+pub(crate) fn capture_if_unset(launch: &LaunchArguments) {
+    let _ = ENVIRONMENT.set(snapshot(
+        launch,
+        std::env::var("HORIZON_GAME_TESTS").ok().as_deref(),
+    ));
+}
+
+/// Defensive fallback for client entry points that reach mod bootstrap without a
+/// prior `capture` call.
+pub(crate) fn capture_client_if_unset() {
+    let enabled = std::env::var("HORIZON_GAME_TESTS").ok();
+    let _ = ENVIRONMENT.set(RuntimeEnvironment::new(
+        Dist::Client,
+        horizon_core::VANILLA_VERSION.to_owned(),
+        crate::crash::version(),
+        matches!(enabled.as_deref(), Some("1" | "true")),
+    ));
+}
+
 pub(crate) fn get() -> &'static RuntimeEnvironment {
     ENVIRONMENT
         .get()
