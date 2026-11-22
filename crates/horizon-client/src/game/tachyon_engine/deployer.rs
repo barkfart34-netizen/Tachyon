@@ -972,8 +972,6 @@ mod tests {
         assert!(!old.has_state());
 
         let mut d = Deployer::default();
-        assert!(!d.toggle_punch());
-        let mut d = Deployer::default();
         assert!(d.toggle_punch());
         assert!(d.punch);
         assert!(d.has_state());

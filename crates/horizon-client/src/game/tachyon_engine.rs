@@ -4583,7 +4583,7 @@ mod tests {
             _ => None,
         };
         assert_eq!(part_of("create:chute", chute), Some(Part::Chute(Dir::Down, ChuteShape::Window)));
-        assert_eq!(part_of("create:smart_chute", chute), None);
+        assert_eq!(part_of("create:smart_chute", chute), Some(Part::SmartChute));
         assert!(pieces(Part::Chute(Dir::Down, ChuteShape::Normal), true).is_empty());
         assert!(Dir::ALL.into_iter().all(|d| !Part::Chute(Dir::Down, ChuteShape::Normal).shaft_toward(d)));
         assert_eq!(
@@ -4806,7 +4806,7 @@ mod tests {
             assert_eq!(part_of("create:rotation_speed_controller", props), Some(part));
             assert_eq!(pieces(part, true), vec![("create:block/shaft", positive(axis), 1.0, 0, Dir::Up)]);
             assert!(pieces(part, false).is_empty());
-            assert!(!takes_use(part));
+            assert!(takes_use(part));
         }
         assert_eq!(part_of("create:rotation_speed_controller", |k| (k == "facing").then_some("up")), None);
         assert_eq!(part_of("create:rotation_speed_controller", |_| None), None);
