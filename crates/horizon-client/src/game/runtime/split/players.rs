@@ -73,12 +73,14 @@ fn turned_away(game: &Game<'_>) -> Option<String> {
     })
 }
 
-/// The `Game` `start` makes (~67 KB, by value) into a box, in a frame of its own that is gone
-/// once it is: the copies stay out of the caller's frame, deep in the event loop.
+/// Unwraps `start_game`'s heap-allocated `Game` in its own frame so guest startup stays
+/// off the caller's stack, deep in the event loop.
 #[inline(never)]
-fn boxed(start: impl FnOnce() -> Result<Option<Game<'static>>>) -> Result<Box<Game<'static>>> {
+fn boxed(
+    start: impl FnOnce() -> Result<Option<Box<Game<'static>>>>,
+) -> Result<Box<Game<'static>>> {
     match start() {
-        Ok(Some(game)) => Ok(Box::new(game)),
+        Ok(Some(game)) => Ok(game),
         Ok(None) => Err("the player's game did not start".into()),
         Err(e) => Err(e),
     }
@@ -458,7 +460,7 @@ impl Split<'_> {
             self.res = Some(Box::leak(Box::new(self.host.res.clone())));
         }
         let res = self.res.ok_or("no resources")?;
-        let host = &mut self.host;
+        let host = &mut *self.host;
         std::fs::create_dir_all(options_file.parent().ok_or("bad options path")?)?;
         let mut options = host.options.clone();
         options.world = None;

@@ -277,6 +277,7 @@ pub(super) fn loading_frame(hud: &HudBatch) -> Frame<'_> {
 /// options, packs, mods, control socket, benchmark and world selection the
 /// old `run` did after loading. `None` means a harness or dedicated run
 /// finished here instead.
+#[inline(never)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn start_game<'a>(
     res: &'a Arc<Resources>,
@@ -292,7 +293,7 @@ pub(super) fn start_game<'a>(
     prepared: Option<GameCpuResources>,
     client_applies: Vec<client_reload::PreparedClientReload>,
     entity_models: Option<Arc<horizon_client::mobs::EntityModelDocument>>,
-) -> Result<Option<Game<'a>>> {
+) -> Result<Option<Box<Game<'a>>>> {
     let handoff = prepared.is_some();
     let mut settings = match settings {
         Some(settings) => settings,
@@ -314,7 +315,7 @@ pub(super) fn start_game<'a>(
             entity_models.as_deref(),
         )?),
     };
-    let mut game = Game::new(res, pack, gui, options, settings, audio, prepared)?;
+    let mut game = Game::new_boxed(res, pack, gui, options, settings, audio, prepared)?;
     // `new DebugRenderer()` refreshes its list.
     game.refresh_debug_renderers();
     game.rest_loader = rest_loader;

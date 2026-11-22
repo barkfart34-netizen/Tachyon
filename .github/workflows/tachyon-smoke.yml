@@ -14,6 +14,10 @@ jobs:
   smoke:
     runs-on: ubuntu-24.04
     timeout-minutes: 150
+    env:
+      CARGO_INCREMENTAL: "0"
+      # Shadow .cargo/config.toml (-Zthreads=8) so rustc stays within 16 GB RAM on ubuntu-24.04.
+      RUSTFLAGS: -C debuginfo=0
     steps:
       - uses: actions/checkout@v4
 

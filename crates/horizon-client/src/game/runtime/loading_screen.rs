@@ -19,7 +19,7 @@ pub(super) fn leave_fullscreen_after(
     }
 }
 
-pub(super) fn run_event_loop(mut game: Game<'_>) -> Result<()> {
+pub(super) fn run_event_loop(mut game: Box<Game<'_>>) -> Result<()> {
     if game.options.headless {
         // No display to open winit's loop on: the game's own loop.
         game.run_headless();
@@ -33,7 +33,7 @@ pub(super) fn run_event_loop(mut game: Game<'_>) -> Result<()> {
         return result;
     }
     let mut split = split::Split::new(game);
-    let result = EventLoop::new()?.run_app(&mut split);
+    let result = EventLoop::new()?.run_app(&mut *split);
     game = split.host;
     narrator::stop();
     leave_fullscreen_after(&result, &mut game.settings);
@@ -338,7 +338,8 @@ impl Loading {
             );
         }
     }
-    pub(super) fn finish(&mut self, mut loaded: Loaded) -> Result<Option<split::Split<'static>>> {
+    #[inline(never)]
+    pub(super) fn finish(&mut self, mut loaded: Loaded) -> Result<Option<Box<split::Split<'static>>>> {
         let handoff_at = Instant::now();
         let mut options = self.options.take().ok_or("loading already finished")?;
         options.resources = loaded.root.clone();
@@ -506,7 +507,7 @@ impl ApplicationHandler for App {
                     None => Step::Waiting,
                     Some(Err(e)) => Step::Failed(e.into()),
                     Some(Ok(loaded)) => match loading.finish(loaded) {
-                        Ok(Some(game)) => Step::Ready(Box::new(game)),
+                        Ok(Some(game)) => Step::Ready(game),
                         Ok(None) => Step::Done,
                         Err(e) => Step::Failed(e),
                     },

@@ -10427,6 +10427,8 @@ fn load_forcefield(root: &horizon_assets::resource_source::ResourceSource) -> (u
 impl<'a> Game<'a> {
     /// A game with no world open, over the loaded resources: the window's,
     /// or an integrated server's on its own thread.
+    #[allow(dead_code)]
+    #[inline(never)]
     fn new(
         res: &'a Arc<Resources>,
         pack: PackResources,
@@ -10436,6 +10438,21 @@ impl<'a> Game<'a> {
         audio: Audio,
         prepared: Option<GameCpuResources>,
     ) -> Result<Self> {
+        Self::new_boxed(res, pack, gui, options, settings, audio, prepared).map(|game| *game)
+    }
+
+    /// Heap-allocated counterpart of [`Game::new`] so callers deep in the event loop
+    /// (especially Android's render thread) never carry `Game` by value across stack frames.
+    #[inline(never)]
+    fn new_boxed(
+        res: &'a Arc<Resources>,
+        pack: PackResources,
+        gui: UiResources,
+        options: Options,
+        settings: Settings,
+        audio: Audio,
+        prepared: Option<GameCpuResources>,
+    ) -> Result<Box<Self>> {
         let phase = match Self::mod_phase_for_construction() {
             mod_api::__private::ModPhase::Packages if cfg!(test) => {
                 mod_api::__private::ModPhase::World
@@ -10492,7 +10509,7 @@ impl<'a> Game<'a> {
             &gui.atlas.translucent,
         );
         let resource_source = pack.source.clone();
-        let mut game = Game {
+        let mut game = Box::new(Game {
             structure_spawns: horizon_client::mobs::spawn_selection::StructureSpawns::load(
                 &options.resources,
             ),
@@ -11098,7 +11115,7 @@ impl<'a> Game<'a> {
             requested_camera_type: Default::default(),
             fangs: Default::default(),
             player_model: None,
-        };
+        });
         game.reset_entity_residency();
         Ok(game)
     }

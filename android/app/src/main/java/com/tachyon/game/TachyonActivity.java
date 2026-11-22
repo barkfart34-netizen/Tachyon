@@ -41,6 +41,14 @@ import android.window.OnBackInvokedDispatcher;
  */
 public class TachyonActivity extends NativeActivity {
     static {
+        // Horizon's render thread (android_main, spawned by android-activity via std::thread::spawn)
+        // constructs Game and Split deep in winit's event loop and needs desktop-grade stack headroom
+        // rather than Rust's 2 MiB default. Setting RUST_MIN_STACK before loading libtachyon.so
+        // gives android_main a 16 MiB virtual stack (demand-paged on 64-bit arm64).
+        try {
+            android.system.Os.setenv("RUST_MIN_STACK", "16777216", false);
+        } catch (Exception ignored) {
+        }
         // Loaded here as well as by NativeActivity, so the native methods below resolve.
         System.loadLibrary("tachyon");
     }

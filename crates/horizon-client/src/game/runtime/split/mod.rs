@@ -105,7 +105,7 @@ struct Guest<'a> {
 }
 
 pub(super) struct Split<'a> {
-    pub(super) host: Game<'a>,
+    pub(super) host: Box<Game<'a>>,
     guests: Vec<Guest<'a>>,
     /// The run's `--offscreen`: no window is shown, splitscreen's included, and P1 draws
     /// offscreen again when it is alone (`options.offscreen` is set while others play).
@@ -172,14 +172,14 @@ pub(super) struct Split<'a> {
 }
 
 impl<'a> Split<'a> {
-    pub(super) fn new(host: Game<'a>) -> Self {
+    pub(super) fn new(host: Box<Game<'a>>) -> Box<Self> {
         let split = std::env::var("HORIZON_SPLIT").ok();
         let test_players = split
             .as_ref()
             .and_then(|n| n.parse::<usize>().ok())
             .map_or(0, |n| n.clamp(1, MAX_PLAYERS) - 1);
         let offscreen = host.options.offscreen;
-        Self {
+        Box::new(Self {
             host,
             guests: Vec::new(),
             offscreen,
@@ -219,7 +219,7 @@ impl<'a> Split<'a> {
             fresh: Vec::new(),
             offers: Vec::new(),
             lost: Vec::new(),
-        }
+        })
     }
 
     fn players(&self) -> usize {
@@ -263,14 +263,14 @@ impl<'a> Split<'a> {
     /// Player `i`'s game (0 = P1).
     fn game(&self, i: usize) -> Option<&Game<'a>> {
         match i {
-            0 => Some(&self.host),
+            0 => Some(&*self.host),
             _ => self.guests.get(i - 1).map(|g| &*g.game),
         }
     }
 
     fn game_mut(&mut self, i: usize) -> Option<&mut Game<'a>> {
         match i {
-            0 => Some(&mut self.host),
+            0 => Some(&mut *self.host),
             _ => self.guests.get_mut(i - 1).map(|g| &mut *g.game),
         }
     }

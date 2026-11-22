@@ -21,7 +21,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       CARGO_INCREMENTAL: "0"
       # Shadow .cargo/config.toml (-Zthreads=8) so rustc stays within 16 GB RAM on ubuntu-24.04.

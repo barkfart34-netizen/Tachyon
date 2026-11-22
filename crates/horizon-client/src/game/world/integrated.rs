@@ -50,9 +50,14 @@ pub(super) const NO_ANSWER: &str =
     "the integrated server stopped or did not answer within 10 s (the game log says which)";
 
 /// The server thread holds its `Game` by value and runs every tick on it.
-/// It reserves the same guest limit and host headroom as the main thread.
+/// Desktop reserves the same guest limit and host headroom as the main thread;
+/// Android runs no guest VM runtime and reserves 16 MiB so `pthread_create` stays
+/// well within mobile virtual-memory limits while still giving `Game::new` ample headroom.
+#[cfg(not(target_os = "android"))]
 const SERVER_THREAD_STACK: usize =
     horizon_guest_stack::GUEST_STACK_BYTES + horizon_guest_stack::HOST_HEADROOM;
+#[cfg(target_os = "android")]
+const SERVER_THREAD_STACK: usize = 16 * 1024 * 1024;
 
 /// The server thread's stack size: [`SERVER_THREAD_STACK`], or what `RUST_MIN_STACK` asks for
 /// when that is larger. std reads the variable only for a thread spawned without a size, and
@@ -1518,15 +1523,16 @@ impl Game<'_> {
     }
 }
 
+#[inline(never)]
 fn server_game(
     res: &Arc<Resources>,
     pack: PackResources,
     options: Options,
     settings: Settings,
-) -> Result<Game<'_>> {
+) -> Result<Box<Game<'_>>> {
     let gui = UiResources::server(&pack.source)?;
     let audio = Audio::silent(&pack.source);
-    Game::new(res, pack, gui, options, settings, audio, None)
+    Game::new_boxed(res, pack, gui, options, settings, audio, None)
 }
 
 /// Who the integrated server turns away: anyone but the owner until it is opened to the LAN.
