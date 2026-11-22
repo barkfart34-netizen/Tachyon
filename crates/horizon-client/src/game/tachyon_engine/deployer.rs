@@ -180,7 +180,7 @@ pub(super) enum State {
     Retracting,
 }
 
-/// A deployer's hand and stroke.
+/// A deployer's hand, mode, filter and stroke.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct Deployer {
     #[serde(default)]
@@ -189,6 +189,63 @@ pub(super) struct Deployer {
     pub state: State,
     #[serde(default)]
     pub timer: i32,
+    #[serde(default)]
+    pub filter: Option<String>,
+    #[serde(default)]
+    pub punch: bool,
+    #[serde(default)]
+    pub damage: u32,
+}
+
+impl Deployer {
+    pub(super) fn has_state(&self) -> bool {
+        self.held.is_some()
+            || self.filter.is_some()
+            || self.punch
+            || self.damage > 0
+            || self.state != State::Waiting
+            || self.timer > 0
+    }
+
+    pub(super) fn matches_filter(&self, item: &str) -> bool {
+        self.filter.as_deref().is_none_or(|f| f == item)
+    }
+
+    pub(super) fn set_filter(&mut self, filter: Option<String>) {
+        self.filter = filter;
+    }
+
+    pub(super) fn toggle_punch(&mut self) -> bool {
+        self.punch = !self.punch;
+        self.punch
+    }
+
+    /// Consumes one item or adds 1 durability damage when `max_durability > 0`, breaking
+    /// the tool when `damage >= max_durability`. Returns false if nothing was held.
+    pub(super) fn consume_or_damage(&mut self, max_durability: u32) -> bool {
+        let Some(held) = self.held.as_mut() else {
+            return false;
+        };
+        if max_durability > 0 {
+            self.damage += 1;
+            if self.damage >= max_durability {
+                self.damage = 0;
+                if held.count > 1 {
+                    held.count -= 1;
+                } else {
+                    self.held = None;
+                }
+            }
+            return true;
+        }
+        self.damage = 0;
+        if held.count > 1 {
+            held.count -= 1;
+        } else {
+            self.held = None;
+        }
+        true
+    }
 }
 
 /// `DeployerBlockEntity.getTimerSpeed`.
@@ -355,10 +412,10 @@ impl super::super::Game<'_> {
             }
             super::OWNERS.with_borrow_mut(|owners| {
                 if let Some(o) = owners.get_mut(dimension) {
-                    if d.held.is_some() || d.state != State::Waiting || d.timer > 0 {
+                    if d.has_state() {
                         o.deployers.insert(pos, d.clone());
                     }
-                    if d.held != before.held {
+                    if d.held != before.held || d.punch != before.punch || d.filter != before.filter {
                         o.mills_changed = true;
                     }
                 }
@@ -381,6 +438,17 @@ impl super::super::Game<'_> {
         let mut outs = vec![(r.result.clone(), 1, 1.0)];
         outs.extend(r.extra.iter().map(|o| (o.item.clone(), o.count, o.chance)));
         Some((item, outs, r.keep))
+    }
+
+    fn tachyon_deployer_punch_mob_present(&self, target: [i32; 3]) -> bool {
+        let box_at = horizon_core::geometry::Aabb::unit_cube(Vec3::new(
+            f64::from(target[0]),
+            f64::from(target[1]),
+            f64::from(target[2]),
+        ));
+        self.mobs
+            .iter()
+            .any(|m| m.alive() && !m.removed && m.bounds().intersects(box_at))
     }
 
     /// Validates `ctx` as a `BlockItem` placement (`BlockItem -> block` via `info.block`,
@@ -464,15 +532,25 @@ impl super::super::Game<'_> {
     }
 
     /// `shouldActivate` and BeltDeployerCallbacks' wait: work on the depot ahead, or a block
-    /// to place where nothing stands.
+    /// to place where nothing stands (or a mob ahead in punch mode).
     fn tachyon_deployer_ready(&mut self, d: &Deployer, facing: Dir, target: [i32; 3]) -> bool {
+        if d.punch && self.tachyon_deployer_punch_mob_present(target) {
+            return true;
+        }
         let Some(held) = d.held.as_ref() else {
             return false;
         };
-        if self.tachyon_deployer_recipe(held, target).is_some() {
+        if self.tachyon_sequenced_depot_ready(
+            target,
+            super::create_recipes::SequencedAction::Deploying { held: &held.item },
+        ) || self.tachyon_deployer_recipe(held, target).is_some()
+        {
             return true;
         }
-        self.tachyon_deployer_block(&held.item, facing, target).is_some()
+        if !d.punch && self.tachyon_deployer_block(&held.item, facing, target).is_some() {
+            return true;
+        }
+        false
     }
 
     /// The validated placement context and state for a held block item at `target`.
@@ -512,10 +590,63 @@ impl super::super::Game<'_> {
         Some((ctx, state))
     }
 
-    /// The work at full reach: the depot's item by its recipe, else the held block placed.
+    /// The work at full reach: punch mode attacks mobs at `target`, else sequenced assembly
+    /// or regular deploying on a depot, else places the held block.
     fn tachyon_deployer_work(&mut self, d: &mut Deployer, facing: Dir, target: [i32; 3]) {
+        if d.punch {
+            let box_at = horizon_core::geometry::Aabb::unit_cube(Vec3::new(
+                f64::from(target[0]),
+                f64::from(target[1]),
+                f64::from(target[2]),
+            ));
+            let (damage, max_durability) = d.held.as_ref().map_or((1.0, 0), |h| {
+                let info = self.items().get(&h.item);
+                let atk = info.map_or(1.0, |i| i.attack_damage).max(1.0);
+                let dur = info.map_or(0, |i| i.max_damage);
+                (atk, dur)
+            });
+            let mut hit_id = None;
+            for mob in &self.mobs {
+                if mob.alive() && !mob.removed && mob.bounds().intersects(box_at) {
+                    hit_id = Some(mob.id);
+                    break;
+                }
+            }
+            if let Some(id) = hit_id {
+                for mob in &mut self.mobs {
+                    if mob.id == id {
+                        mob.damage(
+                            crate::game::entity::damage_level_of!(self),
+                            damage,
+                            horizon_client::mobs::Damage::of(
+                                horizon_client::mobs::DamageKind::PlayerAttack,
+                            ),
+                        );
+                        break;
+                    }
+                }
+                if max_durability > 0 {
+                    d.consume_or_damage(max_durability);
+                }
+                return;
+            }
+        }
         let Some(held) = d.held.clone() else { return };
         let dimension = self.native_dimension();
+        let max_durability = self.items().get(&held.item).map_or(0, |i| i.max_damage);
+        if let Some((consume_held, _)) = self.tachyon_sequenced_depot_work(
+            target,
+            super::create_recipes::SequencedAction::Deploying { held: &held.item },
+        ) {
+            if consume_held {
+                d.consume_or_damage(max_durability);
+            }
+            let at = target.map(|c| f64::from(c) + 0.5);
+            if let Some(level) = self.native_level(dimension) {
+                self.native_level_play_sound(level, "minecraft:entity.item.pickup", at, 4, 0.25, 0.75);
+            }
+            return;
+        }
         if let Some((input, outs, keep)) = self.tachyon_deployer_recipe(&held, target) {
             let mut made: Vec<Held> = Vec::new();
             for (item, count, chance) in outs {
@@ -542,7 +673,7 @@ impl super::super::Game<'_> {
                 o.mills_changed = true;
             });
             if !keep {
-                d.held = Some(held).filter(|h| h.count > 1).map(|h| Held { count: h.count - 1, ..h });
+                d.consume_or_damage(max_durability);
             }
             let at = target.map(|c| f64::from(c) + 0.5);
             if let Some(level) = self.native_level(dimension) {
@@ -550,40 +681,89 @@ impl super::super::Game<'_> {
             }
             return;
         }
-        if let Some((ctx, _)) = self.tachyon_deployer_block(&held.item, facing, target)
+        if !d.punch
+            && let Some((ctx, _)) = self.tachyon_deployer_block(&held.item, facing, target)
             && self.tachyon_place_validated_block(&ctx, None).is_some()
         {
-            d.held = Some(held).filter(|h| h.count > 1).map(|h| Held { count: h.count - 1, ..h });
+            d.consume_or_damage(0);
         }
     }
 
-    /// DeployerBlock's use: the player's hand and the deployer's swap.
+    /// DeployerBlock's use: wrench toggles punch mode, empty-hand sneak clears filter,
+    /// otherwise swaps the player's hand and the deployer's held stack (respecting filter
+    /// and preserving tool durability).
     pub(super) fn tachyon_use_deployer(&mut self, pos: [i32; 3]) -> bool {
         let dimension = self.native_dimension();
+        let sneaking = self.tachyon_sneaking();
         let mut d = super::OWNERS.with_borrow_mut(|owners| {
             owners.get_mut(dimension).and_then(|o| o.deployers.remove(&pos)).unwrap_or_default()
         });
-        let given = self.held().filter(|s| s.count > 0).map(|s| Held { item: s.item.to_string(), count: s.count });
-        if given.is_none() && d.held.is_none() {
+        if self.held().is_some_and(|s| &*s.item == super::wrench::WRENCH) && !sneaking {
+            d.toggle_punch();
             super::OWNERS.with_borrow_mut(|owners| {
-                if let Some(o) = owners.get_mut(dimension)
-                    && (d.state != State::Waiting || d.timer > 0)
-                {
+                if let Some(o) = owners.get_mut(dimension) {
+                    o.deployers.insert(pos, d);
+                    o.mills_changed = true;
+                }
+            });
+            return true;
+        }
+        let given = self
+            .held()
+            .filter(|s| s.count > 0)
+            .map(|s| (Held { item: s.item.to_string(), count: s.count }, s.damage.max(0) as u32));
+        if given.is_none() && sneaking && d.filter.is_some() {
+            d.set_filter(None);
+            super::OWNERS.with_borrow_mut(|owners| {
+                if let Some(o) = owners.get_mut(dimension) {
+                    if d.has_state() {
+                        o.deployers.insert(pos, d);
+                    }
+                    o.mills_changed = true;
+                }
+            });
+            return true;
+        }
+        if let Some((ref g, _)) = given
+            && !d.matches_filter(&g.item)
+        {
+            super::OWNERS.with_borrow_mut(|owners| {
+                if let Some(o) = owners.get_mut(dimension) && d.has_state() {
                     o.deployers.insert(pos, d);
                 }
             });
             return false;
         }
-        if let Some(g) = &given {
+        if given.is_none() && d.held.is_none() {
+            super::OWNERS.with_borrow_mut(|owners| {
+                if let Some(o) = owners.get_mut(dimension) && d.has_state() {
+                    o.deployers.insert(pos, d);
+                }
+            });
+            return false;
+        }
+        if let Some((ref g, _)) = given {
             self.tachyon_spend_held(g.count);
         }
+        let prev_damage = d.damage;
         if let Some(h) = d.held.take() {
-            self.native_give_items(&h.item, h.count);
+            let mut stack = horizon_client::items::ItemStack::new(&h.item, h.count);
+            stack.damage = prev_damage;
+            self.give_or_drop(stack);
         }
-        d.held = given;
+        match given {
+            Some((g, dmg)) => {
+                d.held = Some(g);
+                d.damage = dmg;
+            }
+            None => {
+                d.held = None;
+                d.damage = 0;
+            }
+        }
         super::OWNERS.with_borrow_mut(|owners| {
             if let Some(o) = owners.get_mut(dimension) {
-                if d.held.is_some() || d.state != State::Waiting || d.timer > 0 {
+                if d.has_state() {
                     o.deployers.insert(pos, d);
                 }
                 o.mills_changed = true;
@@ -781,5 +961,42 @@ mod tests {
             validate_block_placement(&mut denied_dir, &registry, BlockStateId(3), &ctx, None, false),
             None
         );
+    }
+
+    #[test]
+    fn deployer_filter_punch_mode_and_tool_durability_work_as_expected() {
+        let old: Deployer = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.filter, None);
+        assert!(!old.punch);
+        assert_eq!(old.damage, 0);
+        assert!(!old.has_state());
+
+        let mut d = Deployer::default();
+        assert!(!d.toggle_punch());
+        let mut d = Deployer::default();
+        assert!(d.toggle_punch());
+        assert!(d.punch);
+        assert!(d.has_state());
+        assert!(!d.toggle_punch());
+
+        d.set_filter(Some("minecraft:iron_ingot".into()));
+        assert!(d.matches_filter("minecraft:iron_ingot"));
+        assert!(!d.matches_filter("minecraft:gold_ingot"));
+
+        d.held = Some(Held { item: "create:sand_paper".into(), count: 1 });
+        assert!(d.consume_or_damage(3));
+        assert_eq!(d.damage, 1);
+        assert!(d.held.is_some());
+        assert!(d.consume_or_damage(3));
+        assert_eq!(d.damage, 2);
+        assert!(d.consume_or_damage(3));
+        assert_eq!(d.damage, 0);
+        assert_eq!(d.held, None);
+
+        d.held = Some(Held { item: "create:andesite_alloy".into(), count: 2 });
+        assert!(d.consume_or_damage(0));
+        assert_eq!(d.held.as_ref().unwrap().count, 1);
+        assert!(d.consume_or_damage(0));
+        assert_eq!(d.held, None);
     }
 }

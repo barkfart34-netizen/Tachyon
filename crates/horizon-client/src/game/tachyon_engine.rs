@@ -99,6 +99,8 @@ struct Kinds {
     /// The states of Create's blocks (ported from its own file), drawn with
     /// its models.
     create: Vec<bool>,
+    /// The states of `create:brass_funnel` (higher capacity and filterable).
+    brass_funnel: Vec<bool>,
     any: bool,
 }
 
@@ -106,18 +108,21 @@ impl Kinds {
     fn new(registry: &BlockRegistry) -> Self {
         let mut parts = Vec::with_capacity(registry.len());
         let mut create = Vec::with_capacity(registry.len());
+        let mut brass_funnel = Vec::with_capacity(registry.len());
         for id in 0..registry.len() {
             let state = registry.state(BlockStateId(id as u32));
             let part = state
                 .and_then(|s| part_of(&s.name, |k| s.properties.get(k).map(String::as_str)));
             parts.push(part);
             create.push(state.is_some_and(|s| s.name.starts_with("create:")));
+            brass_funnel.push(state.is_some_and(|s| s.name == "create:brass_funnel"));
         }
         let any = parts.iter().any(Option::is_some);
         Self {
             registry: std::ptr::from_ref(registry) as usize,
             parts,
             create,
+            brass_funnel,
             any,
         }
     }
@@ -127,6 +132,10 @@ impl Kinds {
     /// Whether the state is a block of Create's.
     fn create(&self, state: u32) -> bool {
         self.create.get(state as usize).copied().unwrap_or(false)
+    }
+    /// Whether the state is `create:brass_funnel`.
+    fn brass_funnel(&self, state: u32) -> bool {
+        self.brass_funnel.get(state as usize).copied().unwrap_or(false)
     }
 }
 
@@ -260,6 +269,7 @@ fn create_part<'a>(block: &str, property: impl Fn(&str) -> Option<&'a str>) -> O
             }
             Part::Chute(dir, ChuteShape::parse(property("shape")?)?)
         }
+        "smart_chute" => Part::SmartChute,
         // Its shaft goes through it the way it faces.
         "mechanical_press" => Part::Press(facing()?.axis()),
         "mechanical_mixer" => Part::Mixer,
@@ -299,6 +309,8 @@ struct Index {
     parts: HashMap<[i32; 3], Part>,
     /// The parts that are Create's blocks: they work by Create's recipes.
     create: HashSet<[i32; 3]>,
+    /// Positions of `create:brass_funnel` blocks (higher limit + filterable).
+    brass_funnels: HashSet<[i32; 3]>,
     known: HashSet<(i32, i32)>,
     revision: Option<u64>,
 }
@@ -313,6 +325,17 @@ impl Index {
         kinds: &Kinds,
         take: bool,
         removed: &mut Vec<[i32; 3]>,
+    ) -> bool {
+        self.sync_with_arms(world, kinds, take, removed, None)
+    }
+
+    fn sync_with_arms(
+        &mut self,
+        world: &mut horizon_client::world::World,
+        kinds: &Kinds,
+        take: bool,
+        removed: &mut Vec<[i32; 3]>,
+        mut new_arms: Option<&mut Vec<[i32; 3]>>,
     ) -> bool {
         // The world records writes of the states it watches (sculk's, and these).
         if world.watched.len() < kinds.parts.len() {
@@ -338,6 +361,8 @@ impl Index {
                     .retain(|p, _| !gone.contains(&(p[0] >> 4, p[2] >> 4)));
                 self.create
                     .retain(|p| !gone.contains(&(p[0] >> 4, p[2] >> 4)));
+                self.brass_funnels
+                    .retain(|p| !gone.contains(&(p[0] >> 4, p[2] >> 4)));
                 changed |= self.parts.len() != before;
             }
             let arrived: Vec<(i32, i32)> = loaded.difference(&self.known).copied().collect();
@@ -357,7 +382,15 @@ impl Index {
                 continue;
             }
             match is {
-                Some(part) => self.parts.insert([x, y, z], part),
+                Some(part) => {
+                    if was != Some(Part::Arm)
+                        && part == Part::Arm
+                        && let Some(arms) = new_arms.as_deref_mut()
+                    {
+                        arms.push([x, y, z]);
+                    }
+                    self.parts.insert([x, y, z], part)
+                }
                 None => {
                     removed.push([x, y, z]);
                     self.parts.remove(&[x, y, z])
@@ -367,6 +400,11 @@ impl Index {
                 self.create.insert([x, y, z]);
             } else {
                 self.create.remove(&[x, y, z]);
+            }
+            if is.is_some() && kinds.brass_funnel(new) {
+                self.brass_funnels.insert([x, y, z]);
+            } else {
+                self.brass_funnels.remove(&[x, y, z]);
             }
             changed = true;
         }
@@ -399,6 +437,9 @@ impl Index {
                     self.parts.insert(pos, part);
                     if kinds.create(*v) {
                         self.create.insert(pos);
+                    }
+                    if kinds.brass_funnel(*v) {
+                        self.brass_funnels.insert(pos);
                     }
                     found = true;
                 }
@@ -497,6 +538,12 @@ struct Owner {
     saw_items: HashMap<u32, f32>,
     /// What each sideways saw is breaking.
     saw_breakers: HashMap<[i32; 3], saw::Breaker>,
+    /// Item or fluid filters on Smart Chutes, Brass Funnels, and Smart Fluid Pipes.
+    pub(super) filters: HashMap<[i32; 3], String>,
+    /// Sequenced assembly progress per Depot: `(expected_item, step_index)`.
+    pub(super) sequenced_progress: HashMap<[i32; 3], (String, u32)>,
+    /// Player's active pre-placement Mechanical Arm I/O point selection.
+    pub(super) arm_selection: arm::Selection,
 }
 
 impl Owner {
@@ -584,6 +631,16 @@ impl Owner {
         self.diodes = diodes.into_iter().collect();
         let links: Vec<([i32; 3], link::Frequency)> = serde_json::from_value(value["links"].clone()).unwrap_or_default();
         self.links = links.into_iter().collect();
+        let filters: Vec<([i32; 3], String)> = serde_json::from_value(value["filters"].clone()).unwrap_or_default();
+        self.filters = filters.into_iter().collect();
+        for (pos, chute) in &self.chutes {
+            if let Some(f) = &chute.filter {
+                self.filters.entry(*pos).or_insert_with(|| f.clone());
+            }
+        }
+        let sequenced: Vec<([i32; 3], String, u32)> =
+            serde_json::from_value(value["sequenced_progress"].clone()).unwrap_or_default();
+        self.sequenced_progress = sequenced.into_iter().map(|(p, item, step)| (p, (item, step))).collect();
         self.dirty = true;
     }
     fn save(&self, root: &std::path::Path, dimension: &str) {
@@ -617,10 +674,10 @@ impl Owner {
         let mut crushers: Vec<(&[i32; 3], &crusher::Inside)> = self.crushers.iter().collect();
         crushers.sort_by_key(|(p, _)| **p);
         let mut chutes: Vec<(&[i32; 3], &chute::Chute)> =
-            self.chutes.iter().filter(|(_, c)| c.item.is_some()).collect();
+            self.chutes.iter().filter(|(_, c)| c.item.is_some() || c.filter.is_some()).collect();
         chutes.sort_by_key(|(p, _)| **p);
         let mut deployers: Vec<(&[i32; 3], &deployer::Deployer)> =
-            self.deployers.iter().filter(|(_, d)| d.held.is_some()).collect();
+            self.deployers.iter().filter(|(_, d)| d.has_state()).collect();
         deployers.sort_by_key(|(p, _)| **p);
         let file = Self::file(root, dimension);
         let mut tanks: Vec<(&[i32; 3], &fluids::Tank)> = self.tanks.iter().filter(|(_, t)| t.amount > 0).collect();
@@ -634,6 +691,14 @@ impl Owner {
         let mut links: Vec<(&[i32; 3], &link::Frequency)> =
             self.links.iter().filter(|(_, f)| **f != link::Frequency::default()).collect();
         links.sort_by_key(|(p, _)| **p);
+        let mut filters: Vec<(&[i32; 3], &str)> = self.filters.iter().map(|(p, f)| (p, f.as_str())).collect();
+        filters.sort_by_key(|(p, _)| **p);
+        let mut sequenced: Vec<(&[i32; 3], &str, u32)> = self
+            .sequenced_progress
+            .iter()
+            .map(|(p, (item, step))| (p, item.as_str(), *step))
+            .collect();
+        sequenced.sort_by_key(|(p, _, _)| **p);
         let text = serde_json::json!({
             "links": links,
             "diodes": diodes,
@@ -650,6 +715,8 @@ impl Owner {
             "funnels": funnels,
             "crushers": crushers,
             "chutes": chutes,
+            "filters": filters,
+            "sequenced_progress": sequenced,
         })
         .to_string();
         let written = file
@@ -660,6 +727,93 @@ impl Owner {
             log::warn!("Tachyon: {} not written: {e}", file.display());
         }
     }
+}
+
+fn sequenced_depot_step_ready(
+    mill: &millstone::Mill,
+    seq: &HashMap<[i32; 3], (String, u32)>,
+    depot: [i32; 3],
+    create: &create_recipes::Recipes,
+    action: create_recipes::SequencedAction<'_>,
+) -> bool {
+    if !mill.outputs.is_empty() {
+        return false;
+    }
+    let Some(item) = mill.input.as_ref().map(|h| h.item.as_str()) else {
+        return false;
+    };
+    let saved = seq
+        .get(&depot)
+        .filter(|(tracked, _)| tracked == item)
+        .map(|(_, s)| *s);
+    if let Some(step) = saved {
+        create.advance_sequenced(item, step, action, 0.0).is_some()
+    } else {
+        create.advance_sequenced(item, 0, action, 0.0).is_some()
+            || create
+                .find_sequenced_step(item, action)
+                .is_some_and(|step| create.advance_sequenced(item, step, action, 0.0).is_some())
+    }
+}
+
+fn advance_depot_sequenced(
+    mill: &mut millstone::Mill,
+    seq: &mut HashMap<[i32; 3], (String, u32)>,
+    depot: [i32; 3],
+    create: &create_recipes::Recipes,
+    action: create_recipes::SequencedAction<'_>,
+    roll: f32,
+) -> Option<(bool, u32)> {
+    if !mill.outputs.is_empty() {
+        return None;
+    }
+    let item = mill.input.as_ref()?.item.clone();
+    let saved = seq
+        .get(&depot)
+        .filter(|(tracked, _)| tracked == &item)
+        .map(|(_, s)| *s);
+    let step = if let Some(s) = saved {
+        s
+    } else if create.advance_sequenced(&item, 0, action, roll).is_some() {
+        0
+    } else {
+        create.find_sequenced_step(&item, action)?
+    };
+    let res = create.advance_sequenced(&item, step, action, roll)?;
+    let input = mill.input.as_mut()?;
+    input.count -= 1;
+    if input.count == 0 {
+        mill.input = None;
+        mill.progress = 0.0;
+    }
+    let (out_item, out_count, consume_held, consume_fluid) = match res {
+        create_recipes::SequencedStepResult::NextStep {
+            next_item,
+            next_step,
+            consume_held,
+            consume_fluid,
+        } => {
+            seq.insert(depot, (next_item.clone(), next_step));
+            (next_item, 1, consume_held, consume_fluid)
+        }
+        create_recipes::SequencedStepResult::Complete {
+            item,
+            count,
+            consume_held,
+            consume_fluid,
+        } => {
+            seq.remove(&depot);
+            (item, count, consume_held, consume_fluid)
+        }
+    };
+    millstone::add_all(
+        &mut mill.outputs,
+        &[millstone::Held {
+            item: out_item,
+            count: out_count,
+        }],
+    );
+    Some((consume_held, consume_fluid))
 }
 
 /// The machine working the depot or basin at `p`: the one `is` finds right
@@ -1267,6 +1421,7 @@ fn create_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize, Dir)> {
         | Part::Burner
         | Part::LitBurner
         | Part::Chute(_, _)
+        | Part::SmartChute
         | Part::Funnel(_) => Vec::new(),
     }
 }
@@ -1323,6 +1478,7 @@ fn kinetica_pieces(part: Part) -> Vec<(&'static str, Dir, f32, usize)> {
         | Part::CrushingWheel(_)
         | Part::LargeWaterWheel(_)
         | Part::Chute(_, _)
+        | Part::SmartChute
         | Part::EncasedCog(_)
         | Part::EncasedLargeCog(_)
         | Part::SpeedGauge(_)
@@ -1365,6 +1521,7 @@ fn takes_use(part: Part) -> bool {
         part,
         Part::Motor(_)
             | Part::Crank(_)
+            | Part::SpeedController(_)
             | Part::Millstone
             | Part::Depot
             | Part::Deployer { .. }
@@ -1376,6 +1533,9 @@ fn takes_use(part: Part) -> bool {
             | Part::LitBurner
             | Part::Belt(_)
             | Part::Funnel(_)
+            | Part::Chute(_, _)
+            | Part::SmartChute
+            | Part::SmartPipe(_)
             | Part::AnalogLever
             | Part::Latch(_)
             | Part::ToggleLatch(_)
@@ -1488,10 +1648,28 @@ impl Game<'_> {
             owner.ticks += 1;
             // Sculk reads the writes after this: they stay.
             let mut removed = Vec::new();
+            let mut new_arms = Vec::new();
             let revision = owner.index.revision;
-            let changed = owner
-                .index
-                .sync(&mut self.world, &kinds, false, &mut removed);
+            let changed = owner.index.sync_with_arms(
+                &mut self.world,
+                &kinds,
+                false,
+                &mut removed,
+                Some(&mut new_arms),
+            );
+            let mut armed = false;
+            if !new_arms.is_empty() && !owner.arm_selection.is_empty() {
+                for pos in new_arms {
+                    let pts = owner.arm_selection.for_arm(pos);
+                    if !pts.is_empty() {
+                        let mut arm = arm::Arm::default();
+                        arm.set_manual_points(pts);
+                        owner.arms.insert(pos, arm);
+                        armed = true;
+                    }
+                }
+                owner.arm_selection.clear();
+            }
             // A motor or controller broken forgets its speed or target, a
             // burner its fuel.
             let before = owner.motors.len();
@@ -1502,9 +1680,16 @@ impl Game<'_> {
             owner.funnels_out.retain(|p| !removed.contains(p));
             let burners = owner.burners.len();
             owner.burners.retain(|p, _| !removed.contains(p));
+            let filters_before = owner.filters.len();
+            owner.filters.retain(|p, _| !removed.contains(p));
+            let seq_before = owner.sequenced_progress.len();
+            owner.sequenced_progress.retain(|p, _| !removed.contains(p));
             if owner.motors.len() != before
                 || owner.funnels_out.len() != funnels
                 || owner.burners.len() != burners
+                || owner.filters.len() != filters_before
+                || owner.sequenced_progress.len() != seq_before
+                || armed
                 || controllers
             {
                 owner.save(&root, dimension);
@@ -1525,7 +1710,10 @@ impl Game<'_> {
             // drops its full stack. Unloaded chunks keep their contents.
             let gone: Vec<[i32; 3]> = owner.chutes.keys().copied().filter(|p| {
                 owner.index.known.contains(&(p[0] >> 4, p[2] >> 4))
-                    && !matches!(owner.index.parts.get(p), Some(Part::Chute(_, _)))
+                    && !matches!(
+                        owner.index.parts.get(p),
+                        Some(Part::Chute(_, _) | Part::SmartChute)
+                    )
             }).collect();
             for p in gone {
                 if let Some(item) = owner.chutes.remove(&p).and_then(|c| c.item) {
@@ -1539,7 +1727,14 @@ impl Game<'_> {
                 .parts
                 .iter()
                 .filter(|(_, part)| {
-                    part.split() || matches!(part, Part::Arm | Part::Funnel(_) | Part::ChainGearshift(_))
+                    part.split()
+                        || matches!(
+                            part,
+                            Part::Arm
+                                | Part::Funnel(_)
+                                | Part::SmartChute
+                                | Part::ChainGearshift(_)
+                        )
                 })
                 .map(|(p, part)| (*p, matches!(part, Part::ChainGearshift(_))))
                 .collect();
@@ -1745,7 +1940,7 @@ impl Game<'_> {
                 };
                 // A Create machine by Create's recipes first, a Kinetica
                 // one by Kinetica's.
-                let (at, recipe) = match part {
+                match part {
                     Some(Part::Millstone) => {
                         let (ours, theirs) = (millstone::recipe(&item), create.milling(&item));
                         let r = if owner.index.create.contains(p) {
@@ -1753,37 +1948,88 @@ impl Game<'_> {
                         } else {
                             ours.or(theirs)
                         };
-                        (*p, r)
+                        let speed = owner.shown.speeds.get(p).map_or(0.0, |s| s[0]);
+                        if speed == 0.0 {
+                            continue;
+                        }
+                        let roll = &mut || random.next_float();
+                        if mill.grind(speed, r, roll) {
+                            owner.mills_changed = true;
+                            work.insert(*p, item);
+                        }
                     }
                     Some(Part::Depot) => {
-                        let press = |q: &Part| matches!(q, Part::Press(_));
-                        let Some(at) = worker(&owner.index.parts, *p, press) else {
-                            continue;
-                        };
-                        let (ours, theirs) = (millstone::press_recipe(&item), create.pressing(&item));
-                        let r = if owner.index.create.contains(&at) {
-                            theirs.or(ours)
-                        } else {
-                            ours.or(theirs)
-                        };
-                        (at, r)
+                        if let Some(at) = worker(&owner.index.parts, *p, |q| matches!(q, Part::Press(_))) {
+                            let speed = owner.shown.speeds.get(&at).map_or(0.0, |s| s[0]);
+                            if speed == 0.0 {
+                                continue;
+                            }
+                            let (ours, theirs) = (millstone::press_recipe(&item), create.pressing(&item));
+                            let r = if owner.index.create.contains(&at) {
+                                theirs.or(ours)
+                            } else {
+                                ours.or(theirs)
+                            };
+                            let roll = &mut || random.next_float();
+                            let worked = if r.is_some() {
+                                mill.press(speed, r, roll)
+                            } else if sequenced_depot_step_ready(
+                                mill,
+                                &owner.sequenced_progress,
+                                *p,
+                                &create,
+                                create_recipes::SequencedAction::Pressing,
+                            ) {
+                                let mut ticks = mill.progress as i32;
+                                match press::beat(&mut ticks, speed) {
+                                    press::Beat::Done => ticks = 0,
+                                    press::Beat::Press => {
+                                        advance_depot_sequenced(
+                                            mill,
+                                            &mut owner.sequenced_progress,
+                                            *p,
+                                            &create,
+                                            create_recipes::SequencedAction::Pressing,
+                                            roll(),
+                                        );
+                                    }
+                                    press::Beat::Running => {}
+                                }
+                                mill.progress = ticks as f32;
+                                true
+                            } else {
+                                false
+                            };
+                            if worked {
+                                owner.mills_changed = true;
+                                work.insert(at, item);
+                            }
+                        } else if let Some(at) = worker(&owner.index.parts, *p, |q| {
+                            matches!(q, Part::Saw { facing: Dir::Down, .. })
+                        }) {
+                            let speed = owner.shown.speeds.get(&at).map_or(0.0, |s| s[0]);
+                            let act = create_recipes::SequencedAction::Cutting;
+                            if speed != 0.0
+                                && sequenced_depot_step_ready(mill, &owner.sequenced_progress, *p, &create, act)
+                            {
+                                mill.progress += (speed.abs() / 16.0).max(1.0);
+                                if mill.progress >= 20.0 {
+                                    mill.progress = 0.0;
+                                    advance_depot_sequenced(
+                                        mill,
+                                        &mut owner.sequenced_progress,
+                                        *p,
+                                        &create,
+                                        act,
+                                        random.next_float(),
+                                    );
+                                }
+                                owner.mills_changed = true;
+                                work.insert(at, item);
+                            }
+                        }
                     }
                     _ => continue,
-                };
-                let speed = owner.shown.speeds.get(&at).map_or(0.0, |s| s[0]);
-                if speed == 0.0 {
-                    continue;
-                }
-                // A depot's press by Create's cycle, a millstone by work.
-                let roll = &mut || random.next_float();
-                let worked = if part == Some(Part::Depot) {
-                    mill.press(speed, recipe, roll)
-                } else {
-                    mill.grind(speed, recipe, roll)
-                };
-                if worked {
-                    owner.mills_changed = true;
-                    work.insert(at, item);
                 }
             }
             for (p, b) in &mut owner.basins {
@@ -1800,14 +2046,22 @@ impl Game<'_> {
                 }
                 // A mixer over a basin mixes: a Create one by Create's
                 // recipes first, a Kinetica one by Kinetica's (the other's
-                // when it holds none of these). A press over one compacts,
-                // by Create's, once a cycle.
+                // when it holds none of these), then Mechanical Crafting
+                // recipes (`create:mechanical_crafting`). A press over one
+                // compacts, by Create's, once a cycle.
                 let (at, recipes, pressing) = if let Some(at) = worker(&owner.index.parts, *p, |q| *q == Part::Mixer) {
                     let (mut first, mut second) = (basin::recipes(), create.mixing.as_slice());
                     if owner.index.create.contains(&at) {
                         std::mem::swap(&mut first, &mut second);
                     }
-                    (at, if b.ready(first, heat).is_some() { first } else { second }, false)
+                    let chosen = if b.ready(first, heat).is_some() {
+                        first
+                    } else if b.ready(second, heat).is_some() {
+                        second
+                    } else {
+                        create.mechanical_crafting.as_slice()
+                    };
+                    (at, chosen, false)
                 } else if let Some(at) = worker(&owner.index.parts, *p, |q| matches!(q, Part::Press(_))) {
                     (at, create.compacting.as_slice(), true)
                 } else {
@@ -1846,7 +2100,7 @@ impl Game<'_> {
                 }
             }
             for (p, chute) in &owner.chutes {
-                if !matches!(owner.index.parts.get(p), Some(Part::Chute(_, _))) {
+                if !matches!(owner.index.parts.get(p), Some(Part::Chute(_, _) | Part::SmartChute)) {
                     continue;
                 }
                 if let Some(item) = &chute.item {
@@ -2087,6 +2341,20 @@ impl Game<'_> {
         let Some(kinds) = self.tachyon_kinds() else {
             return false;
         };
+        let sneaking = self.keys.held(super::Mapping::Sneak);
+        if !sneaking
+            && self.held().is_some_and(|s| &*s.item == "create:mechanical_arm" && s.count > 0)
+            && let Some(kind) = arm::kind_at(self, &kinds, pos)
+        {
+            let dimension = self.dim.id();
+            let root = self.save.root.clone();
+            OWNERS.with_borrow_mut(|owners| {
+                let owner = owners.entry(dimension).or_default();
+                owner.load(&root, dimension);
+                owner.arm_selection.toggle(pos, kind);
+            });
+            return true;
+        }
         let state = self.world.block(pos[0], pos[1], pos[2]).0;
         let part = kinds.part(state);
         if !part.is_some_and(takes_use) {
@@ -2105,7 +2373,6 @@ impl Game<'_> {
             OWNERS.with_borrow_mut(|owners| owners.entry(dimension).or_default().load(&root, dimension));
             return self.tachyon_use_deployer(pos);
         }
-        let sneaking = self.keys.held(super::Mapping::Sneak);
         if let Some(Part::Link(_)) = part {
             return self.tachyon_use_link(pos, sneaking);
         }
@@ -2125,15 +2392,101 @@ impl Game<'_> {
             self.tachyon_spend_held(n);
             return true;
         }
-        // A funnel: empty hand or wrench toggles in/out; blocks fall through to placement.
+        if matches!(part, Some(Part::Chute(_, _) | Part::SmartChute)) {
+            let smart = part == Some(Part::SmartChute);
+            let held = self.held().cloned();
+            if held.as_ref().is_some_and(|s| &*s.item == "create:wrench") {
+                return false;
+            }
+            let outcome = OWNERS.with_borrow_mut(|owners| {
+                let owner = owners.entry(dimension).or_default();
+                owner.load(&root, dimension);
+                let c = owner.chutes.entry(pos).or_default();
+                let out = c.interact(smart, held.as_ref(), sneaking);
+                match &out {
+                    chute::ChuteInteract::Take(_) => {
+                        if c.item.is_none() && c.filter.is_none() {
+                            owner.chutes.remove(&pos);
+                        }
+                        owner.save(&root, dimension);
+                    }
+                    chute::ChuteInteract::SetFilter(f) => {
+                        owner.filters.insert(pos, f.clone());
+                        owner.save(&root, dimension);
+                    }
+                    chute::ChuteInteract::ClearFilter => {
+                        owner.filters.remove(&pos);
+                        if c.item.is_none() && c.filter.is_none() {
+                            owner.chutes.remove(&pos);
+                        }
+                        owner.save(&root, dimension);
+                    }
+                    chute::ChuteInteract::None => {
+                        if c.item.is_none() && c.filter.is_none() {
+                            owner.chutes.remove(&pos);
+                        }
+                    }
+                }
+                out
+            });
+            return match outcome {
+                chute::ChuteInteract::Take(stack) => {
+                    self.give_or_drop(stack);
+                    true
+                }
+                chute::ChuteInteract::SetFilter(_) | chute::ChuteInteract::ClearFilter => true,
+                chute::ChuteInteract::None => false,
+            };
+        }
+        if matches!(part, Some(Part::SmartPipe(_))) {
+            let held = self.held().cloned();
+            if held.as_ref().is_some_and(|s| &*s.item == "create:wrench") {
+                return false;
+            }
+            if let Some(stack) = held.filter(|s| s.count > 0) {
+                let filter = fluids::resolve_fluid_filter(&stack.item).to_owned();
+                return OWNERS.with_borrow_mut(|owners| {
+                    let owner = owners.entry(dimension).or_default();
+                    owner.load(&root, dimension);
+                    let changed = owner.filters.get(&pos) != Some(&filter);
+                    if changed {
+                        owner.filters.insert(pos, filter);
+                        owner.save(&root, dimension);
+                    }
+                    changed
+                });
+            }
+            if sneaking {
+                return OWNERS.with_borrow_mut(|owners| {
+                    let owner = owners.entry(dimension).or_default();
+                    owner.load(&root, dimension);
+                    let cleared = owner.filters.remove(&pos).is_some();
+                    if cleared {
+                        owner.save(&root, dimension);
+                    }
+                    cleared
+                });
+            }
+            return false;
+        }
+        // A funnel: empty hand or wrench toggles in/out; brass funnels take a filter item
+        // (and sneak empty hand clears it).
         if let Some(Part::Funnel(_)) = part {
-            if !funnel_accepts_use(self.held().map(|s| &*s.item)) {
+            let held = self.held().map(|s| s.item.to_string());
+            let is_brass = OWNERS.with_borrow(|owners| {
+                owners.get(dimension).is_some_and(|o| o.index.brass_funnels.contains(&pos))
+            });
+            let setting_filter = is_brass && held.as_deref().is_some_and(|i| i != "create:wrench");
+            if !setting_filter && !funnel_accepts_use(held.as_deref()) {
                 return false;
             }
             OWNERS.with_borrow_mut(|owners| {
                 let owner = owners.entry(dimension).or_default();
                 owner.load(&root, dimension);
-                if !owner.funnels_out.remove(&pos) {
+                if setting_filter && let Some(item) = held {
+                    owner.filters.insert(pos, item);
+                } else if sneaking && is_brass && held.is_none() && owner.filters.remove(&pos).is_some() {
+                } else if !owner.funnels_out.remove(&pos) {
                     owner.funnels_out.insert(pos);
                 }
                 owner.save(&root, dimension);
@@ -2190,6 +2543,19 @@ impl Game<'_> {
                 owner.dirty |= was.is_none_or(|(_, s)| s != speed);
                 return;
             }
+            if matches!(part, Some(Part::SpeedController(_))) {
+                let cur = owner
+                    .controllers
+                    .get(&pos)
+                    .copied()
+                    .unwrap_or(speed_controller::DEFAULT_SPEED);
+                owner
+                    .controllers
+                    .insert(pos, speed_controller::next_target(cur, sneaking));
+                owner.dirty = true;
+                owner.save(&root, dimension);
+                return;
+            }
             let speed = owner.motors.get(&pos).copied().unwrap_or(MOTOR_SPEED);
             owner.motors.insert(pos, next_motor_speed(speed, sneaking));
             owner.dirty = true;
@@ -2205,11 +2571,17 @@ impl Game<'_> {
         let Some(kinds) = self.tachyon_kinds() else {
             return false;
         };
+        let sneaking = self.tachyon_sneaking();
+        if !sneaking
+            && held.is_some_and(|s| &*s.item == "create:mechanical_arm" && s.count > 0)
+            && arm::kind_at(self, &kinds, pos).is_some()
+        {
+            return true;
+        }
         let state = self.world.block(pos[0], pos[1], pos[2]).0;
         let Some(part) = kinds.part(state).filter(|p| takes_use(*p)) else {
             return false;
         };
-        let sneaking = self.tachyon_sneaking();
         let dimension = self.dim.id();
         let is_remote = self.remote.is_some();
         let shown_held = || CLIENT.with_borrow(|c| c.shown.held.get(&pos).cloned().unwrap_or_default());
@@ -2229,16 +2601,32 @@ impl Game<'_> {
                 }
                 if part == Part::CreativeTank {
                     return fluids::fluid_of_bucket(&s.item).is_some()
+                        || fluids::fluid_of_bottle(&s.item).is_some()
                         || (&*s.item == "minecraft:bucket"
                             && shown_held()
                                 .into_iter()
-                                .any(|(name, _)| fluids::bucket_of(&name).is_some()));
+                                .any(|(name, _)| fluids::bucket_of(&name).is_some()))
+                        || (&*s.item == "minecraft:glass_bottle"
+                            && shown_held()
+                                .into_iter()
+                                .any(|(name, _)| fluids::bottle_of(&name).is_some()));
                 }
                 let shown = shown_held();
                 if let Some(fluid) = fluids::fluid_of_bucket(&s.item) {
                     let cap = fluids::capacity(part);
                     return shown.first().is_none_or(|(name, amt)| {
                         *amt + fluids::BUCKET <= cap && name == &fluids::stack_name(fluid)
+                    });
+                }
+                if let Some(fluid) = fluids::fluid_of_bottle(&s.item) {
+                    let cap = fluids::capacity(part);
+                    return shown.first().is_none_or(|(name, amt)| {
+                        *amt + fluids::BOTTLE <= cap && name == &fluids::stack_name(fluid)
+                    });
+                }
+                if &*s.item == "minecraft:glass_bottle" {
+                    return shown.into_iter().any(|(name, amt)| {
+                        amt >= fluids::BOTTLE && fluids::bottle_of(&name).is_some()
                     });
                 }
                 &*s.item == "minecraft:bucket"
@@ -2257,16 +2645,53 @@ impl Game<'_> {
                         owners
                             .get(dimension)
                             .and_then(|o| o.deployers.get(&pos))
-                            .and_then(|d| d.held.as_ref())
-                            .is_some()
+                            .is_some_and(|d| d.has_state())
                     })
                 }
             }
             Part::Link(_) => held.is_some_and(|s| &*s.item != "minecraft:air") || sneaking,
             Part::Latch(_) | Part::ToggleLatch(_) => !sneaking,
-            Part::AnalogLever | Part::Diode(_, _) | Part::Motor(_) | Part::Crank(_) => true,
+            Part::AnalogLever | Part::Diode(_, _) | Part::Motor(_) | Part::Crank(_) | Part::SpeedController(_) => true,
             Part::Belt(_) => held.is_some_and(|s| self.tachyon_belt_takes(s)),
-            Part::Funnel(_) => funnel_accepts_use(held.map(|s| &*s.item)),
+            Part::Chute(_, _) | Part::SmartChute => {
+                if held.is_some_and(|s| &*s.item == "create:wrench") {
+                    return false;
+                }
+                let smart = part == Part::SmartChute;
+                if smart && held.is_some_and(|s| s.count > 0) {
+                    return true;
+                }
+                if is_remote {
+                    !shown_held().is_empty()
+                } else {
+                    OWNERS.with_borrow(|owners| {
+                        owners.get(dimension).and_then(|o| o.chutes.get(&pos)).is_some_and(|c| {
+                            c.item.is_some() || (smart && sneaking && c.filter.is_some())
+                        })
+                    })
+                }
+            }
+            Part::SmartPipe(_) => {
+                if held.is_some_and(|s| &*s.item == "create:wrench") {
+                    return false;
+                }
+                if held.is_some_and(|s| s.count > 0) {
+                    return true;
+                }
+                sneaking
+                    && !is_remote
+                    && OWNERS.with_borrow(|owners| {
+                        owners.get(dimension).is_some_and(|o| o.filters.contains_key(&pos))
+                    })
+            }
+            Part::Funnel(_) => {
+                let is_brass = kinds.brass_funnel(state);
+                if is_brass && held.is_some_and(|s| &*s.item != "create:wrench" && s.count > 0) {
+                    true
+                } else {
+                    funnel_accepts_use(held.map(|s| &*s.item))
+                }
+            }
             Part::Basin => {
                 if held.is_some_and(|s| fluids::fluid_of_bucket(&s.item).is_some()) {
                     return true;
@@ -2619,6 +3044,249 @@ impl Game<'_> {
         });
     }
 
+    /// Up to `most` items matching `filter` out of the container at `at` through `face`
+    /// (Smart Chute / Brass Funnel extraction).
+    pub(super) fn tachyon_container_take_filtered(
+        &mut self,
+        at: (i32, i32, i32),
+        face: horizon_core::geometry::Direction,
+        most: u32,
+        filter: &str,
+    ) -> Option<ItemStack> {
+        use horizon_client::containers::BlockEntity;
+        use horizon_core::geometry::Direction;
+        if most == 0 {
+            return None;
+        }
+        let pos = [at.0, at.1, at.2];
+        if self.tachyon_chute(pos).is_some() {
+            let peek = self.tachyon_chute_peek(pos, most)?;
+            return (&*peek.item == filter)
+                .then(|| self.tachyon_chute_take(pos, most))
+                .flatten();
+        }
+        if self.tachyon_machine(pos) {
+            return self.tachyon_machine_take_filtered(pos, most, filter);
+        }
+        let Some(entity) = self.world.block_entities.get(&at) else {
+            return (filter == "minecraft:bone_meal")
+                .then(|| self.tachyon_container_take(at, face, most))
+                .flatten();
+        };
+        if let BlockEntity::Furnace(f) = entity {
+            let slots = &f.items;
+            let matches_furnace = match face {
+                Direction::Down => slots.get(2).and_then(|s| s.as_ref()).map_or_else(
+                    || {
+                        slots.get(1).and_then(|s| s.as_ref()).is_some_and(|s| {
+                            &*s.item == filter
+                                && matches!(&*s.item, "minecraft:water_bucket" | "minecraft:bucket")
+                        })
+                    },
+                    |s| &*s.item == filter,
+                ),
+                Direction::Up => slots
+                    .first()
+                    .and_then(|s| s.as_ref())
+                    .is_some_and(|s| &*s.item == filter),
+                _ => slots.get(1).and_then(|s| s.as_ref()).is_some_and(|s| {
+                    &*s.item == filter
+                        && matches!(&*s.item, "minecraft:water_bucket" | "minecraft:bucket")
+                }),
+            };
+            return matches_furnace
+                .then(|| self.tachyon_container_take(at, face, most))
+                .flatten();
+        }
+        if !matches!(entity, BlockEntity::Brewing(_))
+            && let Some(slots) = self.tachyon_arm_container_slots(at)
+        {
+            for index in 0..slots {
+                let Some(got) = self.tachyon_arm_container_take(at, index, most, true) else {
+                    continue;
+                };
+                if &*got.item == filter {
+                    return self.tachyon_arm_container_take(at, index, most, false);
+                }
+            }
+            return None;
+        }
+        if entity.slots().iter().flatten().any(|s| &*s.item == filter)
+            && let Some(taken) = self.tachyon_container_take(at, face, most)
+        {
+            if &*taken.item == filter {
+                return Some(taken);
+            }
+            let _ = self.tachyon_container_put(at, taken, face);
+        }
+        None
+    }
+
+    fn tachyon_machine_take_filtered(
+        &mut self,
+        pos: [i32; 3],
+        most: u32,
+        filter: &str,
+    ) -> Option<ItemStack> {
+        let kinds = self.tachyon_kinds()?;
+        let part = kinds.part(self.world.block(pos[0], pos[1], pos[2]).0);
+        let dimension = self.dim.id();
+        let root = self.save.root.clone();
+        let create = self.tachyon_create_recipes();
+        OWNERS.with_borrow_mut(|owners| {
+            let owner = owners.entry(dimension).or_default();
+            owner.load(&root, dimension);
+            if let Some(Part::Vault(_)) = part {
+                for p in vault::joined(&owner.index.parts, pos) {
+                    let Some(v) = owner.vaults.get_mut(&p) else {
+                        continue;
+                    };
+                    if let Some(idx) = v.slots.iter().position(|h| h.item == filter) {
+                        let slot = &mut v.slots[idx];
+                        let n = slot.count.min(most);
+                        slot.count -= n;
+                        if slot.count == 0 {
+                            v.slots.remove(idx);
+                        }
+                        if v.is_empty() {
+                            owner.vaults.remove(&p);
+                        }
+                        owner.mills_changed = true;
+                        return Some(ItemStack::new(filter, n));
+                    }
+                }
+                return None;
+            }
+            if part == Some(Part::Basin) {
+                let b = owner.basins.get_mut(&pos)?;
+                let idx = b
+                    .outputs
+                    .iter()
+                    .position(|h| h.item == filter && !fluids::is_fluid(&h.item))?;
+                let slot = &mut b.outputs[idx];
+                let n = slot.count.min(most);
+                slot.count -= n;
+                if slot.count == 0 {
+                    b.outputs.remove(idx);
+                }
+                if b.is_empty() {
+                    owner.basins.remove(&pos);
+                }
+                owner.mills_changed = true;
+                return Some(ItemStack::new(filter, n));
+            }
+            let mill = owner.mills.get_mut(&pos)?;
+            if let Some(idx) = mill.outputs.iter().position(|h| h.item == filter) {
+                let slot = &mut mill.outputs[idx];
+                let n = slot.count.min(most);
+                slot.count -= n;
+                if slot.count == 0 {
+                    mill.outputs.remove(idx);
+                }
+                if mill.is_empty() {
+                    owner.mills.remove(&pos);
+                }
+                owner.mills_changed = true;
+                return Some(ItemStack::new(filter, n));
+            }
+            if part != Some(Part::Depot) {
+                return None;
+            }
+            let input_item = mill.input.as_ref().filter(|h| h.item == filter)?;
+            let pressed = millstone::press_recipe(&input_item.item).is_some()
+                || create.pressing(&input_item.item).is_some()
+                || sequenced_depot_step_ready(
+                    mill,
+                    &owner.sequenced_progress,
+                    pos,
+                    &create,
+                    create_recipes::SequencedAction::Pressing,
+                );
+            let worked = || worker(&owner.index.parts, pos, |q| matches!(q, Part::Press(_)));
+            let above = [pos[0], pos[1] + 2, pos[2]];
+            let deployed = matches!(
+                owner.index.parts.get(&above),
+                Some(Part::Deployer { facing: Dir::Down, .. })
+            ) && owner
+                .deployers
+                .get(&above)
+                .and_then(|d| d.held.as_ref())
+                .is_some_and(|held| {
+                    create.deploying(&input_item.item, &held.item).is_some()
+                        || sequenced_depot_step_ready(
+                            mill,
+                            &owner.sequenced_progress,
+                            pos,
+                            &create,
+                            create_recipes::SequencedAction::Deploying { held: &held.item },
+                        )
+                });
+            let spouted = owner.index.parts.get(&above) == Some(&Part::Spout);
+            if (pressed && worked().is_some()) || deployed || spouted {
+                return None;
+            }
+            let h = mill.input.as_mut()?;
+            let n = h.count.min(most);
+            h.count -= n;
+            if h.count == 0 {
+                mill.input = None;
+                mill.progress = 0.0;
+            }
+            if mill.is_empty() {
+                owner.mills.remove(&pos);
+            }
+            owner.mills_changed = true;
+            Some(ItemStack::new(filter, n))
+        })
+    }
+
+    /// Whether the depot at `depot` can advance a sequenced assembly recipe on `action`.
+    fn tachyon_sequenced_depot_ready(
+        &self,
+        depot: [i32; 3],
+        action: create_recipes::SequencedAction<'_>,
+    ) -> bool {
+        let create = self.tachyon_create_recipes();
+        let dimension = self.dim.id();
+        OWNERS.with_borrow(|owners| {
+            let Some(owner) = owners.get(dimension) else { return false };
+            if owner.index.parts.get(&depot) != Some(&Part::Depot) {
+                return false;
+            }
+            let Some(mill) = owner.mills.get(&depot) else { return false };
+            sequenced_depot_step_ready(mill, &owner.sequenced_progress, depot, &create, action)
+        })
+    }
+
+    /// Advances one item on the depot at `depot` through its sequenced assembly step, returning
+    /// `(consume_held, consume_fluid)` if a step ran.
+    fn tachyon_sequenced_depot_work(
+        &mut self,
+        depot: [i32; 3],
+        action: create_recipes::SequencedAction<'_>,
+    ) -> Option<(bool, u32)> {
+        let create = self.tachyon_create_recipes();
+        let dimension = self.dim.id();
+        let roll = self.world.random.next_float();
+        OWNERS.with_borrow_mut(|owners| {
+            let owner = owners.get_mut(dimension)?;
+            if owner.index.parts.get(&depot) != Some(&Part::Depot) {
+                return None;
+            }
+            let mill = owner.mills.get_mut(&depot)?;
+            let out = advance_depot_sequenced(
+                mill,
+                &mut owner.sequenced_progress,
+                depot,
+                &create,
+                action,
+                roll,
+            )?;
+            owner.mills_changed = true;
+            Some(out)
+        })
+    }
+
     /// Each tick of every game: a client's index follows its world.
     pub(super) fn tachyon_tick(&mut self) {
         self.tachyon_quests_tick();
@@ -2696,6 +3364,8 @@ impl Game<'_> {
         let mut arms: Vec<([i32; 3], f32, arm::Snapshot)> = Vec::new();
         let mut strokes: HashMap<[i32; 3], ([i32; 2], bool)> = HashMap::new();
         let mut hoses: HashMap<[i32; 3], f32> = HashMap::new();
+        let mut gauges: HashMap<[i32; 3], kinetic::Stress> = HashMap::new();
+        let mut steam_shafts: HashMap<[i32; 3], (Axis, f32)> = HashMap::new();
         self.tachyon_view(|index, shown| {
             for (pos, part) in &index.parts {
                 let at = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2]));
@@ -2712,6 +3382,19 @@ impl Game<'_> {
                 }
                 let speed = shown.speeds.get(pos).copied().unwrap_or([0.0; 2]);
                 let create = kinds.create(self.world.block(pos[0], pos[1], pos[2]).0);
+                if matches!(part, Part::SpeedGauge(_) | Part::StressGauge(_))
+                    && let Some(s) = shown.stress.get(pos)
+                {
+                    gauges.insert(*pos, *s);
+                }
+                if let Part::SteamEngine(facing) = *part {
+                    let dir = facing.offset();
+                    let shaft_pos = [pos[0] + dir[0] * 2, pos[1] + dir[1] * 2, pos[2] + dir[2] * 2];
+                    if let Some(Part::PoweredShaft(a) | Part::Shaft(a)) = index.parts.get(&shaft_pos) {
+                        let s = shown.speeds.get(&shaft_pos).map_or(0.0, |v| v[0]);
+                        steam_shafts.insert(*pos, (*a, s));
+                    }
+                }
                 if matches!(part, Part::HosePulley(_)) {
                     hoses.insert(*pos, shown.hoses.get(pos).map_or(0.0, |o| *o as f32 / 1000.0));
                 }
@@ -2965,6 +3648,171 @@ impl Game<'_> {
                 );
                 let state = self.tachyon_model(speed_controller::BRACKET_MODEL);
                 self.submit_item_world(&state, pose, light, out);
+            }
+            // GaugeRenderer's dial and head on horizontal faces across its shaft.
+            if create && matches!(part, Part::SpeedGauge(_) | Part::StressGauge(_)) {
+                let (axis, is_speed) = match part {
+                    Part::SpeedGauge(a) => (a, true),
+                    Part::StressGauge(a) => (a, false),
+                    _ => unreachable!(),
+                };
+                let progress = if is_speed {
+                    (speed[0].abs() / kinetic::MAX_SPEED).clamp(0.0, 1.0)
+                } else {
+                    gauges.get(&pos).map_or(0.0, |s| {
+                        if s.capacity <= 0.0 {
+                            if s.load > 0.0 { 1.0 } else { 0.0 }
+                        } else {
+                            (s.load / s.capacity).clamp(0.0, 1.0)
+                        }
+                    })
+                };
+                let head_state = self.tachyon_model(if is_speed {
+                    "create:block/gauge/speedometer/head"
+                } else {
+                    "create:block/gauge/stressometer/head"
+                });
+                let dial_state = self.tachyon_model("create:block/gauge/dial");
+                let dial_pivot = Vec3::new(0.0, 5.75 / 16.0, 5.75 / 16.0);
+                for facing in [Dir::North, Dir::South, Dir::East, Dir::West] {
+                    if facing.axis() == axis {
+                        continue;
+                    }
+                    let yaw = match facing {
+                        Dir::East => 0.0,
+                        Dir::North => std::f32::consts::FRAC_PI_2,
+                        Dir::West => std::f32::consts::PI,
+                        Dir::South => -std::f32::consts::FRAC_PI_2,
+                        _ => 0.0,
+                    };
+                    let face_pose = Mat4::from_translation(origin + Vec3::splat(0.5))
+                        * Mat4::from_rotation_y(yaw)
+                        * Mat4::from_translation(Vec3::splat(-0.5));
+                    let dial_pose = face_pose
+                        * Mat4::from_translation(dial_pivot)
+                        * Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2 * progress)
+                        * Mat4::from_translation(-dial_pivot);
+                    self.submit_item_world(&dial_state, dial_pose, light, out);
+                    self.submit_item_world(&head_state, face_pose, light, out);
+                }
+            }
+            // BlazeBurnerRenderer's bobbing head and orbiting rods by charge heat level.
+            if create && part == Part::Burner {
+                let charge = self
+                    .native_block_property(pos, "charges")
+                    .and_then(|c| c.parse::<u8>().ok())
+                    .unwrap_or(0);
+                if charge >= 1 {
+                    let seed = (pos[0].wrapping_mul(73856093)
+                        ^ pos[1].wrapping_mul(19349663)
+                        ^ pos[2].wrapping_mul(83492791))
+                    .rem_euclid(13) as f32;
+                    let render_tick = ticks as f32 + seed * 16.0;
+                    let mult = if charge >= 2 { 64.0 } else { 16.0 };
+                    let head_y = (render_tick / 16.0).sin() / mult;
+                    let blaze_model = match charge {
+                        1 => "create:block/blaze_burner/blaze/inert",
+                        2 => "create:block/blaze_burner/blaze/idle",
+                        3 => "create:block/blaze_burner/blaze/active",
+                        _ => "create:block/blaze_burner/blaze/super_active",
+                    };
+                    let head_state = self.tachyon_model(blaze_model);
+                    self.submit_item_world(
+                        &head_state,
+                        Mat4::from_translation(origin + Vec3::new(0.0, head_y, 0.0)),
+                        light,
+                        out,
+                    );
+                    if charge >= 2 {
+                        let offset1 = (render_tick / 16.0 + std::f32::consts::PI).sin() / mult;
+                        let offset2 = (render_tick / 16.0 + std::f32::consts::FRAC_PI_2).sin() / mult;
+                        let (small, large) = if charge >= 4 {
+                            (
+                                "create:block/blaze_burner/superheated_rods_small",
+                                "create:block/blaze_burner/superheated_rods_large",
+                            )
+                        } else {
+                            (
+                                "create:block/blaze_burner/rods_small",
+                                "create:block/blaze_burner/rods_large",
+                            )
+                        };
+                        let s_state = self.tachyon_model(small);
+                        let l_state = self.tachyon_model(large);
+                        self.submit_item_world(
+                            &s_state,
+                            Mat4::from_translation(origin + Vec3::new(0.0, offset1 + 0.125, 0.0)),
+                            light,
+                            out,
+                        );
+                        self.submit_item_world(
+                            &l_state,
+                            Mat4::from_translation(origin + Vec3::new(0.0, offset2 + 0.125, 0.0)),
+                            light,
+                            out,
+                        );
+                    }
+                }
+            }
+            // SteamEngineRenderer's piston, linkage, and shaft connector.
+            if create
+                && let Part::SteamEngine(facing) = part
+                && let Some(&(shaft_axis, shaft_speed)) = steam_shafts.get(&pos)
+            {
+                use std::f32::consts::{FRAC_PI_2, PI};
+                let facing_axis = facing.axis();
+                let roll90 = (facing_axis != Axis::Y && shaft_axis == Axis::Y)
+                    || (facing_axis == Axis::Y && shaft_axis == Axis::Z);
+                let dir = facing.offset();
+                let shaft_pos = [pos[0] + dir[0] * 2, pos[1] + dir[1] * 2, pos[2] + dir[2] * 2];
+                let angle_deg = kinetic::angle(
+                    Part::PoweredShaft(shaft_axis),
+                    shaft_pos,
+                    shaft_speed,
+                    ticks,
+                );
+                let (piston_y, linkage_deg) = steam::piston_travel(angle_deg);
+                let yaw = match facing {
+                    Dir::North => PI,
+                    Dir::East => FRAC_PI_2,
+                    Dir::West => -FRAC_PI_2,
+                    _ => 0.0,
+                };
+                let pitch = match facing {
+                    Dir::Up => 0.0,
+                    Dir::Down => PI,
+                    _ => FRAC_PI_2,
+                };
+                let base = Mat4::from_translation(origin + Vec3::splat(0.5))
+                    * Mat4::from_rotation_y(yaw)
+                    * Mat4::from_rotation_x(pitch)
+                    * Mat4::from_rotation_y(if roll90 { -FRAC_PI_2 } else { 0.0 })
+                    * Mat4::from_translation(Vec3::splat(-0.5));
+                let piston_state = self.tachyon_model("create:block/steam_engine/piston");
+                self.submit_item_world(
+                    &piston_state,
+                    base * Mat4::from_translation(Vec3::new(0.0, piston_y, 0.0)),
+                    light,
+                    out,
+                );
+                let link_pivot = Vec3::new(0.0, 4.0 / 16.0, 8.0 / 16.0);
+                let link_pose = base
+                    * Mat4::from_translation(Vec3::new(0.0, piston_y + 1.0, 0.0))
+                    * Mat4::from_translation(link_pivot)
+                    * Mat4::from_rotation_x(linkage_deg.to_radians())
+                    * Mat4::from_translation(-link_pivot);
+                let link_state = self.tachyon_model("create:block/steam_engine/linkage");
+                self.submit_item_world(&link_state, link_pose, light, out);
+                let conn_pose = base
+                    * Mat4::from_translation(Vec3::new(0.0, 2.0, 0.0))
+                    * Mat4::from_translation(Vec3::splat(0.5))
+                    * Mat4::from_rotation_x(-(angle_deg.to_radians() + FRAC_PI_2))
+                    * Mat4::from_translation(Vec3::splat(-0.5));
+                let conn_state = self.tachyon_model("create:block/steam_engine/shaft_connector");
+                let conn_light = horizon_client::block_entity_render::vertex_light(
+                    self.world.light(shaft_pos[0], shaft_pos[1], shaft_pos[2]),
+                );
+                self.submit_item_world(&conn_state, conn_pose, conn_light, out);
             }
         }
         for (pos, speed, arm) in arms {
@@ -3223,6 +4071,7 @@ impl Game<'_> {
             Part::Funnel(_) => ("funnel", "Funnel"),
             Part::CrushingWheel(_) => ("crushing_wheel", "Crushing Wheel"),
             Part::Chute(_, _) => ("chute", "Chute"),
+            Part::SmartChute => ("smart_chute", "Smart Chute"),
         };
         // Create's blocks by Create's names.
         let state = self.world.block(hit.pos[0], hit.pos[1], hit.pos[2]);
@@ -3283,6 +4132,7 @@ impl Game<'_> {
             Part::Depot
                 | Part::Basin
                 | Part::Chute(_, _)
+                | Part::SmartChute
                 | Part::Tank
                 | Part::CreativeTank
                 | Part::Spout
@@ -3305,6 +4155,48 @@ impl Game<'_> {
             } else {
                 names.join(", ")
             };
+        }
+        let (owner_filter, deployer_hud) = OWNERS.with_borrow(|owners| {
+            let o = owners.get(self.dim.id());
+            let filter = o.and_then(|o| o.filters.get(&hit.pos)).cloned();
+            let dep = o.and_then(|o| o.deployers.get(&hit.pos)).map(|d| {
+                (
+                    d.punch,
+                    d.damage,
+                    d.filter.clone(),
+                    d.held.as_ref().map(|h| h.item.clone()),
+                )
+            });
+            (filter, dep)
+        });
+        if matches!(part, Part::SmartChute | Part::Funnel(_) | Part::SmartPipe(_))
+            && let Some(f) = owner_filter
+        {
+            let label = if matches!(part, Part::SmartPipe(_)) {
+                fluids::fluid_name(&fluids::stack_name(&f)).to_owned()
+            } else {
+                self.tachyon_item_name(&f)
+            };
+            state = format!("{state} | filter: {label}");
+        }
+        if matches!(part, Part::Deployer { .. })
+            && let Some((punch, damage, d_filter, d_held)) = deployer_hud
+        {
+            if punch {
+                state = format!("{state} | punch");
+            }
+            if let Some(f) = d_filter {
+                let label = self.tachyon_item_name(&f);
+                state = format!("{state} | filter: {label}");
+            }
+            if damage > 0
+                && let Some(item) = d_held
+            {
+                let max_dur = self.items().get(&item).map_or(0, |i| i.max_damage);
+                if max_dur > damage {
+                    state = format!("{state} | {}/{max_dur}", max_dur - damage);
+                }
+            }
         }
         // A burner shows its heat rather than a speed; a basin shows the
         // heat of the block under it beside what it holds.

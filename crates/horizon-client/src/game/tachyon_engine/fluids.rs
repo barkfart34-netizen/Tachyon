@@ -19,6 +19,7 @@
 //! fluids aren't drawn in pipes, tanks or basins (the goggles read them), no valves, smart
 //! pipes, hose pulleys or potions, and branching pipes fill their ends in turn, not by
 //! Create's pressure split.
+use super::create_recipes::SequencedAction;
 use super::kinetic::{Axis, Dir, Part};
 use super::millstone::Held;
 use horizon_client::items::ItemStack;
@@ -31,6 +32,8 @@ pub(super) const FLUID: &str = "fluid:";
 pub(super) const RANGE: usize = 16;
 /// A bucket, in mB.
 pub(super) const BUCKET: u32 = 1000;
+/// A bottle, in mB (`PotionFluidHandler`: 250 mB = 4 per bucket).
+pub(super) const BOTTLE: u32 = 250;
 /// `FILLING_TIME` of the spout and the item drain.
 pub(super) const FILLING_TIME: u32 = 20;
 
@@ -82,6 +85,33 @@ pub(super) fn bucket_of(fluid: &str) -> Option<&'static str> {
 /// The fluid a filled bucket empties (GenericItemEmptying).
 pub(super) fn fluid_of_bucket(item: &str) -> Option<&'static str> {
     FLUIDS.into_iter().find(|f| bucket_of(f) == Some(item))
+}
+
+/// The bottle a fluid fills (250 mB for water, honey, or Builder's Tea).
+pub(super) fn bottle_of(fluid: &str) -> Option<&'static str> {
+    Some(match fluid.strip_prefix(FLUID).unwrap_or(fluid) {
+        "minecraft:water" => "minecraft:potion",
+        "create:honey" => "minecraft:honey_bottle",
+        "create:tea" => "create:builders_tea",
+        _ => return None,
+    })
+}
+
+/// The fluid a filled bottle empties (250 mB).
+pub(super) fn fluid_of_bottle(item: &str) -> Option<&'static str> {
+    Some(match item {
+        "minecraft:potion" => "minecraft:water",
+        "minecraft:honey_bottle" => "create:honey",
+        "create:builders_tea" => "create:tea",
+        _ => return None,
+    })
+}
+
+/// Canonical fluid ID for a Smart Fluid Pipe filter (`minecraft:water`,
+/// `fluid:minecraft:water`, or a filled bucket/bottle ID).
+pub(super) fn resolve_fluid_filter(filter: &str) -> &str {
+    let raw = filter.strip_prefix(FLUID).unwrap_or(filter);
+    fluid_of_bucket(raw).or_else(|| fluid_of_bottle(raw)).unwrap_or(raw)
 }
 
 /// A fluid's candidates for a fluid tag (`c:honey`, `minecraft:water`): Create's and
@@ -205,52 +235,114 @@ fn add(a: [i32; 3], d: Dir) -> [i32; 3] {
     [a[0] + o[0], a[1] + o[1], a[2] + o[2]]
 }
 
-/// The ends a pump at `pump` reaches out of its side `side`: what is right there, or through
-/// the pipes from there (within `RANGE`), nearest first.
-pub(super) fn ends(parts: &HashMap<[i32; 3], Part>, pump: [i32; 3], side: Dir) -> Vec<End> {
+fn pipe_mask(part: Part) -> Option<u8> {
+    match part {
+        Part::Pipe(m) => Some(m),
+        Part::SmartPipe(a) => Some(straight(a)),
+        _ => None,
+    }
+}
+
+fn smart_pipe_filter(
+    parts: &HashMap<[i32; 3], Part>,
+    filters: &HashMap<[i32; 3], String>,
+    pos: [i32; 3],
+) -> Option<String> {
+    matches!(parts.get(&pos), Some(Part::SmartPipe(_)))
+        .then(|| filters.get(&pos).map(|f| resolve_fluid_filter(f).to_owned()))
+        .flatten()
+}
+
+fn merge_filter(cur: Option<&str>, next: Option<&str>) -> Option<Option<String>> {
+    match (cur, next) {
+        (None, None) => Some(None),
+        (None, Some(b)) => Some(Some(b.to_owned())),
+        (Some(a), None) => Some(Some(a.to_owned())),
+        (Some(a), Some(b)) => (a == b).then(|| Some(a.to_owned())),
+    }
+}
+
+/// Like [`ends`], also carrying the canonical fluid filter constraint imposed by any
+/// `Part::SmartPipe` along each pipe path (conflicting smart-pipe filters prune that branch).
+pub(super) fn ends_constrained(
+    parts: &HashMap<[i32; 3], Part>,
+    filters: &HashMap<[i32; 3], String>,
+    pump: [i32; 3],
+    side: Dir,
+) -> Vec<(End, Option<String>)> {
     let first = add(pump, side);
     match parts.get(&first) {
         Some(Part::Tank | Part::CreativeTank | Part::Spout | Part::Drain | Part::Basin) => {
-            return vec![End::Holder(first)];
+            return vec![(End::Holder(first), None)];
         }
         Some(Part::HosePulley(f)) if super::hose::counter_clockwise(*f) == side.opposite() => {
-            return vec![End::Hose(first)];
+            return vec![(End::Hose(first), None)];
         }
-        Some(Part::Pipe(mask)) if mask & bit(side.opposite()) != 0 => {}
+        Some(part) if pipe_mask(*part).is_some_and(|mask| mask & bit(side.opposite()) != 0) => {}
         _ => return Vec::new(),
     }
-    let mut out = Vec::new();
-    let mut seen: HashSet<[i32; 3]> = HashSet::from([pump, first]);
-    let mut queue = VecDeque::from([(first, 1usize)]);
-    while let Some((p, distance)) = queue.pop_front() {
-        let Some(Part::Pipe(mask)) = parts.get(&p) else { continue };
+    let first_filter = smart_pipe_filter(parts, filters, first);
+    let mut out: Vec<(End, Option<String>)> = Vec::new();
+    let mut push_end = |end: End, filter: &Option<String>| {
+        let item = (end, filter.clone());
+        if !out.contains(&item) {
+            out.push(item);
+        }
+    };
+    let mut seen: HashSet<([i32; 3], Option<String>)> =
+        HashSet::from([(pump, None), (first, first_filter.clone())]);
+    let mut queue = VecDeque::from([(first, 1usize, first_filter)]);
+    while let Some((p, distance, filter)) = queue.pop_front() {
+        let Some(mask) = parts.get(&p).copied().and_then(pipe_mask) else {
+            continue;
+        };
         for d in Dir::ALL {
             if mask & bit(d) == 0 {
                 continue;
             }
             let q = add(p, d);
-            if q == pump || !seen.insert(q) {
+            if q == pump {
                 continue;
             }
             match parts.get(&q) {
-                Some(Part::Pipe(m)) if m & bit(d.opposite()) != 0 => {
-                    if distance < RANGE {
-                        queue.push_back((q, distance + 1));
+                Some(part) if pipe_mask(*part).is_some_and(|m| m & bit(d.opposite()) != 0) => {
+                    let q_filter = smart_pipe_filter(parts, filters, q);
+                    let Some(merged) = merge_filter(filter.as_deref(), q_filter.as_deref()) else {
+                        continue;
+                    };
+                    if distance < RANGE && seen.insert((q, merged.clone())) {
+                        queue.push_back((q, distance + 1, merged));
                     }
                 }
                 Some(Part::Tank | Part::CreativeTank | Part::Spout | Part::Drain | Part::Basin) => {
-                    out.push(End::Holder(q));
+                    push_end(End::Holder(q), &filter);
                 }
                 Some(Part::HosePulley(f)) if super::hose::counter_clockwise(*f) == d.opposite() => {
-                    out.push(End::Hose(q));
+                    push_end(End::Hose(q), &filter);
                 }
-                // Another pump, a pipe turned away, a closed valve or a pulley's side: no way on.
-                Some(Part::Pump(_) | Part::Pipe(_) | Part::Valve { .. } | Part::HosePulley(_)) => {}
-                _ => out.push(End::Open(q)),
+                // Another pump, a pipe turned away, a closed valve, a sideways smart pipe, or a pulley's side: no way on.
+                Some(
+                    Part::Pump(_)
+                    | Part::Pipe(_)
+                    | Part::SmartPipe(_)
+                    | Part::Valve { .. }
+                    | Part::HosePulley(_),
+                ) => {}
+                _ => push_end(End::Open(q), &filter),
             }
         }
     }
     out
+}
+
+/// The ends a pump at `pump` reaches out of its side `side`: what is right there, or through
+/// the pipes from there (within `RANGE`), nearest first.
+#[cfg(test)]
+pub(super) fn ends(parts: &HashMap<[i32; 3], Part>, pump: [i32; 3], side: Dir) -> Vec<End> {
+    ends_constrained(parts, &HashMap::new(), pump, side)
+        .into_iter()
+        .map(|(end, _)| end)
+        .collect()
 }
 
 /// `FluidNetwork.transferSpeed` for a pump at `speed`: mB a tick.
@@ -275,6 +367,8 @@ pub(super) enum TankAction {
     SetFluid(&'static str),
     PourBucket { fluid: &'static str },
     TakeBucket { full: &'static str, drain: bool },
+    PourBottle { fluid: &'static str },
+    TakeBottle { full: &'static str, drain: bool },
 }
 
 /// Computes what using `held_item` on `part` holding `tank` would do without mutating state.
@@ -285,12 +379,16 @@ pub(super) fn plan_tank_use(
     creative: bool,
 ) -> Option<TankAction> {
     if part == Part::CreativeTank {
-        if let Some(fluid) = fluid_of_bucket(held_item) {
+        if let Some(fluid) = fluid_of_bucket(held_item).or_else(|| fluid_of_bottle(held_item)) {
             return Some(TankAction::SetFluid(fluid));
         }
         if held_item == "minecraft:bucket" {
             let full = tank.and_then(|t| bucket_of(&t.fluid))?;
             return Some(TankAction::TakeBucket { full, drain: false });
+        }
+        if held_item == "minecraft:glass_bottle" {
+            let full = tank.and_then(|t| bottle_of(&t.fluid))?;
+            return Some(TankAction::TakeBottle { full, drain: false });
         }
         return None;
     }
@@ -301,11 +399,27 @@ pub(super) fn plan_tank_use(
         }
         return Some(TankAction::PourBucket { fluid });
     }
+    if let Some(fluid) = fluid_of_bottle(held_item) {
+        let cap = capacity(part);
+        if tank.is_some_and(|t| t.amount + BOTTLE > cap || (t.amount > 0 && t.fluid != fluid)) {
+            return None;
+        }
+        return Some(TankAction::PourBottle { fluid });
+    }
     if held_item == "minecraft:bucket" {
         let full = tank
             .filter(|t| t.amount >= BUCKET)
             .and_then(|t| bucket_of(&t.fluid))?;
         return Some(TankAction::TakeBucket {
+            full,
+            drain: !creative,
+        });
+    }
+    if held_item == "minecraft:glass_bottle" {
+        let full = tank
+            .filter(|t| t.amount >= BOTTLE)
+            .and_then(|t| bottle_of(&t.fluid))?;
+        return Some(TankAction::TakeBottle {
             full,
             drain: !creative,
         });
@@ -339,15 +453,16 @@ impl super::super::Game<'_> {
             return;
         }
         let dimension = self.native_dimension();
-        let (parts, pumps) = super::OWNERS.with_borrow(|owners| {
+        let (parts, filters, pumps) = super::OWNERS.with_borrow(|owners| {
             let Some(o) = owners.get(dimension) else {
-                return (HashMap::new(), Vec::new());
+                return (HashMap::new(), HashMap::new(), Vec::new());
             };
             let parts: HashMap<[i32; 3], Part> = (o.index.parts.iter())
                 .filter_map(|(p, part)| {
                     let turning = o.shown.speeds.get(p).is_some_and(|s| s[0] != 0.0);
                     let part = match *part {
                         Part::Pipe(_)
+                        | Part::SmartPipe(_)
                         | Part::Pump(_)
                         | Part::Tank
                         | Part::CreativeTank
@@ -355,7 +470,6 @@ impl super::super::Game<'_> {
                         | Part::Drain
                         | Part::Basin
                         | Part::HosePulley(_) => *part,
-                        Part::SmartPipe(a) => Part::Pipe(straight(a)),
                         // FluidValveBlockEntity: open while its shaft turns.
                         Part::Valve { facing, along_first } if turning => {
                             Part::Pipe(straight(valve_axis(facing, along_first)))
@@ -365,6 +479,12 @@ impl super::super::Game<'_> {
                     };
                     Some((*p, part))
                 })
+                .collect();
+            let filters: HashMap<[i32; 3], String> = o
+                .filters
+                .iter()
+                .filter(|(p, _)| matches!(parts.get(*p), Some(Part::SmartPipe(_))))
+                .map(|(p, f)| (*p, f.clone()))
                 .collect();
             let mut pumps: Vec<([i32; 3], Dir, f32)> = (parts.iter())
                 .filter_map(|(p, part)| match part {
@@ -376,15 +496,15 @@ impl super::super::Game<'_> {
                 })
                 .collect();
             pumps.sort_by_key(|p| p.0);
-            (parts, pumps)
+            (parts, filters, pumps)
         });
         self.tachyon_valves();
         if parts.is_empty() {
             return;
         }
         for (pos, facing, speed) in pumps {
-            let from = ends(&parts, pos, facing.opposite());
-            let to = ends(&parts, pos, facing);
+            let from = ends_constrained(&parts, &filters, pos, facing.opposite());
+            let to = ends_constrained(&parts, &filters, pos, facing);
             self.tachyon_pump(&parts, &from, &to, rate(speed));
         }
         self.tachyon_tanks_settle(&parts);
@@ -392,17 +512,27 @@ impl super::super::Game<'_> {
         self.tachyon_drains(&parts);
     }
 
-    /// Moves up to `rate` mB from the first of `from` that has fluid into `to`, in turn.
-    fn tachyon_pump(&mut self, parts: &HashMap<[i32; 3], Part>, from: &[End], to: &[End], rate: u32) {
-        for source in from {
-            let Some((fluid, have)) = self.tachyon_fluid_peek(parts, *source) else {
+    /// Moves up to `rate` mB from the first of `from` that has fluid into `to`, in turn,
+    /// honoring any `SmartPipe` filter constraint along either path.
+    fn tachyon_pump(
+        &mut self,
+        parts: &HashMap<[i32; 3], Part>,
+        from: &[(End, Option<String>)],
+        to: &[(End, Option<String>)],
+        rate: u32,
+    ) {
+        for (source, src_filter) in from {
+            let Some((fluid, have)) = self.tachyon_fluid_peek(parts, *source, src_filter.as_deref()) else {
                 continue;
             };
             let mut left = have.min(rate);
             let mut moved = 0;
-            for target in to {
+            for (target, dst_filter) in to {
                 if left == 0 {
                     break;
+                }
+                if dst_filter.as_deref().is_some_and(|f| f != fluid) {
+                    continue;
                 }
                 let n = self.tachyon_fluid_offer(parts, *target, &fluid, left);
                 left -= n;
@@ -415,8 +545,14 @@ impl super::super::Game<'_> {
         }
     }
 
-    /// What fluid an end could give, and how much.
-    fn tachyon_fluid_peek(&mut self, parts: &HashMap<[i32; 3], Part>, end: End) -> Option<(String, u32)> {
+    /// What fluid an end could give, and how much (honoring an optional SmartPipe constraint
+    /// before taking any world source block).
+    fn tachyon_fluid_peek(
+        &mut self,
+        parts: &HashMap<[i32; 3], Part>,
+        end: End,
+        filter: Option<&str>,
+    ) -> Option<(String, u32)> {
         let dimension = self.native_dimension();
         match end {
             End::Holder(p) => super::OWNERS.with_borrow(|owners| {
@@ -424,25 +560,32 @@ impl super::super::Game<'_> {
                 if parts.get(&p) == Some(&Part::Basin) {
                     let b = o.basins.get(&p)?;
                     let h = b.outputs.iter().find(|h| is_fluid(&h.item))?;
-                    return Some((h.item[FLUID.len()..].to_owned(), h.count));
+                    let fluid = &h.item[FLUID.len()..];
+                    return filter.is_none_or(|f| f == fluid).then(|| (fluid.to_owned(), h.count));
                 }
                 let t = o.tanks.get(&p)?;
+                if t.amount == 0 || filter.is_some_and(|f| f != t.fluid) {
+                    return None;
+                }
                 // CreativeFluidTankBlockEntity: never runs out.
                 if parts.get(&p) == Some(&Part::CreativeTank) {
-                    return (t.amount > 0).then(|| (t.fluid.clone(), 64 * BUCKET));
+                    return Some((t.fluid.clone(), 64 * BUCKET));
                 }
-                (t.amount > 0).then(|| (t.fluid.clone(), t.amount))
+                Some((t.fluid.clone(), t.amount))
             }),
             End::Open(p) => {
                 let buffered = super::OWNERS.with_borrow(|owners| {
                     owners.get(dimension).and_then(|o| o.open_ends.get(&p)).filter(|t| t.amount > 0).cloned()
                 });
                 if let Some(t) = buffered {
-                    return Some((t.fluid, t.amount));
+                    return filter.is_none_or(|f| f == t.fluid).then_some((t.fluid, t.amount));
                 }
                 let Space::Source(fluid) = self.tachyon_space(p) else {
                     return None;
                 };
+                if filter.is_some_and(|f| f != fluid) {
+                    return None;
+                }
                 // Water without end (Create's bottomless water); other sources are taken.
                 if fluid != "minecraft:water" {
                     let air = self.pack.assets.registry.default_state("minecraft:air")?;
@@ -456,7 +599,9 @@ impl super::super::Game<'_> {
                     Some((fluid.to_owned(), BUCKET))
                 })
             }
-            End::Hose(p) => self.tachyon_hose_peek(p),
+            End::Hose(p) => self
+                .tachyon_hose_peek(p)
+                .filter(|(fluid, _)| filter.is_none_or(|f| f == fluid)),
         }
     }
 
@@ -597,7 +742,7 @@ impl super::super::Game<'_> {
     }
 
     /// The fill a spout's fluid gives the item `item`: its fluid amount and what it makes
-    /// (Create's filling recipes, then a bucket).
+    /// (Create's filling recipes, then a bucket or bottle).
     fn tachyon_filling(&mut self, item: &str, fluid: &str) -> Option<(u32, Vec<Held>)> {
         let recipes = self.tachyon_create_recipes();
         if let Some(r) = recipes.filling.iter().find(|r| r.fluid == fluid && r.input.iter().any(|i| i == item)) {
@@ -610,11 +755,17 @@ impl super::super::Game<'_> {
                 return Some((BUCKET, vec![Held { item: full.to_owned(), count: 1 }]));
             }
         }
+        if item == "minecraft:glass_bottle" {
+            let full = bottle_of(fluid)?;
+            if self.res.items().get(full).is_some() {
+                return Some((BOTTLE, vec![Held { item: full.to_owned(), count: 1 }]));
+            }
+        }
         None
     }
 
     /// What an item empties into: the item left and the fluid (Create's emptying recipes,
-    /// then a bucket).
+    /// then a bucket or bottle).
     fn tachyon_emptying(&mut self, item: &str) -> Option<(Held, String, u32)> {
         let recipes = self.tachyon_create_recipes();
         if let Some(r) = recipes.emptying.iter().find(|r| r.input.iter().any(|i| i == item)) {
@@ -626,12 +777,15 @@ impl super::super::Game<'_> {
                 fluid.count,
             ));
         }
-        let fluid = fluid_of_bucket(item)?;
-        Some((Held { item: "minecraft:bucket".into(), count: 1 }, fluid.to_owned(), BUCKET))
+        if let Some(fluid) = fluid_of_bucket(item) {
+            return Some((Held { item: "minecraft:bucket".into(), count: 1 }, fluid.to_owned(), BUCKET));
+        }
+        let fluid = fluid_of_bottle(item)?;
+        Some((Held { item: "minecraft:glass_bottle".into(), count: 1 }, fluid.to_owned(), BOTTLE))
     }
 
     /// Each spout fills one item of the stack on the depot two blocks under it, in
-    /// `FILLING_TIME` ticks, when it holds the fluid for it.
+    /// `FILLING_TIME` ticks, when it holds the fluid for it (regular filling or sequenced assembly).
     fn tachyon_spouts(&mut self, parts: &HashMap<[i32; 3], Part>) {
         let dimension = self.native_dimension();
         let mut spouts: Vec<[i32; 3]> = (parts.iter()).filter(|(_, p)| **p == Part::Spout).map(|(p, _)| *p).collect();
@@ -646,24 +800,58 @@ impl super::super::Game<'_> {
                 let item = o.and_then(|o| o.mills.get(&depot)).and_then(|m| m.input.as_ref()).map(|h| h.item.clone());
                 (item, o.and_then(|o| o.tanks.get(&pos)).cloned().unwrap_or_default())
             });
-            let fill = item.as_deref().filter(|_| tank.amount > 0).and_then(|i| self.tachyon_filling(i, &tank.fluid));
-            let Some((amount, made)) = fill.filter(|(amount, _)| tank.amount >= *amount) else {
+            let fill = item
+                .as_deref()
+                .filter(|_| tank.amount > 0)
+                .and_then(|i| self.tachyon_filling(i, &tank.fluid))
+                .filter(|(amount, _)| tank.amount >= *amount);
+            let seq_ready = fill.is_none()
+                && tank.amount > 0
+                && self.tachyon_sequenced_depot_ready(
+                    depot,
+                    SequencedAction::Filling { fluid: &tank.fluid, amount: tank.amount },
+                );
+            if fill.is_none() && !seq_ready {
                 super::OWNERS.with_borrow_mut(|owners| {
                     if let Some(o) = owners.get_mut(dimension) {
                         o.spouting.remove(&pos);
                     }
                 });
                 continue;
-            };
-            let input = item.unwrap_or_default();
-            super::OWNERS.with_borrow_mut(|owners| {
-                let Some(o) = owners.get_mut(dimension) else { return };
+            }
+            let ready = super::OWNERS.with_borrow_mut(|owners| {
+                let Some(o) = owners.get_mut(dimension) else { return false };
                 let ticks = o.spouting.entry(pos).or_insert(0);
                 *ticks += 1;
                 if *ticks < FILLING_TIME {
-                    return;
+                    return false;
                 }
                 o.spouting.remove(&pos);
+                true
+            });
+            if !ready {
+                continue;
+            }
+            if seq_ready {
+                if let Some((_, used)) = self.tachyon_sequenced_depot_work(
+                    depot,
+                    SequencedAction::Filling { fluid: &tank.fluid, amount: tank.amount },
+                ) {
+                    super::OWNERS.with_borrow_mut(|owners| {
+                        if let Some(o) = owners.get_mut(dimension)
+                            && let Some(t) = o.tanks.get_mut(&pos)
+                        {
+                            t.drain(used);
+                            o.mills_changed = true;
+                        }
+                    });
+                }
+                continue;
+            }
+            let Some((amount, made)) = fill else { continue };
+            let input = item.unwrap_or_default();
+            super::OWNERS.with_borrow_mut(|owners| {
+                let Some(o) = owners.get_mut(dimension) else { return };
                 let Some(mill) = o.mills.get_mut(&depot) else { return };
                 let Some(h) = mill.input.as_mut().filter(|h| h.item == input) else { return };
                 h.count -= 1;
@@ -727,14 +915,23 @@ impl super::super::Game<'_> {
         }
     }
 
-    /// A bucket used on a tank or a spout: a full one pours in, an empty one takes a bucket
-    /// out. Whether it did.
+    /// A bucket or bottle used on a tank or a spout: a full one pours in, an empty one
+    /// takes one out. Whether it did.
     pub(super) fn tachyon_use_tank(&mut self, pos: [i32; 3], part: Part) -> bool {
         let dimension = self.native_dimension();
         let Some(held) = self.held().map(|s| s.item.to_string()) else {
             return false;
         };
         let creative = self.creative;
+        let pre = super::OWNERS.with_borrow(|owners| {
+            let o = owners.get(dimension)?;
+            plan_tank_use(part, o.tanks.get(&pos), &held, creative)
+        });
+        if let Some(TankAction::TakeBottle { full, .. }) = pre
+            && self.res.items().get(full).is_none()
+        {
+            return false;
+        }
         let action = super::OWNERS.with_borrow_mut(|owners| {
             let o = owners.get_mut(dimension)?;
             let tank = o.tanks.get(&pos);
@@ -759,6 +956,15 @@ impl super::super::Game<'_> {
                     o.mills_changed = true;
                 }
                 TankAction::TakeBucket { drain: false, .. } => {}
+                TankAction::PourBottle { fluid } => {
+                    o.tanks.entry(pos).or_default().fill(fluid, BOTTLE, capacity(part));
+                    o.mills_changed = true;
+                }
+                TankAction::TakeBottle { drain: true, .. } => {
+                    o.tanks.get_mut(&pos)?.drain(BOTTLE);
+                    o.mills_changed = true;
+                }
+                TankAction::TakeBottle { drain: false, .. } => {}
             }
             Some(act)
         });
@@ -771,7 +977,14 @@ impl super::super::Game<'_> {
                 }
                 true
             }
-            Some(TankAction::TakeBucket { full, .. }) => {
+            Some(TankAction::PourBottle { .. }) => {
+                if !creative {
+                    self.tachyon_spend_held(1);
+                    self.give_or_drop(ItemStack::new("minecraft:glass_bottle", 1));
+                }
+                true
+            }
+            Some(TankAction::TakeBucket { full, .. } | TankAction::TakeBottle { full, .. }) => {
                 self.filled_result(ItemStack::new(full, 1));
                 true
             }
@@ -1085,5 +1298,57 @@ mod tests {
         );
         t.amount = capacity(Part::Tank);
         assert_eq!(plan_tank_use(Part::Tank, Some(&t), "minecraft:water_bucket", false), None);
+    }
+
+    #[test]
+    fn smart_pipe_filters_and_bottles_behave_as_expected() {
+        // Pump(East) -> Pipe -> split north/south via SmartPipes into tanks.
+        let parts = HashMap::from([
+            ([0, 0, 0], Part::Pump(Dir::East)),
+            ([1, 0, 0], pipe(&[Dir::West, Dir::North, Dir::South])),
+            ([1, 0, -1], Part::SmartPipe(Axis::Z)),
+            ([1, 0, -2], Part::Tank),
+            ([1, 0, 1], Part::SmartPipe(Axis::Z)),
+            ([1, 0, 2], Part::Tank),
+        ]);
+        let filters = HashMap::from([
+            ([1, 0, -1], "minecraft:water_bucket".to_owned()),
+            ([1, 0, 1], "minecraft:lava".to_owned()),
+        ]);
+        assert_eq!(
+            ends_constrained(&parts, &filters, [0, 0, 0], Dir::East),
+            vec![
+                (End::Holder([1, 0, -2]), Some("minecraft:water".to_owned())),
+                (End::Holder([1, 0, 2]), Some("minecraft:lava".to_owned())),
+            ]
+        );
+        // Conflicting SmartPipes in series prune the branch.
+        let series = HashMap::from([
+            ([0, 0, 0], Part::Pump(Dir::East)),
+            ([1, 0, 0], Part::SmartPipe(Axis::X)),
+            ([2, 0, 0], Part::SmartPipe(Axis::X)),
+            ([3, 0, 0], Part::Tank),
+        ]);
+        let conflict = HashMap::from([
+            ([1, 0, 0], "minecraft:water".to_owned()),
+            ([2, 0, 0], "minecraft:lava".to_owned()),
+        ]);
+        assert!(ends_constrained(&series, &conflict, [0, 0, 0], Dir::East).is_empty());
+
+        // Bottle filling / emptying (250 mB) helpers.
+        assert_eq!(BOTTLE, 250);
+        assert_eq!(bottle_of("minecraft:water"), Some("minecraft:potion"));
+        assert_eq!(bottle_of("create:honey"), Some("minecraft:honey_bottle"));
+        assert_eq!(fluid_of_bottle("minecraft:honey_bottle"), Some("create:honey"));
+        assert_eq!(fluid_of_bottle("create:builders_tea"), Some("create:tea"));
+        let honey = Tank { fluid: "create:honey".into(), amount: 500 };
+        assert_eq!(
+            plan_tank_use(Part::Tank, Some(&honey), "minecraft:glass_bottle", false),
+            Some(TankAction::TakeBottle { full: "minecraft:honey_bottle", drain: true })
+        );
+        assert_eq!(
+            plan_tank_use(Part::Tank, Some(&honey), "minecraft:honey_bottle", false),
+            Some(TankAction::PourBottle { fluid: "create:honey" })
+        );
     }
 }

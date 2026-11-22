@@ -331,12 +331,15 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
     berputarnya belum digambar; tidak ada aset Create yang ditambahkan ke repo;
   - tes unit mencakup hitung mundur, pengisian ulang, penyimpanan per dimensi, syarat panas resep,
     penolakan fluida, serta template/model/loot porter.
-- **Belum:**
+- **Belum (sebagian besar kini selesai pada penyempurnaan Tahap 2b/3/3b di bawah):**
   - tarikan mob dan pemain melalui celah crushing wheel, serta posisi keluarnya sebelum mati.
-  - penempatan item `empty_blaze_burner`, menangkap blaze, pengisian dengan mechanical arm, data map
-    fuel tambahan, suara dan animasi burner yang tepat. Cahaya per tingkat dan bentuk tumbukan khusus
-    Create belum dipetakan; api soul pada sangkar kosong masih memakai cahaya 12 seperti api regular.
-  - sabuk menahan barang saat corong penuh, cooldown per corong, dan jumlah ekstraksi/filter sesuai jenis corong.
+  - data map fuel burner tambahan serta suara/cahaya per tingkat dan bentuk tumbukan khusus Create; api soul pada sangkar kosong masih memakai cahaya 12 seperti api regular.
+- **Penyelesaian Tahap 2b, 3, dan 3b (`tachyon_engine`):**
+  - **Sequenced Assembly & Mechanical Crafting** (`create_recipes.rs`, `tachyon_engine.rs`, `deployer.rs`, `fluids.rs`): pembacaan `create:sequenced_assembly` (langkah `deploying`, `pressing`, `cutting`, `filling`, multi-loop, dan hasil berbobot) yang dijalankan pada `Depot` melalui Deployer, Press, Saw menghadap bawah, dan Spout, plus penggabungan `create:mechanical_crafting` ke Mixer di atas Basin (termasuk tag konvensi `c:plates`, `c:dusts/obsidian`, `c:rods/wooden`, `c:stones`, `c:ender_pearls`, `c:glass_blocks`, `c:obsidians`).
+  - **Smart Chute, Funnel Andesite vs Brass, dan Sabuk** (`chute.rs`, `belt.rs`, `tachyon_engine.rs`): `create:smart_chute` mengambil sampai 64 barang, mendukung filter item, berhenti saat diberi sinyal redstone (`powered`), dan mendukung pengambilan isi/atur filter lewat interaksi kanan; Andesite Funnel membatasi ekstraksi ke 1 item, Brass Funnel mengekstrak sampai 64 dan mendukung filter item; sabuk menahan tumpukan saat funnel tujuan menolak/penuh (`hold_dropped`).
+  - **Rotation Speed Controller, Deployer, Blaze Burner, Mechanical Arm** (`speed_controller.rs`, `deployer.rs`, `burner.rs`, `arm.rs`): klik kanan Speed Controller mengubah target kecepatan pangkat dua (8..256) dan snek+tangan kosong membalik arah; Deployer mendukung filter item, mode punch (dengan wrench) terhadap mob di depan, serta konsumsi durability alat; `create:empty_blaze_burner` mendukung tangkap Blaze maupun Blaze Spawner dan Mechanical Arm dapat mengisi bahan bakar burner serta memakai pemilihan titik input/output manual sebelum dipasang (`arm::Selection`).
+  - **Smart Fluid Pipe, Botol, Multiblock Boiler, dan Lava Tak Terbatas** (`fluids.rs`, `steam.rs`, `hose.rs`): Smart Fluid Pipe dapat difilter per fluida/ember/botol dan memangkas jalur pipa yang bertentangan sebelum menyedot sumber dunia; Spout/Drain/Tank mendukung botol 250 mB (water potion, honey bottle, Builder's Tea); Boiler menggabungkan kolom tank bersebelahan hingga 3×3 XZ (`sum_heating`); Hose Pulley mendukung kolam lava tak terbatas pada ambang `10_000` blok.
+  - **Partial Model Rendering & HUD** (`tachyon_engine.rs`, `steam.rs`): `tachyon_render` menggambar kepala dan jarum dial `speedometer`/`stressometer`, kepala blaze serta batang berputar pada `blaze_burner` (`charges=1..4`), dan piston/linkage/connector `steam_engine` memakai `steam::piston_travel`; kacamata menampilkan info `Smart Chute`, filter, serta mode punch/durability `Deployer`.
 - Pemberitahuan MIT Create sudah ada di `THIRD_PARTY_NOTICES.md`.
 
 1. **Pembaca resep Create.** Mesin `create:*` memakai:

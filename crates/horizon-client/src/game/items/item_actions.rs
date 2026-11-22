@@ -139,6 +139,12 @@ impl Game<'_> {
                 self.swing_arm();
                 return Ok(true);
             }
+            if let commands::Target::Mob(mob_id) = entity
+                && self.tachyon_capture_blaze(mob_id, &kind)
+            {
+                self.swing_arm();
+                return Ok(true);
+            }
             let mut result = None;
             let dimension = self.dim.id();
             self.native_entity_interact(

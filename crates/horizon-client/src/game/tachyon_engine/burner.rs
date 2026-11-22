@@ -19,6 +19,17 @@ use serde::{Deserialize, Serialize};
 
 const MAX_HEAT_CAPACITY: u32 = 10000;
 const INSERTION_THRESHOLD: u32 = 500;
+pub(super) const EMPTY_BURNER: &str = "create:empty_blaze_burner";
+
+/// Whether `entity_kind` can be captured into `EMPTY_BURNER` to fill it.
+pub(super) fn can_capture_blaze(entity_kind: &str) -> bool {
+    matches!(entity_kind, "minecraft:blaze" | "blaze")
+}
+
+/// Whether a spawner spawning `entity_kind` fills `EMPTY_BURNER` on right-click.
+pub(super) fn can_capture_spawner(entity_kind: Option<&str>) -> bool {
+    entity_kind.is_some_and(can_capture_blaze)
+}
 
 /// `BlazeBurnerBlock.HeatLevel`, in its order, represented by `charges`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,6 +170,14 @@ impl Burner {
         });
         self.fuel = Fuel::None;
         self.remaining = 0;
+    }
+
+    /// Mechanical arm fuel insertion (`BlazeBurnerBlockEntity.tryInsert` with `forceOverflow=false`):
+    /// feeds furnace fuel or Blaze Cakes without overflowing past the insertion threshold.
+    pub(super) fn arm_feed(&mut self, item: &str, furnace: i32, special: bool, regular: bool) -> bool {
+        let special = special || item == "create:blaze_cake";
+        let (f, time) = fuel(furnace, special, regular);
+        self.feed(f, time, false)
     }
 }
 
@@ -420,6 +439,158 @@ impl Game<'_> {
         }
         true
     }
+
+    /// Evaluates or performs automated Mechanical Arm fuel insertion into a Blaze Burner at `pos`.
+    pub(super) fn tachyon_burner_arm_feed(
+        &mut self,
+        pos: [i32; 3],
+        stack: &ItemStack,
+        simulate: bool,
+    ) -> bool {
+        if self.tachyon_heat(pos) == Heat::None {
+            return false;
+        }
+        let items = self.res.items();
+        let tagged = |tag: &str| {
+            items.item_tags.get(tag).is_some_and(|t| t.contains(&*stack.item))
+        };
+        let special =
+            &*stack.item == "create:blaze_cake" || tagged("create:blaze_burner_fuel/special");
+        let furnace = self.res.providers().burn_time(items, stack, false);
+        let regular = tagged("create:blaze_burner_fuel/regular");
+        let dimension = self.dim.id();
+        let root = self.save.root.clone();
+        let next_heat = OWNERS.with_borrow_mut(|owners| {
+            if simulate {
+                let mut burner = owners
+                    .get(dimension)
+                    .and_then(|o| o.burners.get(&pos))
+                    .cloned()
+                    .unwrap_or_default();
+                return burner
+                    .arm_feed(&stack.item, furnace, special, regular)
+                    .then(|| burner.heat());
+            }
+            let owner = owners.entry(dimension).or_default();
+            owner.load(&root, dimension);
+            let burner = owner.burners.entry(pos).or_default();
+            if !burner.arm_feed(&stack.item, furnace, special, regular) {
+                return None;
+            }
+            let heat = burner.heat();
+            owner.mills_changed = true;
+            owner.save(&root, dimension);
+            Some(heat)
+        });
+        let Some(heat) = next_heat else {
+            return false;
+        };
+        if !simulate {
+            self.tachyon_burner_state(pos, "create:blaze_burner", heat.charge());
+        }
+        true
+    }
+
+    /// Captures a right-clicked Blaze entity into a held `create:empty_blaze_burner`.
+    pub(in crate::game) fn tachyon_capture_blaze(&mut self, id: u32, kind: &str) -> bool {
+        if self.remote.is_some()
+            || !can_capture_blaze(kind)
+            || !self
+                .held()
+                .is_some_and(|h| &*h.item == EMPTY_BURNER && h.count > 0)
+            || self.res.items().get("create:blaze_burner").is_none()
+        {
+            return false;
+        }
+        let Some(index) = self.mobs.iter().position(|m| m.id == id && !m.removed) else {
+            return false;
+        };
+        self.break_leash(id, true, false);
+        self.mobs[index].removed = true;
+        self.native_entity_left(id);
+        self.filled_result(ItemStack::new("create:blaze_burner", 1));
+        true
+    }
+
+    /// Uses `create:empty_blaze_burner` on a Blaze Spawner (to fill it) or places an empty cage.
+    pub(in crate::game) fn tachyon_empty_burner_use(
+        &mut self,
+        stack: &ItemStack,
+        pos: [i32; 3],
+        face: [i32; 3],
+        claimed: &mut bool,
+    ) {
+        if *claimed
+            || self.remote.is_some()
+            || &*stack.item != EMPTY_BURNER
+            || stack.count == 0
+        {
+            return;
+        }
+        if let Some(horizon_client::chunk::block_entity::BlockEntity::Spawner(s)) =
+            self.world.block_entities.get(&(pos[0], pos[1], pos[2]))
+        {
+            use horizon_client::chunk::block_entity::Next;
+            let data = match &s.next {
+                Some(Next::Own(d)) => Some(d),
+                Some(Next::Potential(i)) => s.potentials.get(*i).map(|(d, _)| d),
+                None => s.potentials.first().map(|(d, _)| d),
+            };
+            let entity_id = data.and_then(|d| {
+                match d.entity.get(&horizon_core::nbt::JavaString::from("id")) {
+                    Some(horizon_core::nbt::Tag::String(s)) => Some(s.to_string_lossy()),
+                    _ => None,
+                }
+            });
+            if can_capture_spawner(entity_id.as_deref())
+                && self.res.items().get("create:blaze_burner").is_some()
+            {
+                *claimed = true;
+                self.filled_result(ItemStack::new("create:blaze_burner", 1));
+            }
+            return;
+        }
+        let replaceable = |p: [i32; 3]| {
+            self.world.chunks.contains_key(&(p[0] >> 4, p[2] >> 4))
+                && self
+                    .res
+                    .facts()
+                    .get(self.world.block(p[0], p[1], p[2]))
+                    .replaceable
+        };
+        let target = if replaceable(pos) {
+            pos
+        } else {
+            let next = [pos[0] + face[0], pos[1] + face[1], pos[2] + face[2]];
+            if !replaceable(next) {
+                return;
+            }
+            next
+        };
+        if !self.may_build() || self.block_action_restricted(target) {
+            return;
+        }
+        let registry = self.pack.assets.registry;
+        let Some(mut state) = registry
+            .default_state("create:blaze_burner")
+            .and_then(|s| registry.state(s))
+            .cloned()
+        else {
+            return;
+        };
+        state.properties.insert("charges".into(), "0".into());
+        let Ok(next) = registry.resolve(&state) else {
+            return;
+        };
+        let dimension = self.native_dimension();
+        if !self.native_set_block(dimension, target, next, 3) {
+            return;
+        }
+        *claimed = true;
+        if !self.creative {
+            self.tachyon_spend_held(1);
+        }
+    }
     /// A window's smoke and flames, by
     /// `BlazeBurnerBlockEntity.spawnParticles`'s heat levels: no flame when
     /// smouldering, soul flame when seething.
@@ -623,5 +794,24 @@ mod tests {
         assert!(!creative.feed(Fuel::Special, 3200, true));
         assert!(!remote_burner_takes_feed(creative.heat(), creative.is_feed_locked(), Fuel::Normal));
         assert!(!remote_burner_takes_feed(creative.heat(), creative.is_feed_locked(), Fuel::Special));
+    }
+
+    #[test]
+    fn empty_burner_capture_and_arm_feed_obey_create_rules() {
+        assert_eq!(EMPTY_BURNER, "create:empty_blaze_burner");
+        assert!(can_capture_blaze("minecraft:blaze"));
+        assert!(!can_capture_blaze("minecraft:zombie"));
+        assert!(can_capture_spawner(Some("minecraft:blaze")));
+        assert!(!can_capture_spawner(Some("minecraft:skeleton")));
+        assert!(!can_capture_spawner(None));
+
+        let mut b = Burner::default();
+        assert!(b.arm_feed("minecraft:coal", 1600, false, false));
+        assert_eq!((b.heat(), b.remaining), (Heat::Kindled, 1600));
+        // Mechanical arm respects INSERTION_THRESHOLD and will not overflow past 500.
+        assert!(!b.arm_feed("minecraft:coal", 1600, false, false));
+        // Upgrading normal -> special via Blaze Cake works anytime.
+        assert!(b.arm_feed("create:blaze_cake", 0, false, false));
+        assert_eq!((b.heat(), b.remaining), (Heat::Seething, 3200));
     }
 }

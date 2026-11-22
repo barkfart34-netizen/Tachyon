@@ -54,22 +54,65 @@ pub(super) struct Chute {
     pub(super) position: f32,
     pub(super) air: Air,
     pub(super) bottom_pull_distance: f32,
+    #[serde(default)]
+    pub(super) filter: Option<String>,
     #[serde(skip)]
     pub(super) previous: f32,
     #[serde(skip)]
     entity_search_cooldown: i32,
 }
 
+/// Outcome of right-clicking a chute or smart chute.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum ChuteInteract {
+    None,
+    Take(ItemStack),
+    SetFilter(String),
+    ClearFilter,
+}
+
 /// The inventory ends of a chute. Giving is first simulated at the
 /// midpoint, then performed only past 0 (down) or 1 (up).
 trait Transfer {
-    fn take(&mut self, up: bool, most: u32) -> Option<ItemStack>;
+    fn take(&mut self, up: bool, most: u32, filter: Option<&str>) -> Option<ItemStack>;
     fn give(&mut self, item: &ItemStack, up: bool, simulate: bool) -> Option<ItemStack>;
 }
 
 impl Chute {
+    pub(super) fn matches_filter(&self, item: &str) -> bool {
+        self.filter.as_deref().is_none_or(|f| f == item)
+    }
+
+    pub(super) fn interact(
+        &mut self,
+        smart: bool,
+        held: Option<&ItemStack>,
+        sneaking: bool,
+    ) -> ChuteInteract {
+        if let Some(stack) = held.filter(|s| s.count > 0) {
+            if smart {
+                let next = stack.item.to_string();
+                if self.filter.as_deref() == Some(next.as_str()) {
+                    return ChuteInteract::None;
+                }
+                self.filter = Some(next.clone());
+                return ChuteInteract::SetFilter(next);
+            }
+            return ChuteInteract::None;
+        }
+        if smart && sneaking && self.filter.take().is_some() {
+            return ChuteInteract::ClearFilter;
+        }
+        if let Some(stack) = self.item.take() {
+            self.position = if self.air.motion() < 0.0 { 1.0 } else { 0.0 };
+            self.previous = self.position;
+            return ChuteInteract::Take(stack);
+        }
+        ChuteInteract::None
+    }
+
     fn accept(&mut self, stack: ItemStack, position: f32) -> bool {
-        if self.item.is_some() || stack.count == 0 {
+        if self.item.is_some() || stack.count == 0 || !self.matches_filter(&stack.item) {
             return false;
         }
         self.item = Some(stack);
@@ -79,8 +122,8 @@ impl Chute {
     }
     /// `ChuteItemHandler.insertItem`: no merging, even with the same
     /// item; a single insertion is limited to the item's stack size.
-    fn insert(&mut self, mut stack: ItemStack, most: u32) -> Option<ItemStack> {
-        if self.item.is_some() || stack.count == 0 {
+    pub(super) fn insert(&mut self, mut stack: ItemStack, most: u32) -> Option<ItemStack> {
+        if self.item.is_some() || stack.count == 0 || !self.matches_filter(&stack.item) {
             return Some(stack);
         }
         let count = stack.count.min(most.max(1));
@@ -118,15 +161,26 @@ impl Chute {
             false
         }
     }
-    /// `ChuteBlockEntity.tick`: an empty chute extracts up to 16 and
-    /// returns that tick. Partial output keeps the rest at its old offset.
+    #[cfg(test)]
     fn tick(&mut self, ends: &mut impl Transfer) {
+        self.tick_with(ends, false, false);
+    }
+
+    /// `ChuteBlockEntity.tick`: Smart chutes extract up to 64 (filtered when set)
+    /// and pause both extraction and motion while redstone-powered; regular chutes
+    /// extract up to 16.
+    fn tick_with(&mut self, ends: &mut impl Transfer, smart: bool, powered: bool) {
         self.previous = self.position;
+        if smart && powered {
+            return;
+        }
         let motion = self.air.motion();
         let up = motion > 0.0;
+        let most = if smart { 64 } else { 16 };
+        let filter = smart.then_some(self.filter.as_deref()).flatten();
         let Some(item) = self.item.as_ref() else {
             if motion != 0.0
-                && let Some(stack) = ends.take(up, 16)
+                && let Some(stack) = ends.take(up, most, filter)
             {
                 self.accept(stack, if up { 0.0 } else { 1.0 });
             }
@@ -223,7 +277,12 @@ fn inputs(parts: &HashMap<[i32; 3], Part>, pos: [i32; 3]) -> Vec<[i32; 3]> {
         .into_iter()
         .filter_map(|facing| {
             let at = input_pos(pos, facing);
-            matches!(parts.get(&at), Some(Part::Chute(d, _)) if *d == facing).then_some(at)
+            let matching = match parts.get(&at) {
+                Some(Part::Chute(d, _)) => *d == facing,
+                Some(Part::SmartChute) => facing == Dir::Down,
+                _ => false,
+            };
+            matching.then_some(at)
         })
         .collect()
 }
@@ -251,8 +310,12 @@ pub(super) fn airflow(
         air.entry(pos).or_default().pull = pull;
     }
     for pos in order {
-        let Some(Part::Chute(facing, _)) = parts.get(&pos) else { continue };
-        let below = target(pos, *facing);
+        let facing = match parts.get(&pos) {
+            Some(Part::Chute(facing, _)) => *facing,
+            Some(Part::SmartChute) => Dir::Down,
+            _ => continue,
+        };
+        let below = target(pos, facing);
         let push = pushes.get(&pos).copied().unwrap_or_else(|| {
             air.get(&below).map_or(0.0, |a| a.push / inputs(parts, below).len().max(1) as f32)
         });
@@ -476,18 +539,19 @@ impl Ends<'_, '_> {
 }
 
 impl Transfer for Ends<'_, '_> {
-    fn take(&mut self, up: bool, most: u32) -> Option<ItemStack> {
+    fn take(&mut self, up: bool, most: u32, filter: Option<&str>) -> Option<ItemStack> {
         let pos = add(self.pos, if up { Dir::Down } else { Dir::Up }.offset());
         // Regular chutes give through their topology, never by extracting
         // a neighbour's capability (`ChuteBlockEntity.grabCapability`).
         if !self.loaded(pos) || self.parts.contains_key(&pos) {
             return None;
         }
-        self.game.tachyon_container_take(
-            (pos[0], pos[1], pos[2]),
-            if up { Direction::Up } else { Direction::Down },
-            most,
-        )
+        let face = if up { Direction::Up } else { Direction::Down };
+        let at = (pos[0], pos[1], pos[2]);
+        match filter {
+            Some(want) => self.game.tachyon_container_take_filtered(at, face, most, want),
+            None => self.game.tachyon_container_take(at, face, most),
+        }
     }
     fn give(&mut self, item: &ItemStack, up: bool, simulate: bool) -> Option<ItemStack> {
         let pos = add(self.pos, if up { Dir::Up } else { Dir::Down }.offset());
@@ -579,6 +643,7 @@ impl Game<'_> {
         let part = self.tachyon_kinds()?.part(self.world.block(pos[0], pos[1], pos[2]).0)?;
         match part {
             Part::Chute(d, shape) => Some((d, shape)),
+            Part::SmartChute => Some((Dir::Down, ChuteShape::Normal)),
             _ => None,
         }
     }
@@ -717,23 +782,34 @@ impl Game<'_> {
     pub(super) fn tachyon_chutes(&mut self) {
         let dimension = self.dim.id();
         let root = self.save.root.clone();
-        let (parts, flows) = OWNERS.with_borrow(|owners| {
+        let (parts, flows, powered_set) = OWNERS.with_borrow(|owners| {
             let Some(owner) = owners.get(dimension) else {
-                return (HashMap::new(), HashMap::new());
+                return (HashMap::new(), HashMap::new(), std::collections::HashSet::new());
             };
             let parts: HashMap<[i32; 3], Part> = owner
                 .index
                 .parts
                 .iter()
-                .filter(|(_, part)| matches!(part, Part::Chute(_, _)))
+                .filter(|(_, part)| matches!(part, Part::Chute(_, _) | Part::SmartChute))
                 .map(|(p, part)| (*p, *part))
                 .collect();
-            (parts, owner.chute_air.clone())
+            (parts, owner.chute_air.clone(), owner.powered.clone())
         });
         let mut order: Vec<[i32; 3]> = parts.keys().copied().collect();
         order.sort_by_key(|p| (p[1], p[0], p[2]));
         for pos in order {
-            let Part::Chute(facing, shape) = parts[&pos] else { continue };
+            let (facing, shape, smart) = match parts[&pos] {
+                Part::Chute(f, s) => (f, s, false),
+                Part::SmartChute => (Dir::Down, ChuteShape::Normal, true),
+                _ => continue,
+            };
+            let powered = smart && powered_set.contains(&pos);
+            if smart {
+                let want = if powered { "true" } else { "false" };
+                if self.native_block_property(pos, "powered").as_deref() != Some(want) {
+                    self.native_set_block_property(pos, "powered", want);
+                }
+            }
             let air = flows.get(&pos).copied().unwrap_or_default();
             let mut chute = OWNERS.with_borrow(|owners| {
                 owners.get(dimension).and_then(|o| o.chutes.get(&pos)).cloned().unwrap_or_default()
@@ -742,12 +818,11 @@ impl Game<'_> {
             let mut received = false;
             chute.air = air;
             chute.bottom_pull_distance = self.tachyon_chute_reach(pos, air, &parts);
-            if chute.search_due() {
+            if !powered && chute.search_due() {
                 let area = search_area(pos, chute.bottom_pull_distance);
-                let i = self
-                    .dropped
-                    .iter()
-                    .position(|d| d.health > 0 && d.stack.count > 0 && d.bounds().intersects(area));
+                let i = self.dropped.iter().position(|d| {
+                    d.health > 0 && d.stack.count > 0 && d.bounds().intersects(area) && chute.matches_filter(&d.stack.item)
+                });
                 if let Some(i) = i {
                     let item = self.dropped.remove(i);
                     let height = (item.bounds().center().y - f64::from(pos[1])) as f32;
@@ -756,17 +831,19 @@ impl Game<'_> {
             }
             // AbstractChuteBlock.updateEntityAfterFallOn: an exposed open
             // mouth accepts a falling stack, never one ejected upward.
-            if chute.item.is_none()
+            if !powered
+                && chute.item.is_none()
                 && open(facing, shape)
                 && !matches!(
                     parts.get(&add(pos, Dir::Up.offset())),
-                    Some(Part::Chute(Dir::Down, _))
+                    Some(Part::Chute(Dir::Down, _) | Part::SmartChute)
                 )
                 && (air.motion() <= 0.0 || !inputs(&parts, pos).is_empty())
             {
                 let i = self.dropped.iter().position(|d| {
                     d.health > 0
                         && d.stack.count > 0
+                        && chute.matches_filter(&d.stack.item)
                         && falling_at_top(pos, d.bounds(), d.previous.y, d.velocity.y)
                 });
                 if let Some(i) = i {
@@ -784,7 +861,7 @@ impl Game<'_> {
                     }
                 }
             }
-            chute.tick(&mut Ends {
+            chute.tick_with(&mut Ends {
                 game: self,
                 pos,
                 facing,
@@ -792,7 +869,7 @@ impl Game<'_> {
                 air,
                 parts: &parts,
                 flows: &flows,
-            });
+            }, smart, powered);
             // Fast upward air can receive and pass a stack this tick,
             // leaving both snapshots empty but changing a neighbour.
             let transferred = received || chute.item != before.item;
@@ -870,9 +947,12 @@ mod tests {
         given: u32,
     }
     impl Transfer for TestEnds {
-        fn take(&mut self, up: bool, most: u32) -> Option<ItemStack> {
+        fn take(&mut self, up: bool, most: u32, filter: Option<&str>) -> Option<ItemStack> {
             let cell = if up { &mut self.below } else { &mut self.above };
             let stack = cell.as_mut()?;
+            if filter.is_some_and(|f| &*stack.item != f) {
+                return None;
+            }
             let out = ItemStack { count: stack.count.min(most), ..stack.clone() };
             stack.count -= out.count;
             if stack.count == 0 {
@@ -1171,5 +1251,51 @@ mod tests {
             assert_eq!(restored.bottom_pull_distance, chute.bottom_pull_distance);
         }
         assert!(read(&serde_json::Value::Null).is_empty());
+    }
+
+    #[test]
+    fn smart_chute_extracts_64_respects_filter_and_redstone_and_interact() {
+        let mut smart = Chute {
+            filter: Some("minecraft:iron_ingot".into()),
+            ..Chute::default()
+        };
+        let mut ends = TestEnds {
+            above: Some(ItemStack::new("minecraft:stone", 64)),
+            ..TestEnds::default()
+        };
+        // Non-matching item is skipped; matching item up to 64 is extracted.
+        smart.tick_with(&mut ends, true, false);
+        assert!(smart.item.is_none());
+        assert_eq!(ends.above.as_ref().unwrap().count, 64);
+        assert!(smart.insert(ItemStack::new("minecraft:stone", 8), 64).is_some());
+
+        ends.above = Some(ItemStack::new("minecraft:iron_ingot", 64));
+        // Redstone power pauses both extraction and movement.
+        smart.tick_with(&mut ends, true, true);
+        assert!(smart.item.is_none());
+        assert_eq!(ends.above.as_ref().unwrap().count, 64);
+
+        smart.tick_with(&mut ends, true, false);
+        assert_eq!(smart.item, Some(ItemStack::new("minecraft:iron_ingot", 64)));
+        assert!(ends.above.is_none());
+
+        // Powered mid-transit freezes height and output.
+        let pos_before = smart.position;
+        smart.tick_with(&mut ends, true, true);
+        assert_eq!(smart.position, pos_before);
+        assert_eq!(smart.item.as_ref().unwrap().count, 64);
+
+        // Interact: item sets filter on smart chute, empty sneak clears filter, empty hand takes stack.
+        let mut c = Chute::default();
+        assert_eq!(
+            c.interact(true, Some(&ItemStack::new("minecraft:gold_ingot", 1)), false),
+            ChuteInteract::SetFilter("minecraft:gold_ingot".into())
+        );
+        assert_eq!(c.filter.as_deref(), Some("minecraft:gold_ingot"));
+        assert_eq!(c.interact(true, None, true), ChuteInteract::ClearFilter);
+        assert!(c.filter.is_none());
+        c.accept(ItemStack::new("minecraft:diamond", 5), 0.5);
+        assert_eq!(c.interact(false, None, false), ChuteInteract::Take(ItemStack::new("minecraft:diamond", 5)));
+        assert!(c.item.is_none());
     }
 }

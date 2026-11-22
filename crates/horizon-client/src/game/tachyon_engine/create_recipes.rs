@@ -25,6 +25,8 @@ const MILLING_TIME: f32 = 100.0;
 const MIXING_TIME: f32 = 100.0;
 /// The most item sets a mixing with tags stands for.
 const MOST_SETS: usize = 64;
+/// The most item sets a mechanical crafting recipe with tags stands for.
+const MOST_CRAFTING_SETS: usize = 256;
 
 /// The recipes of Create's machines that Tachyon works.
 #[derive(Default)]
@@ -49,6 +51,87 @@ pub(super) struct Recipes {
     pub filling: Vec<Filling>,
     /// An item drain's (`EmptyingRecipe`): an item into an item and a fluid.
     pub emptying: Vec<Emptying>,
+    /// A sequence of steps over a depot/belt (`SequencedAssemblyRecipe`).
+    pub sequenced: Vec<SequencedAssembly>,
+    /// Mechanical crafting (`MechanicalCraftingRecipe`), aggregated by item count.
+    pub mechanical_crafting: Vec<Mixing>,
+}
+
+/// `create:sequenced_assembly`: transforms `ingredient` through `loops` repetitions
+/// of `steps` via `transitional_item` into one weighted pick from `results`.
+pub(super) struct SequencedAssembly {
+    pub ingredient: Vec<String>,
+    pub transitional_item: String,
+    pub loops: u32,
+    pub steps: Vec<SequencedStep>,
+    pub results: Vec<Output>,
+}
+
+/// One step in a [`SequencedAssembly`] sequence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum SequencedStep {
+    /// `create:deploying`: uses one of `held`; `keep` leaves the held item unconsumed.
+    Deploying { held: Vec<String>, keep: bool },
+    /// `create:pressing`: one mechanical press stroke.
+    Pressing,
+    /// `create:cutting`: one mechanical saw cut.
+    Cutting,
+    /// `create:filling`: spout fills `amount` mB of one of `fluids`.
+    Filling { fluids: Vec<String>, amount: u32 },
+}
+
+impl SequencedStep {
+    /// Returns `(consume_held, consume_fluid)` when `action` satisfies this step.
+    fn matches(&self, action: SequencedAction<'_>) -> Option<(bool, u32)> {
+        match (self, action) {
+            (SequencedStep::Deploying { held, keep }, SequencedAction::Deploying { held: h })
+                if held.iter().any(|i| i == h) =>
+            {
+                Some((!*keep, 0))
+            }
+            (SequencedStep::Pressing, SequencedAction::Pressing)
+            | (SequencedStep::Cutting, SequencedAction::Cutting) => Some((false, 0)),
+            (
+                SequencedStep::Filling {
+                    fluids,
+                    amount: need,
+                },
+                SequencedAction::Filling { fluid, amount: have },
+            ) if have >= *need => {
+                let fluid = fluid.strip_prefix(super::fluids::FLUID).unwrap_or(fluid);
+                fluids.iter().any(|f| f == fluid).then_some((false, *need))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// An action offered to [`Recipes::advance_sequenced`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SequencedAction<'a> {
+    Deploying { held: &'a str },
+    Pressing,
+    Cutting,
+    Filling { fluid: &'a str, amount: u32 },
+}
+
+/// Outcome of one matching [`SequencedAction`] in [`Recipes::advance_sequenced`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum SequencedStepResult {
+    /// Intermediate step succeeded; item becomes `next_item` at `next_step`.
+    NextStep {
+        next_item: String,
+        next_step: u32,
+        consume_held: bool,
+        consume_fluid: u32,
+    },
+    /// Final step succeeded; assembly finishes into `item` x `count`.
+    Complete {
+        item: String,
+        count: u32,
+        consume_held: bool,
+        consume_fluid: u32,
+    },
 }
 
 /// `create:filling`: one of `input` filled with `amount` mB of `fluid`.
@@ -114,6 +197,8 @@ impl Recipes {
             "deploying",
             "filling",
             "emptying",
+            "sequenced_assembly",
+            "mechanical_crafting",
         ] {
             walk(&dir.join(kind), &mut files);
         }
@@ -157,6 +242,22 @@ impl Recipes {
         {
             return;
         }
+        let time = recipe["processing_time"].as_f64().map(|t| t as f32);
+        match kind {
+            "create:sequenced_assembly" => {
+                if let Some(seq) = parse_sequenced_assembly(recipe, game) {
+                    self.sequenced.push(seq);
+                }
+                return;
+            }
+            "create:mechanical_crafting" => {
+                if let Some(crafted) = parse_mechanical_crafting(recipe, game, time) {
+                    self.mechanical_crafting.extend(crafted);
+                }
+                return;
+            }
+            _ => {}
+        }
         let Some(outputs) = outputs(recipe, game) else {
             return;
         };
@@ -169,7 +270,6 @@ impl Recipes {
         if fluid && !matches!(kind, "create:mixing" | "create:compacting" | "create:filling" | "create:emptying") {
             return;
         }
-        let time = recipe["processing_time"].as_f64().map(|t| t as f32);
         let single = |list: &mut Vec<Milling>, default: f32| {
             let [items] = ingredients.as_slice() else {
                 return;
@@ -295,6 +395,285 @@ impl Recipes {
     pub fn haunting(&self, item: &str) -> Option<&Milling> {
         self.haunting.iter().find(|r| r.input == item)
     }
+
+    /// Checks whether `item` at `step_idx` matches the next expected step under `action`,
+    /// returning the transitional [`SequencedStepResult::NextStep`] or final weighted
+    /// [`SequencedStepResult::Complete`] (using `roll` in `0.0..1.0`).
+    pub fn advance_sequenced(
+        &self,
+        item: &str,
+        step_idx: u32,
+        action: SequencedAction<'_>,
+        roll: f32,
+    ) -> Option<SequencedStepResult> {
+        let step = step_idx as usize;
+        for recipe in &self.sequenced {
+            let Some(total) = recipe.steps.len().checked_mul(recipe.loops as usize) else {
+                continue;
+            };
+            if total == 0 || step >= total {
+                continue;
+            }
+            let item_matches = if step_idx == 0 {
+                recipe.ingredient.iter().any(|i| i == item)
+            } else {
+                recipe.transitional_item == item
+            };
+            if !item_matches {
+                continue;
+            }
+            let expected = &recipe.steps[step % recipe.steps.len()];
+            let Some((consume_held, consume_fluid)) = expected.matches(action) else {
+                continue;
+            };
+            if step + 1 >= total {
+                let output = pick_weighted(&recipe.results, roll)?;
+                return Some(SequencedStepResult::Complete {
+                    item: output.item.clone(),
+                    count: output.count,
+                    consume_held,
+                    consume_fluid,
+                });
+            }
+            return Some(SequencedStepResult::NextStep {
+                next_item: recipe.transitional_item.clone(),
+                next_step: step_idx + 1,
+                consume_held,
+                consume_fluid,
+            });
+        }
+        None
+    }
+
+    /// Finds the first step index (`1..steps.len()`) where `item` is already a recipe's
+    /// `transitional_item` and `action` matches, used when a transitional item moves onto
+    /// a new station without saved step progress.
+    pub fn find_sequenced_step(&self, item: &str, action: SequencedAction<'_>) -> Option<u32> {
+        for recipe in &self.sequenced {
+            if recipe.transitional_item != item {
+                continue;
+            }
+            for (idx, step) in recipe.steps.iter().enumerate().skip(1) {
+                if step.matches(action).is_some() {
+                    return Some(idx as u32);
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Parses a `create:sequenced_assembly` recipe.
+fn parse_sequenced_assembly(recipe: &Value, game: &Lookup) -> Option<SequencedAssembly> {
+    let ingredient = alternatives(recipe.get("ingredient")?, game)?;
+    if ingredient.is_empty() || ingredient.iter().any(|i| super::fluids::is_fluid(i)) {
+        return None;
+    }
+    let trans_val = recipe.get("transitional_item")?;
+    let transitional_item = trans_val["id"]
+        .as_str()
+        .or_else(|| trans_val["item"].as_str())
+        .or_else(|| trans_val.as_str())?;
+    if !(game.known)(transitional_item) {
+        return None;
+    }
+    let loops = match recipe.get("loops") {
+        None => 1,
+        Some(v) => u32::try_from(v.as_u64()?).ok().filter(|&n| n > 0)?,
+    };
+    let results = outputs(recipe, game)?;
+    if results
+        .iter()
+        .any(|o| super::fluids::is_fluid(&o.item) || !o.chance.is_finite() || o.chance < 0.0)
+        || results.iter().map(|o| o.chance).sum::<f32>() <= 0.0
+    {
+        return None;
+    }
+    let seq = recipe.get("sequence")?.as_array()?;
+    if seq.is_empty() {
+        return None;
+    }
+    let mut steps = Vec::with_capacity(seq.len());
+    for step in seq {
+        steps.push(parse_sequenced_step(step, game)?);
+    }
+    Some(SequencedAssembly {
+        ingredient,
+        transitional_item: transitional_item.to_owned(),
+        loops,
+        steps,
+        results,
+    })
+}
+
+fn parse_sequenced_step(step: &Value, game: &Lookup) -> Option<SequencedStep> {
+    if !conditions_hold(step, game) {
+        return None;
+    }
+    if let Some(heat) = step.get("heat_requirement") {
+        let heat = serde_json::from_value::<HeatRequirement>(heat.clone()).ok()?;
+        if heat != HeatRequirement::None {
+            return None;
+        }
+    }
+    match step["type"].as_str()? {
+        "create:deploying" => {
+            let held_val = step_target(step, game)?;
+            let held = alternatives(held_val, game)?;
+            if held.is_empty() || held.iter().any(|i| super::fluids::is_fluid(i)) {
+                return None;
+            }
+            let keep = match step.get("keep_held_item") {
+                None => false,
+                Some(v) => v.as_bool()?,
+            };
+            Some(SequencedStep::Deploying { held, keep })
+        }
+        "create:pressing" => valid_item_ingredients(step, game).then_some(SequencedStep::Pressing),
+        "create:cutting" => valid_item_ingredients(step, game).then_some(SequencedStep::Cutting),
+        "create:filling" => {
+            let fluid_val = step_target(step, game)?;
+            let alts = alternatives(fluid_val, game)?;
+            let mut fluids = Vec::new();
+            let mut amount = None;
+            for alt in &alts {
+                let (fluid, mb) = fluid_part(alt)?;
+                if mb == 0 || amount.is_some_and(|prev| prev != mb) {
+                    return None;
+                }
+                amount = Some(mb);
+                if !fluids.iter().any(|f| f == fluid) {
+                    fluids.push(fluid.to_owned());
+                }
+            }
+            let amount = amount?;
+            (!fluids.is_empty()).then_some(SequencedStep::Filling { fluids, amount })
+        }
+        _ => None,
+    }
+}
+
+/// Validates an optional leading transitional ingredient and returns the step's secondary
+/// argument (held item for deploying, fluid for filling).
+fn step_target<'a>(step: &'a Value, game: &Lookup) -> Option<&'a Value> {
+    let list = step.get("ingredients")?.as_array()?;
+    match list.as_slice() {
+        [first, second] => {
+            let base = alternatives(first, game)?;
+            if base.is_empty() || base.iter().any(|i| super::fluids::is_fluid(i)) {
+                return None;
+            }
+            Some(second)
+        }
+        [only] => Some(only),
+        _ => None,
+    }
+}
+
+fn valid_item_ingredients(step: &Value, game: &Lookup) -> bool {
+    let Some(list) = step.get("ingredients") else {
+        return true;
+    };
+    let Some(arr) = list.as_array() else {
+        return false;
+    };
+    arr.iter().all(|ing| {
+        alternatives(ing, game)
+            .is_some_and(|items| !items.is_empty() && !items.iter().any(|i| super::fluids::is_fluid(i)))
+    })
+}
+
+/// Picks one entry from `results` weighted by `Output::chance` (`SequencedAssemblyRecipe.rollResult`).
+fn pick_weighted(results: &[Output], roll: f32) -> Option<&Output> {
+    let total: f32 = results.iter().map(|o| o.chance.max(0.0)).sum();
+    if total <= 0.0 {
+        return results.first();
+    }
+    let r = if roll.is_nan() { 0.0 } else { roll.clamp(0.0, 1.0) };
+    let mut target = r * total;
+    for entry in results {
+        let weight = entry.chance.max(0.0);
+        if weight <= 0.0 {
+            continue;
+        }
+        target -= weight;
+        if target < 0.0 {
+            return Some(entry);
+        }
+    }
+    results.iter().rfind(|o| o.chance > 0.0).or_else(|| results.last())
+}
+
+/// Parses a `create:mechanical_crafting` recipe into [`Mixing`] entries with aggregated
+/// pattern symbol counts.
+fn parse_mechanical_crafting(recipe: &Value, game: &Lookup, time: Option<f32>) -> Option<Vec<Mixing>> {
+    if let Some(mirrored) = recipe.get("accept_mirrored") {
+        mirrored.as_bool()?;
+    }
+    let result = recipe.get("result")?;
+    if result.get("fluid").is_some() || result.get("amount").is_some() {
+        return None;
+    }
+    let result_item = result["id"].as_str().or_else(|| result["item"].as_str())?;
+    if !(game.known)(result_item) {
+        return None;
+    }
+    let result_count = result["count"].as_u64().unwrap_or(1).max(1) as u32;
+    let outputs = [Output {
+        item: result_item.to_owned(),
+        count: result_count,
+        chance: 1.0,
+    }];
+    let pattern = recipe.get("pattern")?.as_array()?;
+    if pattern.is_empty() {
+        return None;
+    }
+    let key = recipe.get("key")?.as_object()?;
+    if key.contains_key(" ") {
+        return None;
+    }
+    let mut symbol_counts: Vec<(char, u32)> = Vec::new();
+    for row in pattern {
+        let line = row.as_str()?;
+        if line.is_empty() {
+            return None;
+        }
+        for ch in line.chars() {
+            if ch == ' ' {
+                continue;
+            }
+            match symbol_counts.iter_mut().find(|(c, _)| *c == ch) {
+                Some((_, n)) => *n += 1,
+                None => symbol_counts.push((ch, 1)),
+            }
+        }
+    }
+    if symbol_counts.is_empty() {
+        return None;
+    }
+    let mut grouped: Vec<(Vec<String>, u32)> = Vec::with_capacity(symbol_counts.len());
+    let mut buf = [0u8; 4];
+    for (ch, count) in symbol_counts {
+        let sym = ch.encode_utf8(&mut buf);
+        let ing = key.get(sym)?;
+        let items = alternatives(ing, game)?;
+        if items.is_empty() || items.iter().any(|i| super::fluids::is_fluid(i)) {
+            return None;
+        }
+        grouped.push((items, count));
+    }
+    let time = time.unwrap_or(MIXING_TIME).max(1.0);
+    Some(
+        sets_counted(&grouped, MOST_CRAFTING_SETS)
+            .into_iter()
+            .map(|inputs| Mixing {
+                inputs,
+                heat_requirement: HeatRequirement::None,
+                time,
+                outputs: copy(&outputs),
+            })
+            .collect(),
+    )
 }
 
 /// The JSON files under `dir`, into `out`.
@@ -422,6 +801,14 @@ fn alternatives(ingredient: &Value, game: &Lookup) -> Option<Vec<String>> {
         items.sort();
         return Some(items);
     }
+    if let Some(s) = ingredient.as_str() {
+        if let Some(tag) = s.strip_prefix('#') {
+            let mut items = tagged(tag, game);
+            items.sort();
+            return Some(items);
+        }
+        return Some(if (game.known)(s) { vec![s.to_owned()] } else { Vec::new() });
+    }
     None
 }
 
@@ -450,6 +837,9 @@ fn convention(tag: &str, known: &dyn Fn(&str) -> bool) -> Vec<String> {
     let names: Vec<String> = match (group, m) {
         ("ingots", m) => vec![format!("{m}_ingot")],
         ("nuggets", m) => vec![format!("{m}_nugget")],
+        ("plates", "gold") => vec!["golden_sheet".to_owned(), "gold_sheet".to_owned()],
+        ("plates", "obsidian") => vec!["sturdy_sheet".to_owned()],
+        ("plates", m) => vec![format!("{m}_sheet"), format!("{m}_plate")],
         ("raw_materials", m) => vec![format!("raw_{m}")],
         ("storage_blocks", m) => vec![format!("{m}_block")],
         ("ores", m) => vec![format!("{m}_ore"), format!("deepslate_{m}_ore"), format!("nether_{m}_ore")],
@@ -457,7 +847,24 @@ fn convention(tag: &str, known: &dyn Fn(&str) -> bool) -> Vec<String> {
         ("gems", "amethyst") => vec!["amethyst_shard".to_owned()],
         ("gems", m) => vec![m.to_owned()],
         ("dusts", "glowstone") => vec!["glowstone_dust".to_owned()],
+        ("dusts", "obsidian") => vec!["powdered_obsidian".to_owned()],
         ("dusts", m) => vec![m.to_owned()],
+        ("rods", "wooden") => vec!["stick".to_owned()],
+        ("stones", "") => ["stone", "andesite", "diorite", "granite", "deepslate", "tuff"]
+            .map(str::to_owned)
+            .to_vec(),
+        ("ender_pearls", "") => vec!["ender_pearl".to_owned()],
+        ("glass_blocks", "") => [
+            "glass",
+            "tinted_glass",
+            "tiled_glass",
+            "framed_glass",
+            "horizontal_framed_glass",
+            "vertical_framed_glass",
+        ]
+        .map(str::to_owned)
+        .to_vec(),
+        ("obsidians", "") => ["obsidian", "crying_obsidian"].map(str::to_owned).to_vec(),
         ("cobblestones", "") => ["cobblestone", "cobbled_deepslate", "mossy_cobblestone"].map(str::to_owned).to_vec(),
         ("eggs", "") => ["egg", "blue_egg", "brown_egg"].map(str::to_owned).to_vec(),
         ("strings", "") => vec!["string".to_owned()],
@@ -482,15 +889,26 @@ fn convention(tag: &str, known: &dyn Fn(&str) -> bool) -> Vec<String> {
 /// The sets of items a mixing's ingredients stand for (an item asked twice
 /// counts twice), at most [`MOST_SETS`].
 fn sets(ingredients: &[Vec<String>]) -> Vec<Vec<Ingredient>> {
-    let mut sets: Vec<Vec<String>> = vec![Vec::new()];
-    for items in ingredients {
+    let counted: Vec<(Vec<String>, u32)> =
+        ingredients.iter().map(|items| (items.clone(), 1)).collect();
+    sets_counted(&counted, MOST_SETS)
+}
+
+/// Expands `(alternatives, count)` ingredient groups into item-counted sets, aggregating
+/// repeated items and bounding the total combinations to `limit`.
+fn sets_counted(ingredients: &[(Vec<String>, u32)], limit: usize) -> Vec<Vec<Ingredient>> {
+    if ingredients.is_empty() {
+        return Vec::new();
+    }
+    let mut sets: Vec<Vec<(String, u32)>> = vec![Vec::new()];
+    for (items, count) in ingredients {
         let mut next = Vec::new();
         'all: for set in &sets {
             for item in items {
                 let mut s = set.clone();
-                s.push(item.clone());
+                s.push((item.clone(), *count));
                 next.push(s);
-                if next.len() >= MOST_SETS {
+                if next.len() >= limit {
                     break 'all;
                 }
             }
@@ -500,10 +918,10 @@ fn sets(ingredients: &[Vec<String>]) -> Vec<Vec<Ingredient>> {
     sets.into_iter()
         .map(|set| {
             let mut counts: Vec<(String, u32)> = Vec::new();
-            for item in set {
+            for (item, n) in set {
                 match counts.iter_mut().find(|(i, _)| *i == item) {
-                    Some((_, n)) => *n += 1,
-                    None => counts.push((item, 1)),
+                    Some((_, total)) => *total += n,
+                    None => counts.push((item, n)),
                 }
             }
             counts
@@ -800,5 +1218,223 @@ mod tests {
         assert_eq!(sets(&ingredients).len(), 4);
         let many = vec![(0..20).map(|i| i.to_string()).collect::<Vec<_>>(); 3];
         assert_eq!(sets(&many).len(), MOST_SETS);
+    }
+
+    #[test]
+    fn sequenced_assembly_parses_advances_loops_and_rolls_weighted_results() {
+        let (tagged, known) = game();
+        let game = Lookup {
+            tagged: &tagged,
+            known: &known,
+        };
+        let mut r = Recipes::default();
+        r.add(
+            &json!({
+                "type": "create:sequenced_assembly",
+                "ingredient": {"tag": "c:plates/gold"},
+                "transitional_item": {"id": "create:incomplete_precision_mechanism"},
+                "loops": 5,
+                "sequence": [
+                    {
+                        "type": "create:deploying",
+                        "ingredients": [
+                            {"item": "create:incomplete_precision_mechanism"},
+                            {"item": "create:cogwheel"}
+                        ],
+                        "results": [{"id": "create:incomplete_precision_mechanism"}]
+                    },
+                    {
+                        "type": "create:deploying",
+                        "ingredients": [
+                            {"item": "create:incomplete_precision_mechanism"},
+                            {"item": "create:large_cogwheel"}
+                        ],
+                        "results": [{"id": "create:incomplete_precision_mechanism"}]
+                    },
+                    {
+                        "type": "create:deploying",
+                        "ingredients": [
+                            {"item": "create:incomplete_precision_mechanism"},
+                            {"tag": "c:nuggets/iron"}
+                        ],
+                        "results": [{"id": "create:incomplete_precision_mechanism"}]
+                    }
+                ],
+                "results": [
+                    {"chance": 120.0, "id": "create:precision_mechanism"},
+                    {"chance": 8.0, "id": "create:golden_sheet"},
+                    {"id": "minecraft:clock"}
+                ]
+            }),
+            &game,
+        );
+        r.add(
+            &json!({
+                "type": "create:sequenced_assembly",
+                "ingredient": {"item": "create:powdered_obsidian"},
+                "transitional_item": {"id": "create:unprocessed_obsidian_sheet"},
+                "sequence": [
+                    {
+                        "type": "create:filling",
+                        "ingredients": [
+                            {"item": "create:unprocessed_obsidian_sheet"},
+                            {"type": "neoforge:single", "fluid": "minecraft:lava", "amount": 500}
+                        ],
+                        "results": [{"id": "create:unprocessed_obsidian_sheet"}]
+                    },
+                    {
+                        "type": "create:pressing",
+                        "ingredients": [{"item": "create:unprocessed_obsidian_sheet"}],
+                        "results": [{"id": "create:unprocessed_obsidian_sheet"}]
+                    }
+                ],
+                "results": [{"id": "create:sturdy_sheet"}]
+            }),
+            &game,
+        );
+        assert_eq!(r.sequenced.len(), 2);
+        assert_eq!(r.sequenced[0].loops, 5);
+        assert_eq!(r.sequenced[1].loops, 1);
+
+        // Wrong action on step 0 is rejected.
+        assert_eq!(
+            r.advance_sequenced("create:golden_sheet", 0, SequencedAction::Pressing, 0.0),
+            None
+        );
+
+        // Step through all 5 loops (15 steps) of Precision Mechanism.
+        let mut item = "create:golden_sheet".to_owned();
+        let mut step = 0;
+        let step_items = [
+            "create:cogwheel",
+            "create:large_cogwheel",
+            "minecraft:iron_nugget",
+        ];
+        for i in 0..14 {
+            let held = step_items[i % 3];
+            let res = r.advance_sequenced(
+                &item,
+                step,
+                SequencedAction::Deploying { held },
+                0.0,
+            );
+            assert_eq!(
+                res,
+                Some(SequencedStepResult::NextStep {
+                    next_item: "create:incomplete_precision_mechanism".to_owned(),
+                    next_step: i as u32 + 1,
+                    consume_held: true,
+                    consume_fluid: 0,
+                })
+            );
+            item = "create:incomplete_precision_mechanism".to_owned();
+            step += 1;
+        }
+        // Final step yields weighted output depending on roll.
+        assert_eq!(
+            r.advance_sequenced(
+                &item,
+                14,
+                SequencedAction::Deploying { held: "minecraft:iron_nugget" },
+                0.5,
+            ),
+            Some(SequencedStepResult::Complete {
+                item: "create:precision_mechanism".to_owned(),
+                count: 1,
+                consume_held: true,
+                consume_fluid: 0,
+            })
+        );
+        assert_eq!(
+            r.advance_sequenced(
+                &item,
+                14,
+                SequencedAction::Deploying { held: "minecraft:iron_nugget" },
+                0.995,
+            ),
+            Some(SequencedStepResult::Complete {
+                item: "minecraft:clock".to_owned(),
+                count: 1,
+                consume_held: true,
+                consume_fluid: 0,
+            })
+        );
+
+        // Sturdy sheet filling + pressing path.
+        assert_eq!(
+            r.advance_sequenced(
+                "create:powdered_obsidian",
+                0,
+                SequencedAction::Filling { fluid: "fluid:minecraft:lava", amount: 500 },
+                0.0
+            ),
+            Some(SequencedStepResult::NextStep {
+                next_item: "create:unprocessed_obsidian_sheet".to_owned(),
+                next_step: 1,
+                consume_held: false,
+                consume_fluid: 500,
+            })
+        );
+        assert_eq!(
+            r.find_sequenced_step("create:unprocessed_obsidian_sheet", SequencedAction::Pressing),
+            Some(1)
+        );
+        assert_eq!(
+            r.advance_sequenced(
+                "create:unprocessed_obsidian_sheet",
+                1,
+                SequencedAction::Pressing,
+                0.0
+            ),
+            Some(SequencedStepResult::Complete {
+                item: "create:sturdy_sheet".to_owned(),
+                count: 1,
+                consume_held: false,
+                consume_fluid: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn mechanical_crafting_aggregates_pattern_counts_into_mixing_recipes() {
+        let tagged = |_: &str| Vec::new();
+        let known = |item: &str| matches!(
+            item,
+            "create:andesite_alloy" | "minecraft:stone" | "minecraft:oak_planks" | "create:crushing_wheel"
+        );
+        let game = Lookup {
+            tagged: &tagged,
+            known: &known,
+        };
+        let mut r = Recipes::default();
+        r.add(
+            &json!({
+                "type": "create:mechanical_crafting",
+                "accept_mirrored": false,
+                "key": {
+                    "A": {"item": "create:andesite_alloy"},
+                    "P": {"item": "minecraft:oak_planks"},
+                    "S": {"tag": "c:stones"}
+                },
+                "pattern": [
+                    " AAA ",
+                    "AAPAA",
+                    "APSPA",
+                    "AAPAA",
+                    " AAA "
+                ],
+                "result": {"count": 2, "id": "create:crushing_wheel"}
+            }),
+            &game,
+        );
+        assert_eq!(r.mechanical_crafting.len(), 1);
+        let wheel = &r.mechanical_crafting[0];
+        assert_eq!(wheel.heat_requirement, HeatRequirement::None);
+        assert_eq!(wheel.outputs[0].item, "create:crushing_wheel");
+        assert_eq!(wheel.outputs[0].count, 2);
+        let count_of = |id: &str| wheel.inputs.iter().find(|i| i.item == id).map(|i| i.count);
+        assert_eq!(count_of("create:andesite_alloy"), Some(16));
+        assert_eq!(count_of("minecraft:oak_planks"), Some(4));
+        assert_eq!(count_of("minecraft:stone"), Some(1));
     }
 }

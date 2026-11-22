@@ -416,6 +416,7 @@ impl Game<'_> {
             self.tachyon_assist_use(&stack, hit.pos, &mut claimed);
             self.tachyon_wrench(&stack, hit.pos, hit.face, &mut claimed);
             self.tachyon_belt_connector_use(&stack, hit.pos, &mut claimed);
+            self.tachyon_empty_burner_use(&stack, hit.pos, hit.face, &mut claimed);
             if claimed {
                 self.swing_arm();
                 return Ok(true);

@@ -9,11 +9,30 @@ use super::kinetic::{Axis, Part};
 pub(super) const DEFAULT_SPEED: i32 = 16;
 /// The stationary partial used by Create's SpeedControllerRenderer.
 pub(super) const BRACKET_MODEL: &str = "create:block/rotation_speed_controller/bracket";
+const TARGET_STEPS: [i32; 6] = [8, 16, 32, 64, 128, 256];
 
 /// KineticScrollValueBehaviour's limits, from CKinetics.maxRotationSpeed.
 pub(super) fn limit(speed: i32) -> i32 {
     let max = super::kinetic::MAX_SPEED as i32;
     speed.clamp(-max, max)
+}
+
+/// Steps a controller's target speed (`8 -> 16 -> 32 -> 64 -> 128 -> 256 -> 8`, keeping sign;
+/// `0 -> 16`) on right-click, or flips sign (`-current`) when sneaking.
+pub(super) fn next_target(current: i32, sneaking: bool) -> i32 {
+    if sneaking {
+        return limit(-current);
+    }
+    let current = limit(current);
+    if current == 0 {
+        return DEFAULT_SPEED;
+    }
+    let mag = TARGET_STEPS
+        .iter()
+        .copied()
+        .find(|&s| s > current.abs())
+        .unwrap_or(TARGET_STEPS[0]);
+    if current < 0 { -mag } else { mag }
 }
 
 /// RotationPropagator.isLargeCogToSpeedController: a large cogwheel right
@@ -205,5 +224,21 @@ mod tests {
         assert_eq!(conveyed(-16, 32.0, 64.0, Drive::Shaft, false), -16.0);
         assert_eq!(conveyed(16, 0.0, 0.0, Drive::None, false), 0.0);
         assert_eq!(conveyed(16, 0.0, 0.0, Drive::None, true), 0.0);
+    }
+
+    #[test]
+    fn next_target_steps_powers_of_two_and_flips_on_sneak() {
+        assert_eq!(next_target(0, false), DEFAULT_SPEED);
+        assert_eq!(next_target(0, true), 0);
+        let mut speed = 8;
+        for expected in [16, 32, 64, 128, 256, 8] {
+            speed = next_target(speed, false);
+            assert_eq!(speed, expected);
+        }
+        assert_eq!(next_target(-16, false), -32);
+        assert_eq!(next_target(-256, false), -8);
+        assert_eq!(next_target(32, true), -32);
+        assert_eq!(next_target(-64, true), 64);
+        assert_eq!(next_target(500, false), 8);
     }
 }

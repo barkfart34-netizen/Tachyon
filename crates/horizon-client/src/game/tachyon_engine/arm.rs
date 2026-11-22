@@ -32,30 +32,39 @@ pub(super) enum Phase {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-enum Kind {
+pub(super) enum Kind {
     Container,
     Depot,
     Belt,
     Basin,
+    Burner,
     Funnel([i32; 3]),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Point {
+pub(super) struct Point {
     pos: [i32; 3],
     kind: Kind,
     input: bool,
 }
 
 impl Point {
-    fn new(arm: [i32; 3], pos: [i32; 3], kind: Kind) -> Option<Self> {
+    fn in_range(arm: [i32; 3], pos: [i32; 3]) -> bool {
         let d = [0, 1, 2].map(|i| i64::from(pos[i]) - i64::from(arm[i]));
-        if pos == arm || d.iter().any(|v| v.abs() >= i64::from(RANGE))
-            || d.iter().map(|v| v * v).sum::<i64>() >= i64::from(RANGE * RANGE)
-        {
+        pos != arm
+            && !d.iter().any(|v| v.abs() >= i64::from(RANGE))
+            && d.iter().map(|v| v * v).sum::<i64>() < i64::from(RANGE * RANGE)
+    }
+
+    fn allows_input(kind: Kind) -> bool {
+        matches!(kind, Kind::Container | Kind::Depot | Kind::Belt)
+    }
+
+    fn new(arm: [i32; 3], pos: [i32; 3], kind: Kind) -> Option<Self> {
+        if !Self::in_range(arm, pos) {
             return None;
         }
-        let input = matches!(kind, Kind::Container | Kind::Depot | Kind::Belt)
+        let input = Self::allows_input(kind)
             && (pos[0] < arm[0] || (pos[0] == arm[0] && pos[2] < arm[2]));
         Some(Self { pos, kind, input })
     }
@@ -150,6 +159,56 @@ mod stack {
     }
 }
 
+/// Pre-placement manual interaction point selection (`ArmInteractionPointHandler`),
+/// cycling targets Input -> Output -> Removed (or Output -> Removed for output-only targets).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct Selection {
+    entries: Vec<(Point, bool)>,
+}
+
+impl Selection {
+    pub(super) fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Toggles `pos` of `kind`: returns `Some(true)` if now Input, `Some(false)` if Output,
+    /// or `None` if removed.
+    pub(super) fn toggle(&mut self, pos: [i32; 3], kind: Kind) -> Option<bool> {
+        if let Some(idx) = self.entries.iter().position(|(p, _)| p.pos == pos) {
+            let input = self.entries[idx].1;
+            if input {
+                self.entries[idx].0.kind = kind;
+                self.entries[idx].0.input = false;
+                self.entries[idx].1 = false;
+                return Some(false);
+            }
+            self.entries.remove(idx);
+            return None;
+        }
+        let input = Point::allows_input(kind);
+        self.entries.push((Point { pos, kind, input }, input));
+        Some(input)
+    }
+
+    /// Filters selected points within strict 5-block range of `arm`.
+    pub(super) fn for_arm(&self, arm: [i32; 3]) -> Vec<Point> {
+        self.entries
+            .iter()
+            .filter_map(|(p, input)| {
+                Point::in_range(arm, p.pos).then_some(Point {
+                    pos: p.pos,
+                    kind: p.kind,
+                    input: *input && Point::allows_input(p.kind),
+                })
+            })
+            .collect()
+    }
+}
+
 /// What the owner saves, including both independent round-robin cursors.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -165,6 +224,8 @@ pub(super) struct Arm {
     last_output: i32,
     previous: Angles,
     previous_base: f32,
+    #[serde(default)]
+    pub(super) manual: bool,
     #[serde(skip, default = "lazy_ticks")]
     lazy: u8,
     #[serde(skip)]
@@ -178,7 +239,8 @@ impl Default for Arm {
         Self {
             inputs: Vec::new(), outputs: Vec::new(), phase: Phase::SearchInputs,
             progress: 0.0, chased: -1, held: None, last_input: -1, last_output: -1,
-            previous: Angles::default(), previous_base: 0.0, lazy: LAZY_TICKS, started: false,
+            previous: Angles::default(), previous_base: 0.0, manual: false,
+            lazy: LAZY_TICKS, started: false,
         }
     }
 }
@@ -243,6 +305,11 @@ impl Arm {
         self.last_input = -1;
         self.last_output = -1;
         true
+    }
+
+    pub(super) fn set_manual_points(&mut self, points: Vec<Point>) {
+        self.manual = !points.is_empty();
+        self.points(points);
     }
 
     fn target(&self) -> Option<Point> {
@@ -388,12 +455,13 @@ fn kind(part: Option<Part>, container: bool, extracting: bool) -> Option<Kind> {
         Some(Part::Depot) => Some(Kind::Depot),
         Some(Part::Belt(_)) => Some(Kind::Belt),
         Some(Part::Basin) => Some(Kind::Basin),
+        Some(Part::Burner) => Some(Kind::Burner),
         Some(Part::Funnel(d)) => (!extracting).then(|| Kind::Funnel(d.offset())),
         _ => container.then_some(Kind::Container),
     }
 }
 
-fn kind_at(game: &Game<'_>, kinds: &Kinds, pos: [i32; 3]) -> Option<Kind> {
+pub(super) fn kind_at(game: &Game<'_>, kinds: &Kinds, pos: [i32; 3]) -> Option<Kind> {
     if !game.world.chunks.contains_key(&(pos[0] >> 4, pos[2] >> 4)) { return None; }
     let part = kinds.part(game.world.block(pos[0], pos[1], pos[2]).0);
     let extracting = OWNERS.with_borrow(|owners| owners.get(game.dim.id()).is_some_and(|o| o.funnels_out.contains(&pos)));
@@ -549,6 +617,12 @@ impl Transfer for Access<'_, '_> {
                 let behind = [0, 1, 2].map(|i| point.pos[i] - facing[i]);
                 self.put_at(behind, stack, face, simulate)
             }
+            Kind::Burner => {
+                if self.game.tachyon_burner_arm_feed(point.pos, &stack, simulate) {
+                    stack.count -= 1;
+                }
+                (stack.count > 0).then_some(stack)
+            }
             _ => self.put_at(point.pos, stack, Direction::Up, simulate),
         }
     }
@@ -640,7 +714,9 @@ impl Game<'_> {
         for (pos, speed, locked) in arms {
             let mut arm = OWNERS.with_borrow_mut(|owners| owners.entry(dimension).or_default().arms.remove(&pos).unwrap_or_default());
             let mut save = false;
-            if arm.searching() && (!arm.started || ticks % NATURE_TICKS == 1)
+            if !arm.manual
+                && arm.searching()
+                && (!arm.started || ticks % NATURE_TICKS == 1)
                 && let Some(points) = self.tachyon_arm_points(pos, &kinds)
             {
                 save |= arm.points(points);
@@ -1128,5 +1204,31 @@ mod tests {
             assert_eq!(pieces[4].1.transform_point3(Vec3::ZERO) - at, Vec3::new(0.0, spread, -6.0 / 16.0));
             assert_eq!(pieces[5].1.transform_point3(Vec3::ZERO) - at, Vec3::new(0.0, -spread, -6.0 / 16.0));
         }
+    }
+
+    #[test]
+    fn manual_selection_cycles_points_respects_output_only_kinds_and_preserves_manual_arm() {
+        let mut sel = Selection::default();
+        assert_eq!(sel.toggle([1, 0, 0], Kind::Depot), Some(true));
+        assert_eq!(sel.toggle([1, 0, 0], Kind::Depot), Some(false));
+        assert_eq!(sel.toggle([1, 0, 0], Kind::Depot), None);
+
+        // Burner and Basin skip Input and go straight Output -> Removed.
+        assert_eq!(sel.toggle([-1, 0, 0], Kind::Burner), Some(false));
+        assert_eq!(sel.toggle([2, 0, 0], Kind::Container), Some(true));
+        assert_eq!(sel.toggle([10, 0, 0], Kind::Depot), Some(true)); // out of range of [0;3]
+
+        let pts = sel.for_arm([0, 0, 0]);
+        assert_eq!(pts.len(), 2);
+        assert_eq!(kind(Some(Part::Burner), false, false), Some(Kind::Burner));
+        assert!(!Point::new([0, 0, 0], [-1, 0, 0], Kind::Burner).unwrap().input);
+
+        let mut arm = Arm::default();
+        arm.set_manual_points(pts);
+        assert!(arm.manual);
+        assert_eq!(arm.inputs.len(), 1);
+        assert_eq!(arm.outputs.len(), 1);
+        assert_eq!(arm.inputs[0].pos, [2, 0, 0]);
+        assert_eq!(arm.outputs[0].pos, [-1, 0, 0]);
     }
 }

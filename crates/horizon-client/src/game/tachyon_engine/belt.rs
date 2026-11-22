@@ -26,7 +26,9 @@ use std::collections::HashMap;
 
 /// How often a funnel may take out, on the owner's clock.
 const FUNNEL_TICKS: u64 = 8;
-/// The most a funnel takes out at once: a stack, Tachyon's current limit.
+/// The most an andesite funnel takes out at once (`FunnelBlockEntity`).
+const ANDESITE_FUNNEL_STACK: u32 = 1;
+/// The most a brass funnel takes out at once.
 const FUNNEL_STACK: u32 = 64;
 /// How far round its block a funnel reaches for the items to put in.
 const FUNNEL_REACH: f64 = 0.25;
@@ -114,15 +116,35 @@ trait FunnelWorld {
     fn dropped_slice(&self) -> &[ItemEntity];
     fn remove_dropped(&mut self, index: usize);
     fn set_dropped_stack(&mut self, index: usize, stack: ItemStack);
+    fn hold_dropped(&mut self, index: usize);
     fn put(&mut self, at: (i32, i32, i32), stack: ItemStack, face: Direction) -> Option<ItemStack>;
-    fn take(&mut self, at: (i32, i32, i32), face: Direction, most: u32) -> Option<ItemStack>;
+    fn take(
+        &mut self,
+        at: (i32, i32, i32),
+        face: Direction,
+        most: u32,
+        filter: Option<&str>,
+    ) -> Option<ItemStack>;
     fn spawn(&mut self, stack: ItemStack, at: [f64; 3], velocity: [f64; 3], delay: u32);
 }
 
-/// A funnel's tick: collect nearby dropped stacks, or extract while its
-/// mouth is empty. Compared with `FunnelBlockEntity`, its reach, global
-/// clock, stack limit and dropped-item motion are Tachyon's current rules.
+#[cfg(test)]
 fn funnel(world: &mut impl FunnelWorld, pos: [i32; 3], facing: Dir, out: bool, ticks: u64) {
+    funnel_with(world, pos, facing, out, true, None, ticks);
+}
+
+/// A funnel's tick: collect nearby dropped stacks (holding items on a belt when
+/// rejected or filtered out), or extract up to 1 (andesite) / 64 (brass, optionally
+/// filtered) while its mouth is empty.
+fn funnel_with(
+    world: &mut impl FunnelWorld,
+    pos: [i32; 3],
+    facing: Dir,
+    out: bool,
+    brass: bool,
+    filter: Option<&str>,
+    ticks: u64,
+) {
     let o = facing.offset();
     let behind = (pos[0] - o[0], pos[1] - o[1], pos[2] - o[2]);
     let Some(face) = dir_from_name(facing.name()) else {
@@ -140,11 +162,18 @@ fn funnel(world: &mut impl FunnelWorld, pos: [i32; 3], facing: Dir, out: bool, t
         // Last first, so the others keep their places.
         for i in near.into_iter().rev() {
             let stack = world.dropped_slice()[i].stack.clone();
+            if filter.is_some_and(|f| &*stack.item != f) {
+                world.hold_dropped(i);
+                continue;
+            }
             match world.put(behind, stack, face) {
                 None => {
                     world.remove_dropped(i);
                 }
-                Some(rest) => world.set_dropped_stack(i, rest),
+                Some(rest) => {
+                    world.set_dropped_stack(i, rest);
+                    world.hold_dropped(i);
+                }
             }
         }
         return;
@@ -152,7 +181,8 @@ fn funnel(world: &mut impl FunnelWorld, pos: [i32; 3], facing: Dir, out: bool, t
     if !near.is_empty() || ticks % FUNNEL_TICKS != 0 {
         return;
     }
-    let Some(stack) = world.take(behind, face, FUNNEL_STACK) else {
+    let most = if brass { FUNNEL_STACK } else { ANDESITE_FUNNEL_STACK };
+    let Some(stack) = world.take(behind, face, most, filter) else {
         return;
     };
     // Out of its mouth: over its rod when it faces the side.
@@ -188,19 +218,37 @@ impl Game<'_> {
             let Some(owner): Option<&mut Owner> = owners.get_mut(dimension) else {
                 return (Vec::new(), 0);
             };
-            let funnels: Vec<([i32; 3], Dir, bool)> = (owner.index.parts.iter())
+            let funnels: Vec<([i32; 3], Dir, bool, bool, bool, Option<String>)> = (owner.index.parts.iter())
                 .filter_map(|(p, part)| match part {
-                    Part::Funnel(d) => Some((*p, *d, owner.funnels_out.contains(p))),
+                    Part::Funnel(d) => {
+                        let out = owner.funnels_out.contains(p);
+                        let brass = owner.index.brass_funnels.contains(p);
+                        let powered = owner.powered.contains(p);
+                        let filter = brass.then(|| owner.filters.get(p).cloned()).flatten();
+                        Some((*p, *d, out, brass, powered, filter))
+                    }
                     _ => None,
                 })
                 .collect();
             owner.funnel_work = (funnels.iter())
-                .map(|(p, _, out)| (*p, (if *out { "extracting" } else { "inserting" }).to_owned()))
+                .map(|(p, _, out, _, powered, _)| {
+                    let status = if *powered {
+                        "paused"
+                    } else if *out {
+                        "extracting"
+                    } else {
+                        "inserting"
+                    };
+                    (*p, status.to_owned())
+                })
                 .collect();
             (funnels, owner.ticks)
         });
-        for (pos, facing, out) in funnels {
-            funnel(self, pos, facing, out, ticks);
+        for (pos, facing, out, brass, powered, filter) in funnels {
+            if powered {
+                continue;
+            }
+            funnel_with(self, pos, facing, out, brass, filter.as_deref(), ticks);
         }
     }
 }
@@ -215,11 +263,44 @@ impl FunnelWorld for Game<'_> {
     fn set_dropped_stack(&mut self, index: usize, stack: ItemStack) {
         self.dropped.update(index, |item| item.stack = stack);
     }
+    fn hold_dropped(&mut self, index: usize) {
+        let p = self.dropped[index].position;
+        let y = p.y.floor();
+        if p.y - y > 0.75 {
+            return;
+        }
+        let on_belt = OWNERS.with_borrow(|owners| {
+            let Some(o) = owners.get(self.dim.id()) else {
+                return false;
+            };
+            [(0.0, 0.0), (-0.125, 0.0), (0.125, 0.0), (0.0, -0.125), (0.0, 0.125)]
+                .into_iter()
+                .any(|(dx, dz)| {
+                    let cell = [(p.x + dx).floor() as i32, y as i32, (p.z + dz).floor() as i32];
+                    matches!(o.index.parts.get(&cell), Some(Part::Belt(_)))
+                })
+        });
+        if on_belt {
+            self.dropped.update(index, |item| {
+                item.velocity.x = 0.0;
+                item.velocity.z = 0.0;
+            });
+        }
+    }
     fn put(&mut self, at: (i32, i32, i32), stack: ItemStack, face: Direction) -> Option<ItemStack> {
         self.tachyon_container_put(at, stack, face)
     }
-    fn take(&mut self, at: (i32, i32, i32), face: Direction, most: u32) -> Option<ItemStack> {
-        self.tachyon_container_take(at, face, most)
+    fn take(
+        &mut self,
+        at: (i32, i32, i32),
+        face: Direction,
+        most: u32,
+        filter: Option<&str>,
+    ) -> Option<ItemStack> {
+        match filter {
+            Some(want) => self.tachyon_container_take_filtered(at, face, most, want),
+            None => self.tachyon_container_take(at, face, most),
+        }
     }
     fn spawn(&mut self, stack: ItemStack, at: [f64; 3], velocity: [f64; 3], delay: u32) {
         self.spawn_item(stack, at, velocity, delay);
@@ -247,6 +328,7 @@ mod tests {
         collision::CachedCollisionRegistry,
         registry::{BlockRegistry, BlockStateId},
     };
+    use std::collections::HashSet;
     use std::sync::{Arc, OnceLock};
 
     const TOP: f64 = 9.0 / 16.0;
@@ -502,9 +584,21 @@ mod tests {
     struct Funnels {
         dropped: Vec<ItemEntity>,
         depots: HashMap<(i32, i32, i32), Mill>,
+        belts: HashSet<[i32; 3]>,
         puts: Vec<((i32, i32, i32), Direction, ItemStack)>,
         takes: Vec<((i32, i32, i32), Direction, u32)>,
         next_id: u32,
+    }
+    impl Funnels {
+        fn new_with_belts(parts: &Parts) -> Self {
+            Self {
+                belts: parts
+                    .iter()
+                    .filter_map(|(p, part)| matches!(part, Part::Belt(_)).then_some(*p))
+                    .collect(),
+                ..Self::default()
+            }
+        }
     }
     impl FunnelWorld for Funnels {
         fn dropped_slice(&self) -> &[ItemEntity] {
@@ -515,6 +609,24 @@ mod tests {
         }
         fn set_dropped_stack(&mut self, index: usize, stack: ItemStack) {
             self.dropped[index].stack = stack;
+        }
+        fn hold_dropped(&mut self, index: usize) {
+            let p = self.dropped[index].position;
+            let y = p.y.floor();
+            if p.y - y <= 0.75
+                && [(0.0, 0.0), (-0.125, 0.0), (0.125, 0.0), (0.0, -0.125), (0.0, 0.125)]
+                    .into_iter()
+                    .any(|(dx, dz)| {
+                        self.belts.contains(&[
+                            (p.x + dx).floor() as i32,
+                            y as i32,
+                            (p.z + dz).floor() as i32,
+                        ])
+                    })
+            {
+                self.dropped[index].velocity.x = 0.0;
+                self.dropped[index].velocity.z = 0.0;
+            }
         }
         fn put(
             &mut self,
@@ -528,14 +640,25 @@ mod tests {
             };
             tachyon_funnel_put(stack, |one| mill.put(&one.item, one.count) == one.count)
         }
-        fn take(&mut self, at: (i32, i32, i32), face: Direction, most: u32) -> Option<ItemStack> {
+        fn take(
+            &mut self,
+            at: (i32, i32, i32),
+            face: Direction,
+            most: u32,
+            filter: Option<&str>,
+        ) -> Option<ItemStack> {
             self.takes.push((at, face, most));
+            let depot = self.depots.get_mut(&at)?;
             tachyon_funnel_take(
-                self.depots.get_mut(&at)?,
+                depot,
                 most,
                 |mill| {
-                    mill.take_one(true)
-                        .map(|(h, input)| (ItemStack::new(&h.item, h.count), input))
+                    let (h, input) = mill.take_one(true)?;
+                    if filter.is_some_and(|f| h.item != f) {
+                        mill.give_back(h, input);
+                        return None;
+                    }
+                    Some((ItemStack::new(&h.item, h.count), input))
                 },
                 |mill, s, input| {
                     mill.give_back(
@@ -757,12 +880,10 @@ mod tests {
     }
 
     #[test]
-    fn a_full_funnel_rejects_the_stack_but_does_not_hold_it_on_the_belt() {
-        // `BeltInventory` holds a rejected insertion. Tachyon does not yet:
-        // without a solid obstacle the dropped stack carries on and falls.
+    fn a_full_funnel_rejects_the_stack_and_holds_it_on_the_belt() {
         let (parts, belts) = line(Axis::X, 3, -48.0);
         let scene = Scene::new(&parts);
-        let mut funnels = Funnels::default();
+        let mut funnels = Funnels::new_with_belts(&parts);
         let mut full = Mill::default();
         full.put("minecraft:stone", 64);
         funnels.depots.insert((4, 0, 0), full);
@@ -776,8 +897,70 @@ mod tests {
         assert_eq!(funnels.depots[&(4, 0, 0)].input.as_ref().unwrap().count, 64);
         assert_eq!(funnels.dropped.len(), 1);
         assert_eq!(funnels.dropped[0].stack, ItemStack::new("minecraft:stone", 12));
-        assert!(funnels.dropped[0].position.x > 3.125);
-        assert!(funnels.dropped[0].position.y < TOP);
+        assert!(funnels.dropped[0].position.x <= 3.0);
+        assert!(funnels.dropped[0].on_ground);
+        // Once room opens in the container behind the funnel, the held stack is inserted.
+        funnels.depots.get_mut(&(4, 0, 0)).unwrap().input = None;
+        funnel(&mut funnels, [3, 0, 0], Dir::West, false, 21);
+        assert!(funnels.dropped.is_empty());
+        assert_eq!(funnels.depots[&(4, 0, 0)].input.as_ref().unwrap().count, 12);
+    }
+
+    #[test]
+    fn andesite_extracts_one_brass_extracts_64_and_filters_match() {
+        let mut funnels = Funnels::default();
+        let mut source = Mill::default();
+        source.put("minecraft:iron_ingot", 10);
+        funnels.depots.insert((-1, 0, 0), source);
+
+        // Andesite funnel extracts 1 item at a time.
+        funnel_with(&mut funnels, [0, 0, 0], Dir::East, true, false, None, 8);
+        assert_eq!(funnels.takes.last(), Some(&((-1, 0, 0), Direction::East, 1)));
+        assert_eq!(funnels.dropped.len(), 1);
+        assert_eq!(funnels.dropped[0].stack.count, 1);
+
+        // Brass funnel extracts up to 64 and respects filter.
+        funnels.dropped.clear();
+        funnel_with(
+            &mut funnels,
+            [0, 0, 0],
+            Dir::East,
+            true,
+            true,
+            Some("minecraft:gold_ingot"),
+            16,
+        );
+        assert!(funnels.dropped.is_empty());
+        funnel_with(
+            &mut funnels,
+            [0, 0, 0],
+            Dir::East,
+            true,
+            true,
+            Some("minecraft:iron_ingot"),
+            24,
+        );
+        assert_eq!(funnels.dropped.len(), 1);
+        assert_eq!(funnels.dropped[0].stack.count, 9);
+
+        // Filtered insertion ignores non-matching stacks and holds them on belt.
+        let (parts, _) = line(Axis::X, 2, -48.0);
+        let mut belt_funnels = Funnels::new_with_belts(&parts);
+        belt_funnels.depots.insert((3, 0, 0), Mill::default());
+        belt_funnels.dropped.push(item(1, point(Axis::X, 1.75), 4));
+        belt_funnels.dropped[0].velocity.x = 0.1;
+        funnel_with(
+            &mut belt_funnels,
+            [2, 0, 0],
+            Dir::West,
+            false,
+            true,
+            Some("minecraft:diamond"),
+            1,
+        );
+        assert_eq!(belt_funnels.dropped.len(), 1);
+        assert_eq!(belt_funnels.dropped[0].velocity.x, 0.0);
+        assert!(belt_funnels.puts.is_empty());
     }
 
     #[test]
@@ -857,9 +1040,9 @@ mod tests {
             ..Mill::default()
         };
         funnels.depots.insert((-1, 0, 0), source);
-        assert_eq!(funnels.take((-1, 0, 0), Direction::East, 1).unwrap().count, 1);
+        assert_eq!(funnels.take((-1, 0, 0), Direction::East, 1, None).unwrap().count, 1);
         assert_eq!(
-            funnels.take((-1, 0, 0), Direction::East, 64).unwrap(),
+            funnels.take((-1, 0, 0), Direction::East, 64, None).unwrap(),
             ItemStack::new("minecraft:stone", 1),
         );
         let source = &funnels.depots[&(-1, 0, 0)];
@@ -869,7 +1052,7 @@ mod tests {
         );
         assert!(source.outputs.is_empty());
         assert_eq!(
-            funnels.take((-1, 0, 0), Direction::East, 64).unwrap(),
+            funnels.take((-1, 0, 0), Direction::East, 64, None).unwrap(),
             ItemStack::new("minecraft:dirt", 3),
         );
     }

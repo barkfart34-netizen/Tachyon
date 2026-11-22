@@ -295,6 +295,8 @@ pub enum Part {
     /// Create's chute, facing down or toward its diagonal input, holding
     /// one stack (tachyon_engine/chute.rs).
     Chute(Dir, ChuteShape),
+    /// Create's smart chute: vertical only, extracts up to 64, filterable and redstone-pausable.
+    SmartChute,
 }
 
 impl Part {
@@ -345,6 +347,7 @@ impl Part {
             | Part::Burner
             | Part::LitBurner
             | Part::Chute(_, _)
+            | Part::SmartChute
             | Part::Pipe(_)
             | Part::Pump(_)
             | Part::Tank

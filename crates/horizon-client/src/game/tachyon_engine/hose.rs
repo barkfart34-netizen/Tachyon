@@ -4,20 +4,28 @@
 //! turned the other way, stopping above the first block a fluid can't wash away; stopped, it is a
 //! fluid end for the pumps (`fluids.rs`) through its pipe side: pulled from, it takes the highest
 //! source of the fluid body its hose is in, the farthest of them first, within 128 blocks
-//! (`hosePulleyRange`), water without end once the body is 10000 blocks (`hosePulleyBlockThreshold`);
-//! pushed into, it pours a bucket's source where the hose reaches, the lowest free place first.
+//! (`hosePulleyRange`), water and lava without end once the body is 10000 blocks
+//! (`hosePulleyBlockThreshold`); pushed into, it pours a bucket's source where the hose reaches,
+//! the lowest free place first.
 //!
 //! Not as Create: no fluids but water and lava placed, a body's blocks are counted again for each
-//! bucket instead of kept, no infinite-lava rule, the hose's coil doesn't scroll.
-use super::fluids::{BUCKET, Tank};
+//! bucket instead of kept, the hose's coil doesn't scroll.
+use super::fluids::{BUCKET, FLUID, Tank};
 use super::kinetic::{Dir, Part};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
 
 /// `hosePulleyRange`: how far from its hose a pulley takes or pours.
 pub(super) const RANGE: i32 = 128;
-/// `hosePulleyBlockThreshold`: a body of water this large has no end.
+/// `hosePulleyBlockThreshold`: a body of water or lava this large has no end.
 pub(super) const THRESHOLD: usize = 10_000;
+
+/// `FluidManipulationBehaviour.canDrainInfinitely` (per Create's `bottomlessFluidMode`):
+/// water and lava bodies of at least `THRESHOLD` blocks drain without consuming source blocks.
+pub(super) fn is_bottomless(fluid: &str, body_size: usize) -> bool {
+    let fluid = fluid.strip_prefix(FLUID).unwrap_or(fluid);
+    body_size >= THRESHOLD && matches!(fluid, "minecraft:water" | "minecraft:lava")
+}
 
 /// `Direction.getClockWise` (seen from above).
 pub(super) fn clockwise(d: Dir) -> Dir {
@@ -81,7 +89,7 @@ pub(super) enum Cell {
 }
 
 impl Cell {
-    fn fluid(self) -> Option<&'static str> {
+    pub(super) fn fluid(self) -> Option<&'static str> {
         match self {
             Cell::Source(f) | Cell::Flowing(f) => Some(f),
             _ => None,
@@ -99,8 +107,8 @@ fn distance(a: [i32; 3], b: [i32; 3]) -> i64 {
 }
 
 /// FluidDrainingBehaviour: the fluid of the body at `root` and the source to take from it, its
-/// highest and of those the farthest from the hose; no source to take when it is water without
-/// end. None with no fluid there.
+/// highest and of those the farthest from the hose; no source to take when the body is bottomless
+/// (`is_bottomless`, water or lava of at least `THRESHOLD` blocks). None with no fluid there.
 pub(super) fn drain(root: [i32; 3], cell: impl Fn([i32; 3]) -> Cell) -> Option<(&'static str, Option<[i32; 3]>)> {
     let fluid = cell(root).fluid()?;
     let mut seen = HashSet::from([root]);
@@ -114,7 +122,7 @@ pub(super) fn drain(root: [i32; 3], cell: impl Fn([i32; 3]) -> Cell) -> Option<(
             best = Some(p);
         }
         if seen.len() >= THRESHOLD {
-            if fluid == "minecraft:water" {
+            if is_bottomless(fluid, seen.len()) {
                 return Some((fluid, None));
             }
             continue;
@@ -224,7 +232,7 @@ impl super::super::Game<'_> {
     }
 
     /// Where a stopped hose of the pulley at `p` reaches, if it is down.
-    fn tachyon_hose_root(&self, p: [i32; 3]) -> Option<[i32; 3]> {
+    pub(super) fn tachyon_hose_root(&self, p: [i32; 3]) -> Option<[i32; 3]> {
         let dimension = self.native_dimension();
         let hose = super::OWNERS.with_borrow(|owners| owners.get(dimension).and_then(|o| o.hoses.get(&p)).copied())?;
         let down = hose.offset.ceil() as i32;
@@ -334,5 +342,38 @@ mod tests {
         let cell = |p: [i32; 3]| pit.get(&p).copied().unwrap_or(Cell::Blocked);
         assert!(matches!(fill([0, 2, 0], "minecraft:water", cell), Some([-1 | 1, 0, 0])));
         assert_eq!(fill([0, 2, 0], "minecraft:water", |_| Cell::Blocked), None);
+    }
+
+    #[test]
+    fn water_and_lava_bodies_at_threshold_are_bottomless() {
+        assert!(!is_bottomless("minecraft:water", THRESHOLD - 1));
+        assert!(is_bottomless("minecraft:water", THRESHOLD));
+        assert!(!is_bottomless("minecraft:lava", THRESHOLD - 1));
+        assert!(is_bottomless("minecraft:lava", THRESHOLD));
+        assert!(is_bottomless("fluid:minecraft:lava", THRESHOLD + 5));
+        assert!(!is_bottomless("create:honey", THRESHOLD));
+
+        // 25 x 20 x 20 = 10,000 blocks, all within RANGE (128).
+        let in_box = |p: [i32; 3]| (-12..=12).contains(&p[0]) && (0..20).contains(&p[1]) && (-10..10).contains(&p[2]);
+        assert_eq!(
+            drain([0, 19, 0], |p| if in_box(p) { Cell::Source("minecraft:lava") } else { Cell::Blocked }),
+            Some(("minecraft:lava", None))
+        );
+        assert_eq!(
+            drain([0, 19, 0], |p| if in_box(p) { Cell::Source("minecraft:water") } else { Cell::Blocked }),
+            Some(("minecraft:water", None))
+        );
+        // One block shy of THRESHOLD (9,999): drains a concrete source block.
+        let (_, taken) = drain([0, 19, 0], |p| {
+            if in_box(p) && p != [12, 0, 9] { Cell::Source("minecraft:lava") } else { Cell::Blocked }
+        })
+        .unwrap();
+        assert!(taken.is_some());
+        // Non-bottomless fluid at >= THRESHOLD still drains a source block.
+        let (_, honey) = drain([0, 19, 0], |p| {
+            if in_box(p) { Cell::Source("create:honey") } else { Cell::Blocked }
+        })
+        .unwrap();
+        assert!(honey.is_some());
     }
 }
