@@ -45,7 +45,7 @@ jobs:
       # Shadow .cargo/config.toml (-Zthreads=8) so rustc stays within 16 GB RAM on ubuntu-24.04.
       RUSTFLAGS: -C debuginfo=0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Free disk space
         run: bash .github/tachyon/free-disk.sh
@@ -60,20 +60,20 @@ jobs:
           cache-on-failure: true
 
       # Java 25 runs horizon-prepare's exporters; Gradle runs on 17.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: |
             25
             17
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: "8.14.3"
 
       - name: Cached resources
         id: resources
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .tachyon/resources
           key: resources-26.3-${{ hashFiles('research-lock.json', 'crates/horizon-prepare/**', 'mods/horizon/src/test/java/dev/horizonlab/parity/**') }}
@@ -85,7 +85,7 @@ jobs:
       # Saved at once, so a failed or cancelled build later keeps them.
       - name: Save the resources
         if: steps.resources.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: .tachyon/resources
           key: ${{ steps.resources.outputs.cache-primary-key }}
