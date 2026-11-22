@@ -5,8 +5,14 @@ mod constants;
 pub use constants::{GUEST_STACK_BYTES, HOST_HEADROOM};
 
 /// Spawn guarantees the reservation even on platforms without a stack-size query.
+/// Android runs no guest VM runtime; 16 MiB matches `SERVER_THREAD_STACK` and
+/// `RUST_MIN_STACK` in `TachyonActivity` without reserving 136 MiB per helper thread.
 pub fn builder() -> std::thread::Builder {
-    std::thread::Builder::new().stack_size(GUEST_STACK_BYTES + HOST_HEADROOM)
+    #[cfg(target_os = "android")]
+    const STACK: usize = 16 * 1024 * 1024;
+    #[cfg(not(target_os = "android"))]
+    const STACK: usize = GUEST_STACK_BYTES + HOST_HEADROOM;
+    std::thread::Builder::new().stack_size(STACK)
 }
 
 /// Starts a thread that may enter a guest: guest-sized and named `name`, and in debug builds it

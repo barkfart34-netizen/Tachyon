@@ -203,12 +203,6 @@ path = "tests/it/main.rs"
 name = "tachyon-desktop"
 path = "src/tachyon_main.rs"
 
-# Tachyon's Android app: the game and the launcher in one library the activity loads.
-[[example]]
-name = "tachyon"
-path = "src/android_main.rs"
-crate-type = ["cdylib"]
-required-features = ["android"]
 [lints]
 workspace = true
 

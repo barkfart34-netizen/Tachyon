@@ -67,5 +67,4 @@ jobs:
           export CC_aarch64_linux_android="$llvm/aarch64-linux-android29-clang"
           export CXX_aarch64_linux_android="$llvm/aarch64-linux-android29-clang++"
           export AR_aarch64_linux_android="$llvm/llvm-ar"
-          cargo check -p horizon-client --example tachyon --target aarch64-linux-android \
-              --no-default-features --features audio,android
+          cargo check -p tachyon-android --target aarch64-linux-android

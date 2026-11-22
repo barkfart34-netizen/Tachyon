@@ -46,11 +46,10 @@ rm -rf "$stage"
 mkdir -p "$stage/jniLibs/$abi" "$stage/assets"
 
 echo "== The game ($TACHYON_BUILD, profile $profile)"
-cargo build --manifest-path "$repo/Cargo.toml" -p horizon-client --example tachyon \
-    --target "$target" --profile "$profile" \
-    --no-default-features --features audio,android
+cargo build --manifest-path "$repo/Cargo.toml" -p tachyon-android \
+    --target "$target" --profile "$profile"
 "$llvm/llvm-strip" --strip-debug -o "$stage/jniLibs/$abi/libtachyon.so" \
-    "$repo/target/$target/$profile/examples/libtachyon.so"
+    "$repo/target/$target/$profile/libtachyon.so"
 
 echo "== The resources"
 [ -f "$resources/horizon-client/26.3/horizon-resources.json" ] \

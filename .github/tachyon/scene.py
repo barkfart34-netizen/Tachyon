@@ -815,6 +815,10 @@ def main():
     os.makedirs(home, exist_ok=True)
     os.makedirs(out, exist_ok=True)
     endpoint = os.path.join(home, "control.json")
+    try:
+        os.remove(endpoint)
+    except FileNotFoundError:
+        pass
     env = dict(
         os.environ,
         TACHYON_GAME="1",

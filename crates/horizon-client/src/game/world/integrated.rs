@@ -1031,7 +1031,7 @@ impl Game<'_> {
         };
         startup::time("server.lan_host", || self.lan_host(settings, net, config))?;
         let commands = self.allow_commands();
-        let pipe = {
+        {
             let host = self
                 .lan
                 .as_mut()
@@ -1044,8 +1044,7 @@ impl Game<'_> {
                 uuid: owner,
                 saved: Some(saved),
             });
-            host.hub.lan.connect_local()?
-        };
+        }
         self.serving = Some(Serving {
             flags: flags.clone(),
             tasks,
@@ -1054,11 +1053,19 @@ impl Game<'_> {
             load: LoadPhase::default(),
         });
         // MinecraftServer.prepareLevels: the saved tickets' chunks load; the
-        // player's chunks come after.
+        // player's chunks come after. Open the local pipe only after this so a
+        // slow device/emulator cannot trip `LOGIN_TIMEOUT` while chunks load.
         let view = &flags.load;
         view.start(Stage::LoadInitialChunks, 0);
         startup::time("server.prepare_levels", || self.prepare_levels())?;
         view.finish(Stage::LoadInitialChunks);
+        let pipe = self
+            .lan
+            .as_ref()
+            .ok_or("the integrated server did not start")?
+            .hub
+            .lan
+            .connect_local()?;
         let _ = ready.send(Ok((pipe, self.level.name.clone())));
         startup::time("server.settle_spawn", || self.settle_spawn())
     }

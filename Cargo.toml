@@ -24,6 +24,7 @@ members = [
     "crates/horizon-hdr",
     "crates/horizon-world",
     "crates/horizon-client",
+    "crates/tachyon-android",
     "crates/horizon-quests",
     "crates/megamap-engine",
     "crates/orbital-laser",

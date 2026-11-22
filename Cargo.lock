@@ -5676,6 +5676,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "tachyon-android"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "bytemuck",
+ "horizon-client",
+ "horizon-core",
+ "horizon-mod-package",
+ "horizon-port-pack",
+ "horizon-theme",
+ "jni 0.22.4",
+ "libc",
+ "log",
+ "ndk-context",
+ "png",
+ "pollster",
+ "serde_json",
+ "sha2",
+ "ureq",
+ "wgpu",
+ "winit",
+ "zip",
+]
+
+[[package]]
 name = "tar"
 version = "0.4.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
