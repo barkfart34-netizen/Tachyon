@@ -5695,6 +5695,7 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "bytemuck",
+ "flate2",
  "horizon-client",
  "horizon-core",
  "horizon-mod-package",
@@ -5706,6 +5707,7 @@ dependencies = [
  "ndk-context",
  "png",
  "pollster",
+ "serde",
  "serde_json",
  "sha2",
  "ureq",

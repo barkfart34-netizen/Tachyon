@@ -147,6 +147,11 @@ pub fn install(app: &AndroidApp, paths: &Paths, report: &Report) -> Result<(), S
     if !unpacked(app, "content", &paths.content) {
         report.line("Unpacking Tachyon's mods".into());
         unpack(app, "content", &paths.content, report)?;
+        report.line("Refreshing Create assets".into());
+        crate::tachyon::create_port::refresh(
+            &paths.home.join(horizon_client::mod_list::DIR).join("create"),
+            Some(&paths.root.join("cache").join(crate::tachyon::fetch::CREATE.file)),
+        );
     }
     report.line("Ready".into());
     Ok(())
