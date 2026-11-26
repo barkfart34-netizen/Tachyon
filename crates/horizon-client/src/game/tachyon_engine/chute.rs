@@ -441,7 +441,7 @@ pub(in crate::game) fn place<L: LevelAccess + ?Sized>(
     ticks: &mut Ticks,
     ctx: &PlaceContext,
 ) -> PlaceOutcome {
-    if ctx.item != "create:chute" {
+    if crate::tachyon_native_mods::create_active() || ctx.item != "create:chute" {
         return b.place_block(level, ticks, ctx);
     }
     let Some((proposed, _)) = preview_place(registry, b, level, ticks, ctx) else {

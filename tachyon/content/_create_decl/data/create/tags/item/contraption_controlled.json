@@ -1,0 +1,25 @@
+{
+  "values": [
+    "minecraft:bell",
+    "minecraft:campfire",
+    "minecraft:soul_campfire",
+    "minecraft:dispenser",
+    "minecraft:dropper",
+    "create:mechanical_drill",
+    "create:mechanical_saw",
+    "create:deployer",
+    "create:andesite_funnel",
+    "create:brass_funnel",
+    "create:mechanical_harvester",
+    "create:andesite_door",
+    "create:brass_door",
+    "create:copper_door",
+    "create:train_door",
+    "create:framed_glass_door",
+    "create:mechanical_plough",
+    "create:portable_storage_interface",
+    "create:portable_fluid_interface",
+    "create:redstone_contact",
+    "create:mechanical_roller"
+  ]
+}

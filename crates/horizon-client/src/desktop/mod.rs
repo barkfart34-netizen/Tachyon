@@ -74,6 +74,9 @@ pub fn main() {
         std::process::exit(fetch_mod(fetch));
     }
     let paths = Paths::new();
+    if let Some(resources) = paths.resources.as_ref() {
+        horizon_client::brand::set_content(resources.join(brand::CONTENT));
+    }
     let _ = std::fs::create_dir_all(&paths.data);
     logging::init(&paths.data, "Launcher");
     crash::install(paths.data.clone(), "launcher");
@@ -170,6 +173,9 @@ fn import_file(file: &Path) -> i32 {
 /// kept in the folder's `cache`), saying how it went in
 /// `tachyon-import.txt`. Returns the exit code.
 fn fetch_mod(fetch: crate::tachyon::fetch::Fetch) -> i32 {
+    if let Some(resources) = game_resources() {
+        horizon_client::brand::set_content(resources.join(brand::CONTENT));
+    }
     let home = logging::game_home();
     let _ = std::fs::create_dir_all(&home);
     let cache = home.join("cache");

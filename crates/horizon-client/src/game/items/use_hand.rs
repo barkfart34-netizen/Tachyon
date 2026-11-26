@@ -408,7 +408,9 @@ impl Game<'_> {
         let (Some(stack), Some(info)) = (stack, info) else {
             return Ok(false);
         };
-        if let Some(hit) = block_hit {
+        if !crate::tachyon_native_mods::create_active()
+            && let Some(hit) = block_hit
+        {
             let mut claimed = false;
             self.tachyon_girder_use(&stack, hit.pos, hit.face, &mut claimed);
             self.tachyon_bracket_use(&stack, hit.pos, hit.face, &mut claimed);

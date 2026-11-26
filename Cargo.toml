@@ -26,6 +26,8 @@ members = [
     "crates/horizon-client",
     "crates/tachyon-android",
     "crates/horizon-quests",
+    "crates/mod-create",
+    "crates/mod-create/src/kinetics",
     "crates/megamap-engine",
     "crates/orbital-laser",
     "crates/horizon-engine-slots",

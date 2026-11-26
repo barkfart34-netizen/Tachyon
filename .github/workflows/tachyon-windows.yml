@@ -22,6 +22,7 @@ on:
       - "crates/horizon-client/src/game/modding/**"
       - "crates/horizon-client/src/mod_content.rs"
       - "crates/horizon-quests/**"
+      - "crates/mod-create/**"
       - "crates/megamap-engine/**"
       - ".github/tachyon/scene.py"
       - "tachyon/**"

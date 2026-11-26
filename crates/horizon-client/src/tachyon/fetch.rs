@@ -149,6 +149,24 @@ pub fn get(f: &Fetch, home: &Path, cache: &Path, report: &dyn Fn(String)) -> Res
         imported.note = notes.join(" ");
         return Ok(imported);
     }
+    if f.id == CREATE.id
+        && let Some(decl) = horizon_client::brand::content()
+            .map(|c| c.join("_create_decl"))
+            .filter(|d| d.is_dir())
+    {
+        report(format!("Staging {} assets from {}", f.name, f.file));
+        let port = home.join(horizon_client::mod_list::DIR).join(f.id);
+        super::create_port::stage_create_horizon(&decl, &jar, &port)?;
+        let mut list = horizon_client::mod_list::ModList::load(home);
+        if list.disabled.remove(f.id) || list.enabled.insert(f.id.to_owned()) {
+            list.save(home);
+        }
+        return Ok(Imported {
+            what: import::Kind::Mod,
+            name: f.name.to_owned(),
+            note: format!("{} (Create-Horizon) installed and enabled.", f.name),
+        });
+    }
     report(format!("Taking {}'s content out of its file", f.name));
     let taken = cache.join(format!("{}-content.jar", f.id));
     let result = take(&jar, &taken, f.take).and_then(|()| import::import(&taken, f.file, home, report));

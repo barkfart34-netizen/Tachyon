@@ -20,6 +20,11 @@ use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
 
+#[path = "create_horizon_stage.rs"]
+mod create_horizon_stage;
+
+pub use create_horizon_stage::stage_create_horizon;
+
 /// Each engine block's template and its properties.
 const TEMPLATES: &[(&str, &str, f64, &str)] = &[
     // A thin rod along its axis, as Kinetica's.
@@ -415,6 +420,22 @@ const STAMP: &str = ".tachyon-fix";
 /// Tachyon again, once: the engine has learned more of its blocks since.
 /// `jar`, Create's own file where it is kept, gives back their recipes.
 pub fn refresh(dir: &Path, jar: Option<&Path>) {
+    if let Some(jar) = jar.filter(|j| j.is_file())
+        && !dir
+            .join(horizon_client::tachyon_native_mods::CREATE_HORIZON_STAMP)
+            .is_file()
+        && let Some(decl) = horizon_client::brand::content()
+            .map(|c| c.join("_create_decl"))
+            .filter(|d| d.is_dir())
+    {
+        match stage_create_horizon(&decl, jar, dir) {
+            Ok(()) => {
+                log::info!("Tachyon: Create (Create-Horizon) staged from jar");
+                return;
+            }
+            Err(e) => log::warn!("Tachyon: Create-Horizon staging failed: {e}"),
+        }
+    }
     if !dir.join("data/create/horizon/block").is_dir()
         || fs::read_to_string(dir.join(STAMP)).is_ok_and(|v| v.trim() == VERSION)
     {

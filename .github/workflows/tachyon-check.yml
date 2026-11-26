@@ -47,6 +47,7 @@ jobs:
       - name: Tachyon's tests
         run: |
           cargo test -p horizon-quests
+          cargo test -p create-kinetics
           cargo test -p megamap-engine --release -- --test-threads=1
           cargo test -p horizon-client --lib -- tachyon native_hooks
           cargo test -p horizon-client --bin tachyon-desktop -- tachyon desktop

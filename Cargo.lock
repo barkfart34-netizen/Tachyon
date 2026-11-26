@@ -973,6 +973,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "create-kinetics"
+version = "0.1.0"
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1871,6 +1875,7 @@ dependencies = [
  "libc",
  "log",
  "megamap-engine",
+ "mod-create",
  "naga",
  "ndk-context",
  "objc2 0.6.5",
@@ -3612,6 +3617,15 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mod-create"
+version = "0.1.0"
+dependencies = [
+ "create-kinetics",
+ "flate2",
+ "horizon-mod-api",
 ]
 
 [[package]]

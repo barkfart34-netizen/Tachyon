@@ -4,18 +4,87 @@
 //! the engine without on-device Rust compilation or `[native]` source directories on disk.
 
 use horizon_mod_package::{packages, runtime::Runtime};
-use std::sync::Once;
+use std::sync::{
+    Once,
+    atomic::{AtomicBool, Ordering},
+};
 
-/// Statically linked `horizon-mod-api` mods bundled into Tachyon.
-pub const BUILTIN_MODS: &[mod_api::__private::native::BuiltMod] = &[horizon_quests::BUILT];
+/// Base statically linked `horizon-mod-api` mods bundled into Tachyon.
+const BUILTIN_BASE: &[mod_api::__private::native::BuiltMod] = &[horizon_quests::BUILT];
+/// Statically linked `horizon-mod-api` mods when Create (`mod-create`) is staged.
+const BUILTIN_WITH_CREATE: &[mod_api::__private::native::BuiltMod] =
+    &[horizon_quests::BUILT, mod_create::BUILT];
+
+/// Statically linked `horizon-mod-api` mods known to Tachyon.
+pub const BUILTIN_MODS: &[mod_api::__private::native::BuiltMod] = BUILTIN_WITH_CREATE;
+
+static CREATE_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Whether the vendored `mod-create` native mod is active for this session.
+pub fn create_active() -> bool {
+    CREATE_ACTIVE.load(Ordering::Relaxed)
+}
+
+/// Marker written into `horizon-mods/create/` once `create_port::stage_create_horizon`
+/// has staged the `Create-Horizon` declarations and Create 6.0.10 JAR assets.
+pub const CREATE_HORIZON_STAMP: &str = ".tachyon-create-horizon-v1";
+
+fn create_package_dir() -> std::path::PathBuf {
+    horizon_client::logging::game_home()
+        .join(horizon_client::mod_list::DIR)
+        .join("create")
+}
+
+fn create_ready() -> Option<packages::AdjacentManifest> {
+    let home = horizon_client::logging::game_home();
+    if horizon_client::mod_list::ModList::load(&home)
+        .disabled
+        .contains("create")
+    {
+        return None;
+    }
+    let dir = create_package_dir();
+    if !dir.join(CREATE_HORIZON_STAMP).is_file() || !dir.join("horizon-mod.toml").is_file() {
+        return None;
+    }
+    match packages::read_bundled_native(&dir) {
+        Ok(pkg)
+            if pkg.manifest.id == mod_create::BUILT.id
+                && pkg.manifest.version == mod_create::BUILT.version
+                && pkg.manifest.side == mod_create::BUILT.side =>
+        {
+            Some(pkg)
+        }
+        Ok(pkg) => {
+            log::warn!(
+                "Tachyon: create package identity mismatch (got {} {} {:?}) at {}",
+                pkg.manifest.id,
+                pkg.manifest.version,
+                pkg.manifest.side,
+                dir.display()
+            );
+            None
+        }
+        Err(error) => {
+            log::warn!(
+                "Tachyon: staged create package unreadable at {}: {error}",
+                dir.display()
+            );
+            None
+        }
+    }
+}
 
 /// Initializes the `horizon-mod-api` platform slots, registers Tachyon's statically linked
-/// native mods, and reads their bundled asset/data manifests from `brand::content()`.
+/// native mods, and reads their bundled asset/data manifests from `brand::content()` and
+/// (when staged) `<home>/horizon-mods/create`.
 ///
 /// Must be called after `brand::set_content(...)` (and on Android, after `content.zip` has
 /// been unpacked into the content directory). Safe to call at most once per process.
 pub fn install() -> Runtime {
     static INIT: Once = Once::new();
+    let staged_create = create_ready();
+    let has_create = staged_create.is_some();
     INIT.call_once(|| {
         if let Err(error) = horizon_engine_slots::install_seal(mod_points::__private::seal) {
             log::warn!("Tachyon: engine seal already installed: {error}");
@@ -37,13 +106,20 @@ pub fn install() -> Runtime {
         }
         crate::game::startup_progress::install(false);
         crate::entry::install_noop_code_runtime();
-        let mods = vec![mod_api::ModEntry::new(
+        let mut mods = vec![mod_api::ModEntry::new(
             horizon_quests::hq_meta::ID,
             horizon_quests::hooks(),
         )];
+        let builtin = if has_create {
+            mods.push(mod_api::ModEntry::new("create", mod_create::hooks()));
+            CREATE_ACTIVE.store(true, Ordering::Relaxed);
+            BUILTIN_WITH_CREATE
+        } else {
+            BUILTIN_BASE
+        };
         mod_api::__private::install(mods.into());
         horizon_client::save::level_mods::set_loaded(Some(
-            BUILTIN_MODS
+            builtin
                 .iter()
                 .map(|m| horizon_client::save::level_mods::ModRecord {
                     id: m.id.to_owned(),
@@ -53,40 +129,50 @@ pub fn install() -> Runtime {
         ));
     });
 
+    let active_create = create_active();
+    let expected_slice = if active_create {
+        BUILTIN_WITH_CREATE
+    } else {
+        BUILTIN_BASE
+    };
+
     let mut bundled = Vec::new();
     if let Some(root) = horizon_client::brand::content() {
-        for expected in BUILTIN_MODS {
-            let path = root.join(expected.id);
-            match packages::read_bundled_native(&path) {
-                Ok(pkg) => {
-                    if pkg.manifest.id == expected.id
-                        && pkg.manifest.version == expected.version
-                        && pkg.manifest.side == expected.side
-                    {
-                        bundled.push(pkg);
-                    } else {
-                        log::error!(
-                            "Tachyon: bundled native mod {} identity mismatch at {}",
-                            expected.id,
-                            path.display()
-                        );
-                    }
-                }
-                Err(error) => {
+        let expected = &horizon_quests::BUILT;
+        let path = root.join(expected.id);
+        match packages::read_bundled_native(&path) {
+            Ok(pkg) => {
+                if pkg.manifest.id == expected.id
+                    && pkg.manifest.version == expected.version
+                    && pkg.manifest.side == expected.side
+                {
+                    bundled.push(pkg);
+                } else {
                     log::error!(
-                        "Tachyon: bundled native mod {} missing or unreadable at {}: {error}",
+                        "Tachyon: bundled native mod {} identity mismatch at {}",
                         expected.id,
                         path.display()
                     );
                 }
+            }
+            Err(error) => {
+                log::error!(
+                    "Tachyon: bundled native mod {} missing or unreadable at {}: {error}",
+                    expected.id,
+                    path.display()
+                );
             }
         }
     } else {
         log::warn!("Tachyon: brand::content() not set when loading bundled native mods");
     }
 
-    if bundled.len() == BUILTIN_MODS.len() {
-        Runtime::from_bundled(BUILTIN_MODS, bundled)
+    if active_create && let Some(pkg) = staged_create {
+        bundled.push(pkg);
+    }
+
+    if bundled.len() == expected_slice.len() {
+        Runtime::from_bundled(expected_slice, bundled)
     } else {
         Runtime::default()
     }

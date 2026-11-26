@@ -1,0 +1,15 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "NA",
+    "AN"
+  ],
+  "key": {
+    "A": "minecraft:andesite",
+    "N": "#c:nuggets/iron"
+  },
+  "result": {
+    "id": "create:andesite_alloy"
+  }
+}

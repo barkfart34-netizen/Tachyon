@@ -779,7 +779,9 @@ pub(super) fn content_overlay(
         .selected
         .iter()
         .filter(|p| {
-            !built_in_ids.contains(p.package.manifest.id.as_str()) || sources.dev.contains(&p.path)
+            let id = p.package.manifest.id.as_str();
+            let already_native = sources.native.built().iter().any(|b| b.id == id);
+            !already_native && (!built_in_ids.contains(id) || sources.dev.contains(&p.path))
         })
         .map(|p| PackageSource {
             path: &p.path,

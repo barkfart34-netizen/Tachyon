@@ -142,6 +142,9 @@ impl Kinds {
 /// The part a block state is: Kinetica's blocks by name and properties.
 fn part_of<'a>(name: &str, property: impl Fn(&str) -> Option<&'a str>) -> Option<Part> {
     if let Some(block) = name.strip_prefix("create:") {
+        if crate::tachyon_native_mods::create_active() {
+            return None;
+        }
         return create_part(block, property);
     }
     let axis = || property("axis").and_then(Axis::parse);
@@ -2310,7 +2313,7 @@ impl Game<'_> {
 
     /// Pick-block item resolution for itemless Create blocks.
     pub(super) fn tachyon_block_clone_item(&self, block: &str, stack: &mut Option<ItemStack>) {
-        if stack.is_some() {
+        if crate::tachyon_native_mods::create_active() || stack.is_some() {
             return;
         }
         if let Some(item) = tachyon_pick_block_item(block)
@@ -2324,6 +2327,9 @@ impl Game<'_> {
     /// `Grindstone`, `EndPortalFrame`, `use_item_on_branch`) must be skipped at `pos`
     /// when `tachyon_use` returned false to let block placement succeed.
     pub(super) fn tachyon_suppresses_vanilla_use(&self, pos: [i32; 3]) -> bool {
+        if crate::tachyon_native_mods::create_active() {
+            return false;
+        }
         let state = self.world.block(pos[0], pos[1], pos[2]);
         let name = &*self.res.facts().get(state).name;
         let part = self.tachyon_kinds().and_then(|k| k.part(state.0));
@@ -2342,7 +2348,8 @@ impl Game<'_> {
             return false;
         };
         let sneaking = self.keys.held(super::Mapping::Sneak);
-        if !sneaking
+        if !crate::tachyon_native_mods::create_active()
+            && !sneaking
             && self.held().is_some_and(|s| &*s.item == "create:mechanical_arm" && s.count > 0)
             && let Some(kind) = arm::kind_at(self, &kinds, pos)
         {
@@ -2572,7 +2579,8 @@ impl Game<'_> {
             return false;
         };
         let sneaking = self.tachyon_sneaking();
-        if !sneaking
+        if !crate::tachyon_native_mods::create_active()
+            && !sneaking
             && held.is_some_and(|s| &*s.item == "create:mechanical_arm" && s.count > 0)
             && arm::kind_at(self, &kinds, pos).is_some()
         {
@@ -2768,7 +2776,7 @@ impl Game<'_> {
         hand: horizon_client::first_person::Hand,
         seq: i32,
     ) -> bool {
-        if self.remote.is_none() {
+        if crate::tachyon_native_mods::create_active() || self.remote.is_none() {
             return false;
         }
         let cooling = self.res.items().get(&stack.item).is_some_and(|info| {

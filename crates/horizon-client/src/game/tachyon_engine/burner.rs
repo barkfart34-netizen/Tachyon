@@ -493,7 +493,8 @@ impl Game<'_> {
 
     /// Captures a right-clicked Blaze entity into a held `create:empty_blaze_burner`.
     pub(in crate::game) fn tachyon_capture_blaze(&mut self, id: u32, kind: &str) -> bool {
-        if self.remote.is_some()
+        if crate::tachyon_native_mods::create_active()
+            || self.remote.is_some()
             || !can_capture_blaze(kind)
             || !self
                 .held()
