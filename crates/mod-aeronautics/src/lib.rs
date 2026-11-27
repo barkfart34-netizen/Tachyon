@@ -10,9 +10,10 @@ use std::sync::{Arc, LazyLock, Mutex};
 use aeronautics_physics::PilotInput;
 use mod_api::{
     ClientHost, ClientTickPostEvent, Flow, Hooks, HostSide, IPayloadContext, IPayloadHandler,
-    MovementInputEvent, PayloadBytes, PayloadContextError, PayloadDirection, PayloadHandleError,
-    PayloadId, RegisterCommandsEvent, Registrar, RegistrationContext, RenderGuiPostEvent,
-    RightClickBlockEvent, RightClickItemEvent, RunModCommandEvent, ServerHost, ServerStoppedEvent,
+    InputKeyEvent, KeyAction, MovementInputEvent, PayloadBytes, PayloadContextError,
+    PayloadDirection, PayloadHandleError, PayloadId, PlayerLoggedInEvent, PlayerLoggedOutEvent,
+    RegisterCommandsEvent, Registrar, RegistrationContext, RenderGuiPostEvent, RightClickBlockEvent,
+    RightClickItemEvent, RunModCommandEvent, ServerHost, ServerStoppedEvent, ServerStoppingEvent,
     ServerTickEvent, SubmitCustomGeometryEvent,
 };
 
@@ -73,9 +74,29 @@ impl Hooks for Mod {
         );
     }
 
+    fn server_stopping(&self, host: &mut dyn ServerHost, _event: &mut ServerStoppingEvent) {
+        server::server_stopping(host);
+    }
+
     fn server_stopped(&self, _host: &mut dyn ServerHost, _event: &mut ServerStoppedEvent) {
         server::clear();
         solid::clear();
+    }
+
+    fn player_logged_in(
+        &self,
+        host: &mut dyn ServerHost,
+        event: &mut PlayerLoggedInEvent<'_>,
+    ) {
+        server::player_logged_in(host, event.player);
+    }
+
+    fn player_logged_out(
+        &self,
+        host: &mut dyn ServerHost,
+        event: &mut PlayerLoggedOutEvent<'_>,
+    ) {
+        server::player_logged_out(host, event.player);
     }
 
     fn server_tick(&self, host: &mut dyn ServerHost, event: &mut ServerTickEvent<'_>) {
@@ -131,12 +152,22 @@ impl Hooks for Mod {
         } else {
             0.0
         };
+        let pitch = match (host.is_key_down("key.keyboard.r"), host.is_key_down("key.keyboard.f")) {
+            (true, false) => 1.0,
+            (false, true) => -1.0,
+            _ => 0.0,
+        };
+        let roll = match (host.is_key_down("key.keyboard.q"), host.is_key_down("key.keyboard.e")) {
+            (true, false) => -1.0,
+            (false, true) => 1.0,
+            _ => 0.0,
+        };
         let brake = host.is_key_down("key.keyboard.b");
         let input = PilotInput {
             throttle: event.forward.clamp(-1.0, 1.0),
-            pitch: 0.0,
+            pitch,
             yaw: event.strafe.clamp(-1.0, 1.0),
-            roll: 0.0,
+            roll,
             vertical,
             brake,
         };
@@ -148,6 +179,30 @@ impl Hooks for Mod {
         event.strafe = 0.0;
         event.jump = false;
         event.sneak = false;
+    }
+
+    fn input_key(&self, host: &mut dyn ClientHost, event: &mut InputKeyEvent<'_>) {
+        if event.action != KeyAction::Press || !host.playing() {
+            return;
+        }
+        let action = match event.key {
+            "key.keyboard.v" => Some((solid::local_pilot_vessel_id().unwrap_or(0), net::ACTION_TOGGLE_PILOT)),
+            "key.keyboard.right.bracket" => solid::local_pilot_vessel_id().map(|id| (id, net::ACTION_BURNER_UP)),
+            "key.keyboard.left.bracket" => solid::local_pilot_vessel_id().map(|id| (id, net::ACTION_BURNER_DOWN)),
+            "key.keyboard.x" => solid::local_pilot_vessel_id().map(|id| (id, net::ACTION_DISASSEMBLE)),
+            _ => None,
+        };
+        if let Some((vessel_id, action)) = action {
+            let pkt = net::PilotPacket {
+                vessel_id,
+                input: PilotInput::default(),
+                action,
+            };
+            let _ = host.send_payload_to_server(
+                &PayloadId(net::PAYLOAD_ID.to_owned()),
+                PayloadBytes(pkt.encode()),
+            );
+        }
     }
 
     fn client_tick_post(&self, host: &mut dyn ClientHost, _event: &mut ClientTickPostEvent) {

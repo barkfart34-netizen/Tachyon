@@ -18,12 +18,17 @@ pub fn velocity_sensor_signal(speed_mps: f64, max_speed: f64) -> u8 {
     (t * 15.0).round() as u8
 }
 
-/// Maps burner heat level (0..=15) to the blockstate `variant` of `aeronautics:adjustable_burner`.
-pub fn burner_variant_for_heat(heat: u8) -> &'static str {
+/// Maps burner heat level (0..=15) to `(powered, variant)` for `aeronautics:adjustable_burner`.
+pub fn burner_state_for_heat(heat: u8) -> (bool, &'static str) {
     match heat {
-        0 => "none",
-        1..=5 => "smouldering",
-        6..=11 => "kindled",
-        _ => "seething",
+        0 => (false, "fire"),
+        1..=10 => (true, "fire"),
+        _ => (true, "soulful"),
     }
+}
+
+/// Maps burner heat level (0..=15) to the blockstate `variant` (`"fire"` or `"soulful"`)
+/// of `aeronautics:adjustable_burner`.
+pub fn burner_variant_for_heat(heat: u8) -> &'static str {
+    burner_state_for_heat(heat).1
 }

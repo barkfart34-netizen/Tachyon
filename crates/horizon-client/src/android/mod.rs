@@ -102,6 +102,10 @@ pub fn main(app: AndroidApp) {
         &paths.home.join(horizon_client::mod_list::DIR).join("create"),
         Some(&paths.root.join("cache").join(crate::tachyon::fetch::CREATE.file)),
     );
+    crate::tachyon::aeronautics_port::refresh_all(
+        &paths.home,
+        Some(&paths.root.join("cache").join(crate::tachyon::fetch::AERONAUTICS.file)),
+    );
     log::info!(
         "{} {BUILD} on {}",
         brand::NAME,

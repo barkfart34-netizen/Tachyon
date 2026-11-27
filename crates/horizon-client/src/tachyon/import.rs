@@ -135,6 +135,9 @@ fn java_mod(file: &Path, home: &Path, report: &dyn Fn(String)) -> Result<Importe
     if check.mod_id == "create" {
         super::create_port::fix(&target)?;
         super::create_port::restore_recipes(&target, file)?;
+    } else if super::aeronautics_port::is_aeronautics_mod(&check.mod_id) {
+        super::aeronautics_port::fix(&check.mod_id, &target)?;
+        super::aeronautics_port::restore_recipes(&check.mod_id, &target, file)?;
     }
     let _ = fs::copy(work.join("check.json"), target.join("tachyon-check.json"));
     let _ = fs::remove_dir_all(&work);

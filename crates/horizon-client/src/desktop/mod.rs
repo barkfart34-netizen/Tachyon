@@ -124,6 +124,10 @@ fn game() -> i32 {
         &home.join(horizon_client::mod_list::DIR).join("create"),
         jar.as_deref(),
     );
+    let aero_jar = (home.ancestors().take(4))
+        .map(|d| d.join("cache").join(crate::tachyon::fetch::AERONAUTICS.file))
+        .find(|j| j.is_file());
+    crate::tachyon::aeronautics_port::refresh_all(&home, aero_jar.as_deref());
     horizon_client::spans::startup::init(std::time::Instant::now());
     horizon_client::entry::install_hooks();
     let native = horizon_client::tachyon_native_mods::install();

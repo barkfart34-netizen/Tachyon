@@ -60,8 +60,9 @@ pub const CREATE: Fetch = Fetch {
 
 /// Create Aeronautics 1.3.2 for Minecraft 1.21.1 (NeoForge), its bundle: Create Simulated (physics
 /// contraptions' blocks), Create Aeronautics (flying ones) and Create Offroad (land vehicles), each
-/// ported as its own mod. Their blocks, items, recipes, textures, models and sounds; what moves them
-/// (Sable's physics) is not here yet. Its assets are its authors' (as Create's), its code MIT.
+/// ported as its own mod. Their blocks, items, recipes, textures, models and sounds come from the
+/// jar while `mod-aeronautics` drives its 6-DOF flight and offroad physics. Its assets are its
+/// authors' (as Create's), its code MIT.
 pub const AERONAUTICS: Fetch = Fetch {
     id: "aeronautics",
     name: "Create Aeronautics",

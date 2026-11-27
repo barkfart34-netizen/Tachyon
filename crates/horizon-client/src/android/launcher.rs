@@ -527,7 +527,7 @@ impl Launcher {
             let what = if f.inner.is_empty() {
                 "its blocks, items, recipes, textures and sounds"
             } else {
-                "its blocks, items and recipes (what flies and drives comes later)"
+                "its blocks, items, recipes, and 6-DOF airship & offroad physics"
             };
             let (detail, label) = if asking {
                 (f.ask(), "Download")

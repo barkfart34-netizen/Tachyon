@@ -22,7 +22,10 @@ pub use math::{
     quat_integrate_omega, quat_mul, quat_normalize, quat_rotate, quat_rotate_inv, quat_slerp,
     quat_to_yaw_pitch_roll,
 };
-pub use sensors::{altitude_sensor_signal, burner_variant_for_heat, velocity_sensor_signal};
+pub use sensors::{
+    altitude_sensor_signal, burner_state_for_heat, burner_variant_for_heat,
+    velocity_sensor_signal,
+};
 pub use wheels::{WheelSummary, step_wheels};
 
 #[cfg(test)]
@@ -244,9 +247,12 @@ mod tests {
         assert_eq!(altitude_sensor_signal(320.0, -64.0, 320.0), 15);
         assert_eq!(velocity_sensor_signal(0.0, 30.0), 0);
         assert_eq!(velocity_sensor_signal(30.0, 30.0), 15);
-        assert_eq!(burner_variant_for_heat(0), "none");
-        assert_eq!(burner_variant_for_heat(4), "smouldering");
-        assert_eq!(burner_variant_for_heat(9), "kindled");
-        assert_eq!(burner_variant_for_heat(15), "seething");
+        assert_eq!(burner_state_for_heat(0), (false, "fire"));
+        assert_eq!(burner_state_for_heat(8), (true, "fire"));
+        assert_eq!(burner_state_for_heat(14), (true, "soulful"));
+        assert_eq!(burner_variant_for_heat(0), "fire");
+        assert_eq!(burner_variant_for_heat(4), "fire");
+        assert_eq!(burner_variant_for_heat(9), "fire");
+        assert_eq!(burner_variant_for_heat(15), "soulful");
     }
 }

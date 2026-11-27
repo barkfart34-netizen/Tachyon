@@ -2543,7 +2543,7 @@ impl Launcher {
             let what = if f.inner.is_empty() {
                 "Its blocks, items, recipes, textures and sounds"
             } else {
-                "Its blocks, items and recipes (contraptions expand separately)"
+                "Its blocks, items, recipes, and 6-DOF airship & offroad physics"
             };
             let (title, detail) = if asking {
                 (f.ask(), "Kept locally so it works offline; Java mod code never executes.".to_owned())

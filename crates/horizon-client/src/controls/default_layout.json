@@ -334,6 +334,42 @@
           "isSwipple": false,
           "isPenetrable": false,
           "isToggleable": false
+        },
+        {
+          "text": {
+            "default": "Aero",
+            "matchQueue": [
+              {
+                "language_tag": "id",
+                "value": "Aero"
+              }
+            ]
+          },
+          "uuid": "9c4a7b2e1f8d4032a1",
+          "position": {
+            "x": 4616,
+            "y": 0
+          },
+          "buttonSize": {
+            "type": "percentage",
+            "widthDp": 50.0,
+            "heightDp": 50.0,
+            "widthPercentage": 2289,
+            "heightPercentage": 1100,
+            "widthReference": "screen_height",
+            "heightReference": "screen_height"
+          },
+          "buttonStyle": "d1096cf91caa",
+          "visibilityType": "always",
+          "clickEvents": [
+            {
+              "type": "switch_layer",
+              "key": "a7e90f1c2b3d"
+            }
+          ],
+          "isSwipple": false,
+          "isPenetrable": false,
+          "isToggleable": false
         }
       ]
     },
@@ -576,6 +612,169 @@
               "key": "GLFW_KEY_LEFT_CONTROL"
             }
           ]
+        }
+      ]
+    },
+    {
+      "name": "aero",
+      "uuid": "a7e90f1c2b3d",
+      "hide": true,
+      "visibilityType": "in_game",
+      "normalButtons": [
+        {
+          "text": {
+            "default": "Pilot",
+            "matchQueue": []
+          },
+          "uuid": "f1a2b3c4d5e6478901",
+          "position": {
+            "x": 300,
+            "y": 4400
+          },
+          "buttonSize": {
+            "type": "percentage",
+            "widthDp": 50.0,
+            "heightDp": 50.0,
+            "widthPercentage": 1600,
+            "heightPercentage": 1100,
+            "widthReference": "screen_height",
+            "heightReference": "screen_height"
+          },
+          "buttonStyle": "cac8c754ffa0",
+          "visibilityType": "in_game",
+          "clickEvents": [
+            {
+              "type": "key",
+              "key": "GLFW_KEY_V"
+            }
+          ],
+          "isSwipple": false,
+          "isPenetrable": false,
+          "isToggleable": false
+        },
+        {
+          "text": {
+            "default": "Land",
+            "matchQueue": []
+          },
+          "uuid": "f1a2b3c4d5e6478902",
+          "position": {
+            "x": 1800,
+            "y": 4400
+          },
+          "buttonSize": {
+            "type": "percentage",
+            "widthDp": 50.0,
+            "heightDp": 50.0,
+            "widthPercentage": 1600,
+            "heightPercentage": 1100,
+            "widthReference": "screen_height",
+            "heightReference": "screen_height"
+          },
+          "buttonStyle": "cac8c754ffa0",
+          "visibilityType": "in_game",
+          "clickEvents": [
+            {
+              "type": "key",
+              "key": "GLFW_KEY_X"
+            }
+          ],
+          "isSwipple": false,
+          "isPenetrable": false,
+          "isToggleable": false
+        },
+        {
+          "text": {
+            "default": "Heat+",
+            "matchQueue": []
+          },
+          "uuid": "f1a2b3c4d5e6478903",
+          "position": {
+            "x": 300,
+            "y": 5700
+          },
+          "buttonSize": {
+            "type": "percentage",
+            "widthDp": 50.0,
+            "heightDp": 50.0,
+            "widthPercentage": 1600,
+            "heightPercentage": 1100,
+            "widthReference": "screen_height",
+            "heightReference": "screen_height"
+          },
+          "buttonStyle": "cac8c754ffa0",
+          "visibilityType": "in_game",
+          "clickEvents": [
+            {
+              "type": "key",
+              "key": "GLFW_KEY_RIGHT_BRACKET"
+            }
+          ],
+          "isSwipple": false,
+          "isPenetrable": false,
+          "isToggleable": false
+        },
+        {
+          "text": {
+            "default": "Heat-",
+            "matchQueue": []
+          },
+          "uuid": "f1a2b3c4d5e6478904",
+          "position": {
+            "x": 1800,
+            "y": 5700
+          },
+          "buttonSize": {
+            "type": "percentage",
+            "widthDp": 50.0,
+            "heightDp": 50.0,
+            "widthPercentage": 1600,
+            "heightPercentage": 1100,
+            "widthReference": "screen_height",
+            "heightReference": "screen_height"
+          },
+          "buttonStyle": "cac8c754ffa0",
+          "visibilityType": "in_game",
+          "clickEvents": [
+            {
+              "type": "key",
+              "key": "GLFW_KEY_LEFT_BRACKET"
+            }
+          ],
+          "isSwipple": false,
+          "isPenetrable": false,
+          "isToggleable": false
+        },
+        {
+          "text": {
+            "default": "Brake",
+            "matchQueue": []
+          },
+          "uuid": "f1a2b3c4d5e6478905",
+          "position": {
+            "x": 7614,
+            "y": 3880
+          },
+          "buttonSize": {
+            "type": "percentage",
+            "widthDp": 50.0,
+            "heightDp": 50.0,
+            "widthPercentage": 2150,
+            "heightPercentage": 1100,
+            "widthReference": "screen_height",
+            "heightReference": "screen_height"
+          },
+          "buttonStyle": "cac8c754ffa0",
+          "visibilityType": "in_game",
+          "clickEvents": [
+            {
+              "type": "key",
+              "key": "GLFW_KEY_B"
+            }
+          ],
+          "isSwipple": false,
+          "isPenetrable": false,
+          "isToggleable": false
         }
       ]
     }

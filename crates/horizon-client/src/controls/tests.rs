@@ -40,10 +40,33 @@ fn keys(c: &mut Controls) -> Vec<(String, bool)> {
 #[test]
 fn the_default_layout_reads_and_writes_back_the_same() {
     let layout = Layout::parse(DEFAULT_LAYOUT).unwrap();
-    assert_eq!(layout.layers.len(), 5);
+    assert_eq!(layout.layers.len(), 6);
     assert_eq!(layout.styles.len(), 8);
     let again = Layout::parse(&layout.to_json()).unwrap();
     assert_eq!(layout, again);
+}
+
+#[test]
+fn the_aero_button_toggles_aero_flight_controls() {
+    let mut c = Controls::default_layout();
+    let pilot = centre_of(&c, "Pilot");
+    let aero = centre_of(&c, "Aero");
+    assert_eq!(
+        c.down(1, pilot, true, SCREEN),
+        Claim::None,
+        "aero controls start hidden until toggled"
+    );
+    c.down(2, aero, true, SCREEN);
+    c.up(2, SCREEN);
+    assert_eq!(c.down(3, pilot, true, SCREEN), Claim::Taken);
+    c.up(3, SCREEN);
+    assert_eq!(
+        keys(&mut c),
+        [
+            ("GLFW_KEY_V".to_owned(), true),
+            ("GLFW_KEY_V".to_owned(), false)
+        ]
+    );
 }
 
 #[test]

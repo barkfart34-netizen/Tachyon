@@ -264,22 +264,39 @@ pub(crate) fn render_gui_post(host: &dyn ClientHost, event: &mut RenderGuiPostEv
     );
     let line2 = if piloting {
         format!(
-            "W/S Throttle  •  A/D Steer  •  Space/Shift Ascend/Descend  •  Burner {}/15  •  /aero land",
+            "W/S Thr • A/D Yaw • R/F Pitch • Q/E Roll • [/] Burner {}/15 • B Brake • V Lepas • X Land",
             s.burner_heat
         )
     } else {
         format!(
-            "Burner {}/15  •  Klik kemudi atau /aero pilot untuk mengendalikan  •  /aero land untuk turun",
+            "Burner {}/15  •  Tekan V / tombol Aero→Pilot atau klik kemudi  •  /aero land untuk turun",
             s.burner_heat
         )
     };
 
     let [screen_w, _] = event.draw.size();
-    let box_w = 500.0_f32.min((screen_w - 24.0).max(260.0));
+    let box_w = 540.0_f32.min((screen_w - 24.0).max(260.0));
     let x0 = (screen_w - box_w) * 0.5;
     let y0 = 10.0;
-    event.draw.fill([x0, y0, x0 + box_w, y0 + 36.0], 0xB8_0F141C);
+    event.draw.fill([x0, y0, x0 + box_w, y0 + 44.0], 0xB8_0F141C);
     event.draw.fill([x0, y0, x0 + box_w, y0 + 2.0], if piloting { 0xFF_E0A838 } else { 0xFF_4FA8D8 });
     event.draw.text(&line1, [x0 + 10.0, y0 + 7.0], 0xFF_F2F5F8, true);
     event.draw.text(&line2, [x0 + 10.0, y0 + 20.0], 0xFF_B4C0CE, false);
+
+    // Compact lift & burner progress bars along bottom of telemetry HUD.
+    let bar_w = (box_w - 28.0) * 0.5;
+    let bar_y = y0 + 35.0;
+    let lift_fill = ((t.lift_ratio / 1.5).clamp(0.0, 1.0) as f32) * bar_w;
+    let heat_fill = (f32::from(s.burner_heat) / 15.0).clamp(0.0, 1.0) * bar_w;
+    event.draw.fill([x0 + 10.0, bar_y, x0 + 10.0 + bar_w, bar_y + 3.0], 0x55_324050);
+    event.draw.fill(
+        [x0 + 10.0, bar_y, x0 + 10.0 + lift_fill, bar_y + 3.0],
+        if t.lift_ratio >= 1.0 { 0xFF_52D18E } else { 0xFF_4FA8D8 },
+    );
+    let hx = x0 + 18.0 + bar_w;
+    event.draw.fill([hx, bar_y, hx + bar_w, bar_y + 3.0], 0x55_324050);
+    event.draw.fill(
+        [hx, bar_y, hx + heat_fill, bar_y + 3.0],
+        if s.burner_heat > 10 { 0xFF_5CE0FF } else { 0xFF_F08830 },
+    );
 }

@@ -6,7 +6,7 @@ use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 use aeronautics_physics::math::{Vec3, v_len, v_sub};
 use aeronautics_physics::{
     BlockCell, Facing, PilotInput, Pos, RigidContraption, StepTelemetry, TireKind, WorldBlockSample,
-    assemble_from_world, burner_variant_for_heat,
+    assemble_from_world, burner_state_for_heat,
 };
 use mod_api::{
     BlockMetadata, BlockState, BlockStateRecord, BlockUpdateFlags, Command as GameCommand,
@@ -59,6 +59,45 @@ pub(crate) fn clear() {
     s.burner_heat.clear();
 }
 
+pub(crate) fn player_logged_in(host: &mut dyn ServerHost, player_uuid: u128) {
+    let snaps: Vec<_> = {
+        let s = lock();
+        s.vessels
+            .values()
+            .map(|v| snapshot_from(&v.body, &v.dimension, v.pilot, v.telemetry))
+            .collect()
+    };
+    for snap in snaps {
+        send_to_player(host, player_uuid, &ServerMsg::Snapshot(snap));
+    }
+}
+
+pub(crate) fn player_logged_out(host: &mut dyn ServerHost, player_uuid: u128) {
+    let updated = {
+        let mut s = lock();
+        if let Some(vid) = s.pilots.remove(&player_uuid)
+            && let Some(v) = s.vessels.get_mut(&vid)
+            && v.pilot == Some(player_uuid)
+        {
+            v.pilot = None;
+            v.last_input = PilotInput::default();
+            Some(snapshot_from(&v.body, &v.dimension, None, v.telemetry))
+        } else {
+            None
+        }
+    };
+    if let Some(snap) = updated {
+        broadcast_msg(host, &ServerMsg::Snapshot(snap));
+    }
+}
+
+pub(crate) fn server_stopping(host: &mut dyn ServerHost) {
+    let ids: Vec<u64> = lock().vessels.keys().copied().collect();
+    for id in ids {
+        let _ = disassemble_vessel(host, id, None);
+    }
+}
+
 fn player_dim(host: &dyn ServerHost, player: PlayerRef) -> String {
     player
         .dimension(host)
@@ -85,11 +124,12 @@ fn send_to_player(host: &mut dyn ServerHost, uuid: u128, msg: &ServerMsg) {
     }
 }
 
-fn parse_state_id_and_facing(state_text: &str) -> (String, Facing, bool) {
+fn parse_state_props(state_text: &str) -> (String, Facing, bool, String) {
     let mut parts = state_text.splitn(2, '[');
     let id = parts.next().unwrap_or("").to_owned();
     let mut facing = Facing::North;
     let mut powered = false;
+    let mut variant = String::new();
     if let Some(props) = parts.next().and_then(|p| p.strip_suffix(']')) {
         for kv in props.split(',') {
             if let Some((k, v)) = kv.split_once('=') {
@@ -105,11 +145,13 @@ fn parse_state_id_and_facing(state_text: &str) -> (String, Facing, bool) {
                     };
                 } else if k == "powered" {
                     powered = v == "true";
+                } else if k == "variant" {
+                    variant = v.to_owned();
                 }
             }
         }
     }
-    (id, facing, powered)
+    (id, facing, powered, variant)
 }
 
 fn broadcast_msg(host: &mut dyn ServerHost, msg: &ServerMsg) {
@@ -159,14 +201,22 @@ pub(crate) fn assemble_at(
     let read_block = |pos: Pos| -> Option<WorldBlockSample> {
         let state = level.block_state(&*host, pos)?;
         let text = host.block_state_string(state)?;
-        let (block_id, facing, powered) = parse_state_id_and_facing(&text);
+        let (block_id, facing, powered, variant) = parse_state_props(&text);
         if block_id.is_empty() {
             return None;
         }
         let key = (dimension.to_owned(), pos);
         let tire = tires.get(&key).copied();
         let heat = heats.get(&key).copied().unwrap_or_else(|| {
-            if block_id == "aeronautics:adjustable_burner" || block_id == "create:blaze_burner" {
+            if block_id == "aeronautics:adjustable_burner" {
+                if !powered {
+                    0
+                } else if variant == "soulful" {
+                    14
+                } else {
+                    8
+                }
+            } else if block_id == "create:blaze_burner" {
                 8
             } else {
                 0
@@ -271,17 +321,21 @@ pub(crate) fn disassemble_vessel(
         set_world_block(host, &vessel.dimension, *world_pos, &cell.id, cell.facing);
         if cell.id == "aeronautics:adjustable_burner" {
             if let Some(level) = host.level(&vessel.dimension)
-                && let Some(state) = level.block_state(&*host, *world_pos)
+                && let Some(mut state) = level.block_state(&*host, *world_pos)
             {
-                let variant = burner_variant_for_heat(cell.heat);
-                if let Some(next) = with_prop(host, state, "variant", variant) {
-                    let _ = level.set_block(
-                        host,
-                        *world_pos,
-                        next,
-                        BlockUpdateFlags::NEIGHBORS | BlockUpdateFlags::CLIENTS,
-                    );
+                let (powered, variant) = burner_state_for_heat(cell.heat);
+                if let Some(next) = with_prop(host, state, "powered", if powered { "true" } else { "false" }) {
+                    state = next;
                 }
+                if let Some(next) = with_prop(host, state, "variant", variant) {
+                    state = next;
+                }
+                let _ = level.set_block(
+                    host,
+                    *world_pos,
+                    state,
+                    BlockUpdateFlags::NEIGHBORS | BlockUpdateFlags::CLIENTS,
+                );
             }
             burner_restore.push(((vessel.dimension.clone(), *world_pos), cell.heat));
         }
@@ -321,17 +375,28 @@ pub(crate) fn on_client_packet(host: &mut dyn ServerHost, player_uuid: u128, dat
             toggle_pilot_nearest(host, player_uuid);
         }
         ACTION_BURNER_UP | ACTION_BURNER_DOWN => {
-            let mut s = lock();
-            let Some(&vid) = s.pilots.get(&player_uuid) else { return };
-            if let Some(v) = s.vessels.get_mut(&vid) {
-                if pkt.action == ACTION_BURNER_UP {
-                    v.body.burner_heat = (v.body.burner_heat + 2).min(15);
-                } else {
-                    v.body.burner_heat = v.body.burner_heat.saturating_sub(2);
+            let mut snap_to_send = None;
+            let mut new_heat = None;
+            {
+                let mut s = lock();
+                if let Some(&vid) = s.pilots.get(&player_uuid)
+                    && let Some(v) = s.vessels.get_mut(&vid)
+                {
+                    if pkt.action == ACTION_BURNER_UP {
+                        v.body.burner_heat = (v.body.burner_heat + 3).min(15);
+                    } else {
+                        v.body.burner_heat = v.body.burner_heat.saturating_sub(3);
+                    }
+                    new_heat = Some(v.body.burner_heat);
+                    snap_to_send = Some(snapshot_from(&v.body, &v.dimension, v.pilot, v.telemetry));
                 }
-                let heat = v.body.burner_heat;
-                drop(s);
-                tell(host, player_uuid, &format!("Daya burner disesuaikan: {heat}/15"));
+            }
+            if let Some(snap) = snap_to_send {
+                broadcast_msg(host, &ServerMsg::Snapshot(snap));
+            }
+            if let Some(heat) = new_heat {
+                let (_, variant) = burner_state_for_heat(heat);
+                tell(host, player_uuid, &format!("Daya burner: {heat}/15 ({variant})"));
             }
         }
         _ => {
@@ -415,7 +480,7 @@ pub(crate) fn right_click_block(
     let Some(level) = host.level(&dimension) else { return Flow::Continue };
     let Some(state) = level.block_state(&*host, pos) else { return Flow::Continue };
     let Some(state_str) = host.block_state_string(state) else { return Flow::Continue };
-    let (block_id, _, _) = parse_state_id_and_facing(&state_str);
+    let (block_id, _, _, _) = parse_state_props(&state_str);
     let held_id = event
         .click
         .stack
@@ -445,15 +510,20 @@ pub(crate) fn right_click_block(
             };
             *entry
         };
-        let variant = burner_variant_for_heat(next_heat);
-        if let Some(updated) = with_prop(host, state, "variant", variant) {
-            let _ = level.set_block(
-                host,
-                pos,
-                updated,
-                BlockUpdateFlags::NEIGHBORS | BlockUpdateFlags::CLIENTS,
-            );
+        let (powered, variant) = burner_state_for_heat(next_heat);
+        let mut updated_state = state;
+        if let Some(next) = with_prop(host, updated_state, "powered", if powered { "true" } else { "false" }) {
+            updated_state = next;
         }
+        if let Some(next) = with_prop(host, updated_state, "variant", variant) {
+            updated_state = next;
+        }
+        let _ = level.set_block(
+            host,
+            pos,
+            updated_state,
+            BlockUpdateFlags::NEIGHBORS | BlockUpdateFlags::CLIENTS,
+        );
         tell(host, player_uuid, &format!("Burner level: {next_heat}/15 ({variant})."));
         *event.cancellation_result = InteractionResult::Consume;
         return Flow::Cancel;
