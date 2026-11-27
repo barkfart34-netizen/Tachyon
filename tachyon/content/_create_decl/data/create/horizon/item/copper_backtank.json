@@ -1,7 +1,7 @@
 {
   "template": "minecraft:iron_chestplate",
   "max_stack_size": 1,
-  "place_block": "create:copper_backtank",
+  "block": "create:copper_backtank",
   "components": {
     "minecraft:enchantable": {
       "value": 7

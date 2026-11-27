@@ -420,10 +420,13 @@ const STAMP: &str = ".tachyon-fix";
 /// Tachyon again, once: the engine has learned more of its blocks since.
 /// `jar`, Create's own file where it is kept, gives back their recipes.
 pub fn refresh(dir: &Path, jar: Option<&Path>) {
+    if dir
+        .join(horizon_client::tachyon_native_mods::CREATE_HORIZON_STAMP)
+        .is_file()
+    {
+        return;
+    }
     if let Some(jar) = jar.filter(|j| j.is_file())
-        && !dir
-            .join(horizon_client::tachyon_native_mods::CREATE_HORIZON_STAMP)
-            .is_file()
         && let Some(decl) = horizon_client::brand::content()
             .map(|c| c.join("_create_decl"))
             .filter(|d| d.is_dir())

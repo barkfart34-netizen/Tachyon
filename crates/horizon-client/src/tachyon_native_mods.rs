@@ -27,7 +27,7 @@ pub fn create_active() -> bool {
 
 /// Marker written into `horizon-mods/create/` once `create_port::stage_create_horizon`
 /// has staged the `Create-Horizon` declarations and Create 6.0.10 JAR assets.
-pub const CREATE_HORIZON_STAMP: &str = ".tachyon-create-horizon-v1";
+pub const CREATE_HORIZON_STAMP: &str = ".tachyon-create-horizon-v2";
 
 fn create_package_dir() -> std::path::PathBuf {
     horizon_client::logging::game_home()
@@ -175,5 +175,112 @@ pub fn install() -> Runtime {
         Runtime::from_bundled(expected_slice, bundled)
     } else {
         Runtime::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    struct TempDir(PathBuf);
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+        fs::create_dir_all(dst)?;
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            let dst_path = dst.join(entry.file_name());
+            if entry.file_type()?.is_dir() {
+                copy_dir_recursive(&entry.path(), &dst_path)?;
+            } else {
+                fs::copy(entry.path(), &dst_path)?;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn create_decl_loads_via_horizon_mod_package_and_matches_mod_create() {
+        let decl_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tachyon/content/_create_decl");
+        assert!(
+            decl_dir.is_dir(),
+            "missing _create_decl dir at {}",
+            decl_dir.display()
+        );
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let tmp = TempDir(
+            std::env::temp_dir().join(format!("tachyon-create-decl-test-{}-{nonce}", std::process::id())),
+        );
+        fs::create_dir_all(&tmp.0).unwrap();
+
+        fs::copy(
+            decl_dir.join("manifest.toml.template"),
+            tmp.0.join("horizon-mod.toml"),
+        )
+        .unwrap();
+        for dir_name in ["assets", "data"] {
+            copy_dir_recursive(&decl_dir.join(dir_name), &tmp.0.join(dir_name)).unwrap();
+        }
+
+        let pkg = packages::read_bundled_native(&tmp.0)
+            .expect("staged _create_decl manifest must validate as bundled native");
+        assert_eq!(pkg.manifest.id, mod_create::BUILT.id);
+        assert_eq!(pkg.manifest.version, mod_create::BUILT.version);
+        assert_eq!(pkg.manifest.side, mod_create::BUILT.side);
+
+        let content = horizon_mod_package::Content::read_declaring(&tmp.0, &pkg.manifest, &[])
+            .expect("_create_decl content must pass horizon-mod-package validation");
+
+        let blocks: HashSet<&str> = content.blocks.iter().map(|b| b.id.as_str()).collect();
+        let items: HashSet<&str> = content
+            .items
+            .iter()
+            .map(|i| i.id.as_str())
+            .chain(
+                content
+                    .blocks
+                    .iter()
+                    .filter(|b| b.item)
+                    .map(|b| b.id.as_str()),
+            )
+            .collect();
+
+        for id in mod_create::declared_blocks() {
+            let full = format!("create:{id}");
+            assert!(
+                blocks.contains(full.as_str()),
+                "declared_blocks entry {full} missing from _create_decl blocks"
+            );
+        }
+        for id in mod_create::declared_block_entities() {
+            let full = format!("create:{id}");
+            assert!(
+                blocks.contains(full.as_str()),
+                "declared_block_entities entry {full} missing from _create_decl blocks"
+            );
+        }
+        for id in mod_create::declared_items() {
+            let full = format!("create:{id}");
+            assert!(
+                items.contains(full.as_str()),
+                "declared_items entry {full} missing from _create_decl items"
+            );
+        }
+
+        let fluid_ids: HashSet<&str> = content.fluids.iter().map(|f| f.id.as_str()).collect();
+        assert!(fluid_ids.contains("create:chocolate"));
+        assert!(fluid_ids.contains("create:honey"));
     }
 }

@@ -49,6 +49,21 @@ pub(crate) fn create_hooks() -> Box<dyn Hooks> {
     Box::new(forward::Create { modules })
 }
 
+/// Block IDs (without the `create:` prefix) whose `BlockPart` hooks are registered by `mod-create`.
+pub fn declared_blocks() -> &'static [&'static str] {
+    parts_gen::BLOCKS
+}
+
+/// Item IDs (without the `create:` prefix) whose `ItemPart` hooks are registered by `mod-create`.
+pub fn declared_items() -> &'static [&'static str] {
+    parts_gen::ITEMS
+}
+
+/// Block entity type IDs (without the `create:` prefix) registered by `mod-create`.
+pub fn declared_block_entities() -> &'static [&'static str] {
+    parts_gen::BLOCK_ENTITIES
+}
+
 /// Every kinetic block the server ticks, whichever module it belongs to.
 static NETWORKS: LazyLock<Mutex<Networks>> = LazyLock::new(Mutex::default);
 

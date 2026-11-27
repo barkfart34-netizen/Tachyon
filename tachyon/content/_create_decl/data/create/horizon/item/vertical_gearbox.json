@@ -1,5 +1,5 @@
 {
   "template": "minecraft:iron_ingot",
   "max_stack_size": 64,
-  "place_block": "create:gearbox"
+  "block": "create:gearbox"
 }

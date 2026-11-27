@@ -1,7 +1,7 @@
 {
   "template": "minecraft:netherite_chestplate",
   "max_stack_size": 1,
-  "place_block": "create:netherite_backtank",
+  "block": "create:netherite_backtank",
   "components": {
     "!minecraft:max_damage": {},
     "!minecraft:repairable": {}

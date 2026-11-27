@@ -79,8 +79,10 @@ pub fn stage_create_horizon(
             copy_dir_all(&src, &target)?;
         }
     }
-    // Remove legacy v1 stamp if migrating from the old tachyon_engine port.
+    // Remove legacy/older stamps when migrating cleanly.
     let _ = fs::remove_file(dest_dir.join(".tachyon-create"));
+    let _ = fs::remove_file(dest_dir.join(".tachyon-create-horizon-v1"));
+    let _ = fs::remove_file(dest_dir.join(".tachyon-fix"));
     fs::write(dest_dir.join("horizon-mod.toml"), manifest)
         .map_err(|e| format!("{}: {e}", dest_dir.join("horizon-mod.toml").display()))?;
 
