@@ -35,7 +35,7 @@ use create_kinetics::rules::stock_commands::{self as commands, Stock};
 use create_kinetics::rules::stock_ticker::{self as rules, OrderList, OrderRequest};
 use create_kinetics::rules::package::Big;
 use crate::compat::{
-    BlockEntityContainerEvent, ModContainer, NativeInventoryKind, BlockEntityEvent, BlockEntityTickEvent, BlockEntityTicksEvent, Compound, Flow, Hooks, Host, ItemStack, NativeCommand,
+    BlockEntityContainerEvent, ModContainer, NativeInventoryKind, NetFromClientEvent, BlockEntityEvent, BlockEntityTickEvent, BlockEntityTicksEvent, Compound, Flow, Hooks, Host, ItemStack, NativeCommand,
     PerformCommandEvent, PlaceBlockEvent, RegisterCommandsEvent, RightClickBlockEvent, StateForPlacementEvent, Tag, Text,
     UseItemOnEvent,
 };
@@ -210,7 +210,7 @@ fn open(host: &mut dyn Host, uuid: u128, pos: Pos) {
     }
     drop(open);
     let links = network::linked_count(host, freq);
-    tell(host, uuid, format!("Stock Ticker: {links} Stock Link(s) on this network. /stock list, add, remove, address, send, program"));
+    send_open_snapshot(host, uuid, pos, freq, links);
     if links == 0 {
         let present = network::present_count(&*host, freq);
         tell(
@@ -222,6 +222,41 @@ fn open(host: &mut dyn Host, uuid: u128, pos: Pos) {
             ),
         );
     }
+}
+
+fn send_open_snapshot(host: &mut dyn Host, uuid: u128, pos: Pos, freq: Freq, links: u32) {
+    use super::logistics_screens::{encode_stock_open, StockItemWire, StockOpenPayload, ST_OPEN_CHANNEL};
+    let summary = network::summary(host, freq, false);
+    let stock: Vec<StockItemWire> = summary
+        .stacks_by_count()
+        .into_iter()
+        .map(|(k, c)| StockItemWire {
+            item_id: k.item.to_string(),
+            name: name_of(&k),
+            count: c,
+        })
+        .collect();
+    let payments: u32 = host
+        .mod_block_entity(pos)
+        .map_or(0, |e| e.items.iter().flatten().map(|s| s.count).sum());
+    let (address, order) = sessions()
+        .get(&uuid)
+        .map(|s| {
+            let ord = s
+                .order
+                .items
+                .iter()
+                .map(|(k, c)| StockItemWire {
+                    item_id: k.item.to_string(),
+                    name: name_of(k),
+                    count: (*c).max(0) as u32,
+                })
+                .collect();
+            (s.address.clone(), ord)
+        })
+        .unwrap_or_default();
+    let payload = StockOpenPayload { pos, links: links as usize, address, payments, stock, order };
+    let _ = host.net_send_to_player(uuid, ST_OPEN_CHANNEL, encode_stock_open(&payload).as_bytes());
 }
 
 fn show_order(host: &mut dyn Host, uuid: u128, session: &Session) {
@@ -513,6 +548,82 @@ impl Hooks for Tickers {
         }
         open(host, player.uuid, pos);
         Flow::Cancel
+    }
+
+    fn net_from_client(&self, host: &mut dyn Host, event: &mut NetFromClientEvent<'_>) {
+        use super::logistics_screens::{decode_stock_act, StockAction};
+        if event.channel != super::logistics_screens::ST_ACT_CHANNEL {
+            return;
+        }
+        let Ok(text) = std::str::from_utf8(event.data) else { return };
+        let Some(pkt) = decode_stock_act(text) else { return };
+        let Some(player) = host.server_players().into_iter().find(|p| p.uuid == event.player) else { return };
+        let d2: f64 = (0..3).map(|i| (player.position[i] - (f64::from(pkt.pos[i]) + 0.5)).powi(2)).sum();
+        if d2 > 100.0 || host.block(pkt.pos) != network::STOCK_TICKER {
+            return;
+        }
+        let Some(freq) = ticker_freq(host, pkt.pos) else { return };
+        if !network::may_interact(host, freq, player.uuid) {
+            return;
+        }
+        if sessions().get(&player.uuid).is_none_or(|s| s.ticker != pkt.pos) {
+            sessions().insert(player.uuid, Session { ticker: pkt.pos, order: OrderList::default(), address: String::new() });
+        }
+        match pkt.action {
+            StockAction::Add { item, count } => {
+                let key = key_of(&item);
+                let held = network::summary(host, freq, false).count_of(&key);
+                if held > 0 {
+                    if let Some(s) = sessions().get_mut(&player.uuid) {
+                        s.order.click(&key, held, false, false, count.min(held) as i32);
+                    }
+                }
+            }
+            StockAction::Remove { item } => {
+                let key = key_of(&item);
+                let held = network::summary(host, freq, false).count_of(&key);
+                if let Some(s) = sessions().get_mut(&player.uuid) {
+                    s.order.click(&key, held, false, true, 1);
+                }
+            }
+            StockAction::Clear => {
+                if let Some(s) = sessions().get_mut(&player.uuid) {
+                    s.order.items.clear();
+                }
+            }
+            StockAction::Send { address } => {
+                let stock = network::summary(host, freq, true);
+                let order = {
+                    let mut open = sessions();
+                    let Some(s) = open.get_mut(&player.uuid) else { return };
+                    s.address = address.clone();
+                    s.order.revalidate(Some(&stock));
+                    s.order.to_order()
+                };
+                if !order.is_empty() {
+                    send(host, player.uuid, pkt.pos, freq, &order, &address);
+                }
+            }
+            StockAction::Program { address } => {
+                let stock = network::summary(host, freq, true);
+                let order = {
+                    let mut open = sessions();
+                    let Some(s) = open.get_mut(&player.uuid) else { return };
+                    s.address = address.clone();
+                    s.order.revalidate(Some(&stock));
+                    s.order.to_order()
+                };
+                if !order.is_empty() {
+                    program(host, player.uuid, pkt.pos, freq, order, address);
+                }
+            }
+            StockAction::Collect => {
+                collect_payments(host, player.uuid, pkt.pos);
+            }
+            StockAction::Refresh => {}
+        }
+        let links = network::linked_count(host, freq);
+        send_open_snapshot(host, player.uuid, pkt.pos, freq, links);
     }
 
     /// `StockTickerBlock.useItemOn`: the linked items and the Wrench are the item's; anything else opens it.

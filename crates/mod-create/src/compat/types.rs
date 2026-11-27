@@ -936,6 +936,9 @@ impl WorldPrimitives {
             self.quads.push(mod_api::WorldQuad::new(corners, argb, mod_api::WorldDepth::Tested));
         }
     }
+    pub fn quad(&mut self, corners: [[f64; 3]; 4], argb: u32) {
+        self.quads.push(mod_api::WorldQuad::new(corners, argb, mod_api::WorldDepth::Tested));
+    }
     /// No text in the world on the new API (`WorldDrawContext` draws lines and quads): dropped.
     pub fn text(&mut self, _at: [f64; 3], _text: impl AsRef<str>, _argb: u32, _scale: f32) {}
 }

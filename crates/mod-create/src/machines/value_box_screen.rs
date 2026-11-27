@@ -13,24 +13,51 @@
 
 use std::sync::{Mutex, PoisonError};
 
-use create_kinetics::rules::value_box_blocks::{BoxDef, Kind};
+use create_kinetics::rules::value_box::Props;
+use create_kinetics::rules::value_box_blocks::{self as table, BoxDef, Kind};
 use create_kinetics::rules::value_box_board::{self as board, Behaviour, Layout, Settings};
 use create_kinetics::rules::value_box_input::{self as input, Held, Hold, Message};
 use create_kinetics::{Dir, Pos};
 use crate::compat::{
-    ClientTickPostEvent, Flow, Hooks, Host, KeyEvent, NativeScreenKind, ScreenClosingEvent,
-    ScreenMouseButtonPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseScrolledPreEvent,
-    ScreenRenderPostEvent,
+    ClientTickPostEvent, Flow, Hooks, Host, KeyEvent, NativeScreenKind, NetFromServerEvent,
+    ScreenClosingEvent, ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent,
+    ScreenMouseButtonReleasedPreEvent, ScreenMouseScrolledPreEvent, ScreenRenderPostEvent,
 };
 
+use super::value_box as vb;
 use super::value_box_draw::{looked_at, shown, Shown};
 
 /// The mod's own screens belong to mod `create` (Ponder's too: only one is open at a time).
 const MOD: &str = "create";
-/// `GLFW_MOUSE_BUTTON_LEFT` / `GLFW_MOUSE_BUTTON_RIGHT`.
+pub const OPEN_CHANNEL: &str = "create:value_box_open";
+/// `GLFW_MOUSE_BUTTON_LEFT` / `GLFW_MOUSE_BUTTON_RIGHT` / `GLFW_KEY_ESCAPE` / `GLFW_KEY_ENTER`.
 const LEFT: i32 = 0;
 const RIGHT: i32 = 1;
 const TOUCH_BAR_H: f32 = 20.0;
+const PRESET_BAR_H: f32 = 20.0;
+const KINETIC_PRESETS: [i32; 7] = [-256, -64, -16, 1, 16, 64, 256];
+
+pub fn encode_open(pos: Pos, net_id: u8, side: u8) -> Vec<u8> {
+    let mut out = Vec::with_capacity(14);
+    for c in pos {
+        out.extend_from_slice(&c.to_le_bytes());
+    }
+    out.push(net_id);
+    out.push(side);
+    out
+}
+
+pub fn decode_open(data: &[u8]) -> Option<(Pos, u8, u8)> {
+    if data.len() < 14 {
+        return None;
+    }
+    let pos = [
+        i32::from_le_bytes(data[0..4].try_into().ok()?),
+        i32::from_le_bytes(data[4..8].try_into().ok()?),
+        i32::from_le_bytes(data[8..12].try_into().ok()?),
+    ];
+    Some((pos, data[12], data[13]))
+}
 
 struct Screen;
 
@@ -114,6 +141,44 @@ fn playing(host: &dyn Host) -> bool {
     host.client_state().is_some_and(|client| client.screen == NativeScreenKind::Playing)
 }
 
+fn open_board(
+    host: &mut dyn Host,
+    target: Target,
+    behaviour: Behaviour,
+    values: board::Values,
+    sticky: bool,
+) {
+    if host.mod_screen() == Some(MOD)
+        && client()
+            .open
+            .as_ref()
+            .is_some_and(|open| open.target.pos == target.pos && std::ptr::eq(open.target.def, target.def))
+    {
+        return;
+    }
+    let current = board::settings_of(behaviour, &values);
+    let title = match target.def.kind {
+        Kind::Filter { .. } => say(host, "create.logistics.filter.extracted_amount"),
+        Kind::Value { .. } => say(host, target.def.label()),
+    };
+    super::create_gui::clear_active();
+    if host.mod_screen_open(MOD) {
+        client().open = Some(Open {
+            target,
+            behaviour,
+            max_stack: values.max_stack,
+            title,
+            layout: None,
+            current,
+            selected: current,
+            pointer_drives: false,
+            last_mouse: None,
+            sticky,
+            closing: false,
+        });
+    }
+}
+
 impl Hooks for Screen {
     /// `ValueSettingsInputHandler` + `startInteractionWith`: a right click on a box with a board starts the hold.
     fn key(&self, host: &mut dyn Host, event: &mut KeyEvent<'_>) {
@@ -156,14 +221,8 @@ impl Hooks for Screen {
         let valid = !host.sneaking()
             && now.as_ref().is_some_and(|(t, item)| target.same_as(item, t.pos, t.side));
         let outcome = hold.tick(valid, down);
-        let outcome = if cfg!(target_os = "android")
-            && matches!(outcome, Held::Short)
-            && matches!(target.def.kind, Kind::Value { .. })
-        {
-            Held::Open
-        } else {
-            outcome
-        };
+        let short_open = matches!(outcome, Held::Short) && matches!(target.def.kind, Kind::Value { .. });
+        let outcome = if short_open { Held::Open } else { outcome };
         match outcome {
             Held::Waiting => client().hold = Some((hold, target)),
             Held::Cancelled => {}
@@ -178,28 +237,40 @@ impl Hooks for Screen {
                 let Some(behaviour) = target.def.behaviour() else {
                     return;
                 };
-                let current = board::settings_of(behaviour, &item.values);
-                let title = match target.def.kind {
-                    Kind::Filter { .. } => say(&*host, "create.logistics.filter.extracted_amount"),
-                    Kind::Value { .. } => say(&*host, target.def.label()),
-                };
-                if host.mod_screen_open(MOD) {
-                    client().open = Some(Open {
-                        target,
-                        behaviour,
-                        max_stack: item.values.max_stack,
-                        title,
-                        layout: None,
-                        current,
-                        selected: current,
-                        pointer_drives: false,
-                        last_mouse: None,
-                        sticky: cfg!(target_os = "android"),
-                        closing: false,
-                    });
-                }
+                open_board(
+                    host,
+                    target,
+                    behaviour,
+                    item.values,
+                    short_open || cfg!(target_os = "android"),
+                );
             }
         }
+    }
+
+    fn net_from_server(&self, host: &mut dyn Host, event: &mut NetFromServerEvent<'_>) {
+        if !host.window() || event.channel != OPEN_CHANNEL {
+            return;
+        }
+        let Some((pos, net_id, side_id)) = decode_open(event.data) else {
+            return;
+        };
+        let Some(&side) = Dir::ALL.get(usize::from(side_id)) else {
+            return;
+        };
+        let block = host.block(pos);
+        let found = vb::with_props(&*host, pos, &block, |p: &Props, nbt| {
+            let def = table::boxes(&block)
+                .iter()
+                .find(|d| d.net_id == net_id && (d.active)(p) && d.slot.exists(p, side))?;
+            let behaviour = def.behaviour()?;
+            let values = nbt.map_or_else(board::Values::default, |n| vb::values_of(&*host, n, def, side));
+            Some((def, behaviour, values))
+        });
+        let Some((def, behaviour, values)) = found else {
+            return;
+        };
+        open_board(host, Target { pos, side, def }, behaviour, values, true);
     }
 
     /// `ValueSettingsScreen.renderWindow`.
@@ -279,6 +350,17 @@ impl Hooks for Screen {
                 return Flow::Cancel;
             }
         }
+        for (rpm, rect_box) in preset_buttons(&geom, open.behaviour) {
+            if in_rect(mouse, rect_box) {
+                open.selected = Settings {
+                    row: i32::from(rpm > 0),
+                    value: rpm.abs(),
+                };
+                open.pointer_drives = false;
+                open.last_mouse = Some(mouse);
+                return Flow::Cancel;
+            }
+        }
         let bar_area = [
             geom.left,
             layout.gui_top as f32 - 3.0,
@@ -295,6 +377,27 @@ impl Hooks for Screen {
             open.closing = true;
         }
         Flow::Cancel
+    }
+
+    fn screen_key_pressed_pre(&self, host: &dyn Host, event: &mut ScreenKeyPressedPreEvent<'_>) -> Flow {
+        if event.screen.id != "mod" || host.mod_screen() != Some(MOD) {
+            return Flow::Continue;
+        }
+        let mut c = client();
+        let Some(open) = c.open.as_mut() else {
+            return Flow::Continue;
+        };
+        if event.key == "key.keyboard.escape" {
+            open.closing = true;
+            return Flow::Cancel;
+        }
+        if event.key == "key.keyboard.enter" || event.key == "key.keyboard.kp.enter" {
+            let msg = confirm_message(open);
+            open.closing = true;
+            c.outbox.push(msg);
+            return Flow::Cancel;
+        }
+        Flow::Continue
     }
 
     /// `ValueSettingsScreen.mouseReleased`: letting go of the right button sets the value under the pointer.
@@ -394,6 +497,7 @@ struct PanelGeometry {
     bg_height: f32,
     tip: String,
     tip_y: f32,
+    presets_y: f32,
     buttons_y: f32,
 }
 
@@ -421,16 +525,19 @@ fn panel_geometry(host: &dyn Host, open: &Open, layout: &Layout, words: &dyn Fn(
     let b = &layout.board;
     let (x, y) = (layout.gui_left as f32, layout.gui_top as f32);
     let icon = b.icon_mode;
+    let is_kinetic = matches!(open.behaviour, Behaviour::Kinetic { .. });
     let tip = if open.sticky {
         words("create.gui.value_settings.release_to_confirm").replace("%1$s", "OK")
     } else {
         words("create.gui.value_settings.release_to_confirm").replace("%1$s", "Right Button")
     };
-    let additional = if icon { 46.0 } else { 33.0 } + TOUCH_BAR_H;
+    let preset_extra = if is_kinetic { PRESET_BAR_H } else { 0.0 };
+    let additional = if icon { 46.0 } else { 33.0 } + TOUCH_BAR_H + preset_extra;
+    let min_width = if is_kinetic { 236.0 } else { 132.0 };
     let mut fattest = host
         .text_width(&tip)
         .max(host.text_width(&open.title))
-        .max(132.0);
+        .max(min_width);
     if icon {
         for value in 0..=b.max_value {
             let text = board::format(open.behaviour, open.max_stack, Settings { row: 0, value }, words);
@@ -442,7 +549,8 @@ fn panel_geometry(host: &dyn Host, open: &Open, layout: &Layout, words: &dyn Fn(
     let left = x - 11.0 - fat_offset;
     let top = y - 17.0;
     let bg_height = layout.window_height as f32 + additional;
-    let tip_y = top + bg_height - 10.0 - TOUCH_BAR_H;
+    let tip_y = top + bg_height - 10.0 - TOUCH_BAR_H - preset_extra;
+    let presets_y = top + bg_height - TOUCH_BAR_H - preset_extra + 2.0;
     let buttons_y = top + bg_height - TOUCH_BAR_H + 2.0;
     PanelGeometry {
         left,
@@ -451,8 +559,30 @@ fn panel_geometry(host: &dyn Host, open: &Open, layout: &Layout, words: &dyn Fn(
         bg_height,
         tip,
         tip_y,
+        presets_y,
         buttons_y,
     }
+}
+
+fn preset_buttons(geom: &PanelGeometry, behaviour: Behaviour) -> Vec<(i32, [f32; 4])> {
+    if !matches!(behaviour, Behaviour::Kinetic { .. }) {
+        return Vec::new();
+    }
+    let pad = 6.0;
+    let gap = 3.0;
+    let count = KINETIC_PRESETS.len() as f32;
+    let usable = (geom.bg_width - pad * 2.0).max(140.0);
+    let btn_w = (usable - gap * (count - 1.0)) / count;
+    let btn_h = PRESET_BAR_H - 4.0;
+    let start_x = geom.left + (geom.bg_width - (btn_w * count + gap * (count - 1.0))) / 2.0;
+    KINETIC_PRESETS
+        .iter()
+        .enumerate()
+        .map(|(i, &rpm)| {
+            let bx = start_x + i as f32 * (btn_w + gap);
+            (rpm, [bx, geom.presets_y, btn_w, btn_h])
+        })
+        .collect()
 }
 
 fn touch_buttons(geom: &PanelGeometry) -> [(TouchButton, [f32; 4]); 6] {
@@ -480,7 +610,7 @@ fn rect(host: &dyn Host, event: &mut ScreenRenderPostEvent<'_>, x: f32, y: f32, 
     host.fill(event.batch, [x, y, w, h], argb);
 }
 
-/// `ValueSettingsScreen.renderWindow` in flat rectangles plus touch adjustment bar.
+/// `ValueSettingsScreen.renderWindow` in flat rectangles plus quick RPM presets and touch adjustment bar.
 fn draw(host: &dyn Host, event: &mut ScreenRenderPostEvent<'_>, open: &Open, layout: &Layout) {
     let words = |key: &str| say(host, key);
     let (w, h) = (event.batch.width, event.batch.height);
@@ -494,6 +624,28 @@ fn draw(host: &dyn Host, event: &mut ScreenRenderPostEvent<'_>, open: &Open, lay
     let centre = geom.left + geom.bg_width / 2.0;
     host.text(event.batch, &open.title, [centre - host.text_width(&open.title) / 2.0, y - 14.0], 0xDD_DDDD, false);
     host.text(event.batch, &geom.tip, [centre - host.text_width(&geom.tip) / 2.0, geom.tip_y], 0xDD_DDDD, false);
+
+    let selected_signed = if open.selected.row == 0 {
+        -open.selected.value
+    } else {
+        open.selected.value
+    };
+    for (rpm, [bx, by, bw, bh]) in preset_buttons(&geom, open.behaviour) {
+        let active = selected_signed == rpm;
+        rect(host, event, bx, by, bw, bh, FRAME);
+        rect(
+            host,
+            event,
+            bx + 1.0,
+            by + 1.0,
+            (bw - 2.0).max(1.0),
+            (bh - 2.0).max(1.0),
+            if active { 0xFF_B07D2B } else { BTN_BG },
+        );
+        let lbl = if rpm > 1 { format!("+{rpm}") } else { rpm.to_string() };
+        let tw = host.text_width(&lbl);
+        host.text(event.batch, &lbl, [bx + (bw - tw) / 2.0, by + (bh - 8.0) / 2.0], 0xFF_FFFF, false);
+    }
 
     for (btn, [bx, by, bw, bh]) in touch_buttons(&geom) {
         rect(host, event, bx, by, bw, bh, FRAME);
@@ -546,4 +698,16 @@ fn draw(host: &dyn Host, event: &mut ScreenRenderPostEvent<'_>, open: &Open, lay
     let (cursor_x, cursor_y) = (cx.floor() - (width / 2.0).floor(), cy.floor() - 7.0);
     rect(host, event, cursor_x - 3.0, cursor_y, width + 6.0, 14.0, CURSOR);
     host.text(event.batch, &text, [cursor_x + 2.0, cursor_y + 3.0], INK, false);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_packet_roundtrips() {
+        let data = encode_open([12, 65, -30], 0, 3);
+        assert_eq!(decode_open(&data), Some(([12, 65, -30], 0, 3)));
+        assert_eq!(decode_open(&[1, 2, 3]), None);
+    }
 }

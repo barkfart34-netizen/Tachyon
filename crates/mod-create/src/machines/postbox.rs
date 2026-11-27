@@ -22,7 +22,7 @@ use create_kinetics::rules::package as package_rules;
 use crate::compat::{
     BlockEntityContainerEvent, BlockEntityEvent, BlockEntitySubmitEvent, BlockEntityTickEvent, BlockEntityTicksEvent,
     BlockEntityUpdateTagEvent, Compound, ContainerAcceptsEvent, EquipmentSlot, Flow, Hooks, Host,
-    ModBlockEntity, ModContainer, RightClickBlockEvent, StandaloneModelsEvent, Tag, Text, UseItemOnEvent,
+    ModBlockEntity, ModContainer, NetFromClientEvent, RightClickBlockEvent, StandaloneModelsEvent, Tag, Text, UseItemOnEvent,
 };
 
 use super::package as items;
@@ -64,6 +64,33 @@ fn matches_own(nbt: &Compound, stack: &crate::compat::ItemStack) -> Option<bool>
 
 fn filled(entity: &ModBlockEntity) -> usize {
     entity.items.iter().flatten().count()
+}
+
+fn open_port_screen(host: &mut dyn Host, uuid: u128, pos: [i32; 3], block_id: &str, entity: &ModBlockEntity) {
+    use super::port_screens::{encode_pp_open, PortOpenPayload, PortSlotWire, PP_OPEN_CHANNEL};
+    let slots = entity
+        .items
+        .iter()
+        .take(rules::SLOTS)
+        .map(|slot| match slot {
+            Some(s) => PortSlotWire {
+                item_id: s.item.to_string(),
+                name: create_kinetics::rules::filter::display_name(&s.item),
+                count: s.count,
+            },
+            None => PortSlotWire { item_id: String::new(), name: String::new(), count: 0 },
+        })
+        .collect();
+    let payload = PortOpenPayload {
+        pos,
+        is_frogport: false,
+        block_id: block_id.to_owned(),
+        address: address(&entity.nbt),
+        accepts_packages: true,
+        target_desc: format!("Postbox ({} of {} slots filled)", filled(entity), rules::SLOTS),
+        slots,
+    };
+    let _ = host.net_send_to_player(uuid, PP_OPEN_CHANNEL, encode_pp_open(&payload).as_bytes());
 }
 
 impl Hooks for Postboxes {
@@ -200,15 +227,41 @@ impl Hooks for Postboxes {
             host.action_bar(player.uuid, Text::literal(format!("Took {taken} packages")));
             return Flow::Cancel;
         }
-        let name = address(&entity.nbt);
-        let line = format!(
-            "Postbox: {}, {} of {} packages",
-            if package_rules::is_blank(&name) { "no address".to_owned() } else { format!("\u{2192} {name}") },
-            filled(&entity),
-            rules::SLOTS
-        );
-        host.action_bar(player.uuid, Text::literal(line));
+        let block_id = host.block(pos);
+        open_port_screen(host, player.uuid, pos, &block_id, &entity);
         Flow::Cancel
+    }
+
+    fn net_from_client(&self, host: &mut dyn Host, event: &mut NetFromClientEvent<'_>) {
+        use super::port_screens::{decode_pp_save, PP_SAVE_CHANNEL};
+        if event.channel != PP_SAVE_CHANNEL {
+            return;
+        }
+        let Ok(text) = std::str::from_utf8(event.data) else { return };
+        let Some(save) = decode_pp_save(text) else { return };
+        let Some(player) = host.server_players().into_iter().find(|p| p.uuid == event.player) else { return };
+        let d2: f64 = (0..3).map(|i| (player.position[i] - (f64::from(save.pos[i]) + 0.5)).powi(2)).sum();
+        if d2 > 100.0 || !is_postbox(&host.block(save.pos)) {
+            return;
+        }
+        host.change_mod_block_entity(save.pos, &mut |e| {
+            util::put(&mut e.nbt, ADDRESS, Tag::String(save.address.as_str().into()));
+        });
+        super::train_mail::filter_changed(host, save.pos);
+        if save.take_all
+            && let Some(entity) = host.mod_block_entity(save.pos)
+        {
+            let mut stacks = entity.items.clone();
+            for slot in stacks.iter_mut() {
+                if let Some(boxed) = slot.take()
+                    && let Some(rest) = host.give_stack(player.uuid, boxed)
+                {
+                    util::spawn_item(host, player.position, &rest, [0.0; 3], 0);
+                }
+            }
+            host.change_mod_block_entity(save.pos, &mut |e| e.items = stacks.clone());
+        }
+        host.block_entity_sync(save.pos);
     }
 
     fn use_item_on(&self, host: &mut dyn Host, event: &mut UseItemOnEvent<'_>) -> Flow {

@@ -54,8 +54,8 @@ use create_kinetics::{Dir, Pos};
 use crate::compat::{
     BlockEntityEvent, BlockEntityRenderBoundingBoxEvent, BlockEntitySubmitEvent, BlockEntityTickEvent, BlockEntityTicksEvent,
     BlockEntityUpdateTagEvent, BlockStateId, Compound, DestroyBlockEvent, Flow, Hooks, Host, ItemStack, LevelHost, NativeCommand,
-    NativeServerPlayer, PerformCommandEvent, PlaceBlockEvent, RegisterCommandsEvent, RightClickBlockEvent, StandaloneModelsEvent,
-    StateForPlacementEvent, Tag, Text, UseItemOnEvent,
+    NativeServerPlayer, NetFromClientEvent, PerformCommandEvent, PlaceBlockEvent, RegisterCommandsEvent, RightClickBlockEvent,
+    StandaloneModelsEvent, StateForPlacementEvent, Tag, Text, UseItemOnEvent,
 };
 
 use super::logistics as network;
@@ -999,7 +999,26 @@ fn clicked_panel(host: &mut dyn Host, uuid: u128, pos: Pos) -> Option<PanelPosit
     panels.iter().find(|p| p.active).map(|p| PanelPosition { pos, slot: p.slot })
 }
 
+fn slot_to_u8(slot: Slot) -> u8 {
+    match slot {
+        Slot::TopLeft => 0,
+        Slot::TopRight => 1,
+        Slot::BottomLeft => 2,
+        Slot::BottomRight => 3,
+    }
+}
+
+fn slot_from_u8(v: u8) -> Slot {
+    match v {
+        0 => Slot::TopLeft,
+        1 => Slot::TopRight,
+        2 => Slot::BottomLeft,
+        _ => Slot::BottomRight,
+    }
+}
+
 fn open(host: &mut dyn Host, uuid: u128, pos: Pos) {
+    use super::logistics_screens::{encode_gauge_open, GaugeOpenPayload, FG_OPEN_CHANNEL};
     let Some(at) = clicked_panel(host, uuid, pos) else {
         return;
     };
@@ -1010,8 +1029,29 @@ fn open(host: &mut dyn Host, uuid: u128, pos: Pos) {
         return;
     }
     lock(&OPEN).insert(uuid, at);
-    tell(host, uuid, describe(&panel, restocker));
-    tell(host, uuid, "/gauge slot, item, amount, address, output, promises, clearpromises, connect, unlink, input, disconnect, bend, reset");
+    let item = panel.filter.as_ref().map_or_else(String::new, |k| k.item.to_string());
+    let item_name = if item.is_empty() { String::new() } else { display_name(&item) };
+    let held_item = host
+        .held_stack(uuid)
+        .filter(|s| !is_filter(&s.item))
+        .map(|s| (s.item.to_string(), display_name(&s.item)));
+    let payload = GaugeOpenPayload {
+        pos: at.pos,
+        slot: slot_to_u8(at.slot),
+        restocker,
+        item,
+        item_name,
+        target: panel.count.max(1),
+        use_stacks: !panel.up_to,
+        address: panel.recipe_address.clone(),
+        output_amount: panel.recipe_output.max(1) as i32,
+        promise_interval: panel.promise_clearing_interval,
+        in_stock: panel.last_reported_level_in_storage as i32,
+        promised: panel.last_reported_promises as i32,
+        satisfied: panel.satisfied,
+        held_item,
+    };
+    let _ = host.net_send_to_player(uuid, FG_OPEN_CHANNEL, encode_gauge_open(&payload).as_bytes());
 }
 
 /// `FactoryPanelBlock.useItemOn`: a gauge item used on the block adds a panel at the slot the click is nearest to, on the network the
@@ -1431,6 +1471,42 @@ impl Hooks for Gauges {
         };
         run(host, event.player.uuid, rest);
         Flow::Cancel
+    }
+
+    fn net_from_client(&self, host: &mut dyn Host, event: &mut NetFromClientEvent<'_>) {
+        use super::logistics_screens::{decode_gauge_save, FG_SAVE_CHANNEL};
+        if event.channel != FG_SAVE_CHANNEL {
+            return;
+        }
+        let Ok(text) = std::str::from_utf8(event.data) else { return };
+        let Some(save) = decode_gauge_save(text) else { return };
+        let Some(player) = host.server_players().into_iter().find(|p| p.uuid == event.player) else { return };
+        let d2: f64 = (0..3).map(|i| (player.position[i] - (f64::from(save.pos[i]) + 0.5)).powi(2)).sum();
+        if d2 > 100.0 || host.block(save.pos) != ID {
+            return;
+        }
+        let at = PanelPosition { pos: save.pos, slot: slot_from_u8(save.slot) };
+        let Some((panel, _)) = panel_at(host, &at) else { return };
+        if !network::may_interact(host, panel.network, player.uuid) {
+            return;
+        }
+        update_panel(host, &at, |p| {
+            if let Some(ref item_id) = save.item_override {
+                if item_id.is_empty() {
+                    p.set_filter(None, false);
+                } else {
+                    let is_f = is_filter(item_id);
+                    p.set_filter(Some(key_of(item_id)), is_f);
+                }
+            }
+            p.set_value_settings(i32::from(save.use_stacks), save.target.max(1), INTERVAL);
+            let mut packet = unchanged(p);
+            packet.address = save.address;
+            packet.output_amount = save.output_amount.max(1) as u32;
+            packet.promise_clearing_interval = save.promise_interval;
+            packet.clear_promises = save.clear_promises;
+            p.apply_configuration(at, &packet);
+        });
     }
 }
 

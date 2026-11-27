@@ -37,7 +37,7 @@ use create_kinetics::{Dir, Pos};
 use crate::compat::{
     BlockEntityEvent, BlockEntityTickEvent, BlockEntityTicksEvent, BlockSignalEvent, BlockStateId,
     Compound, EquipmentSlot, Flow, Hooks, Host, IsSignalSourceEvent, LevelHost, ModBlockEntity,
-    PlaceBlockEvent, RightClickBlockEvent, ServerTickEvent, ServerTickPhase,
+    NetFromClientEvent, PlaceBlockEvent, RightClickBlockEvent, ServerTickEvent, ServerTickPhase,
     StateForPlacementEvent, Tag, UseItemOnEvent,
 };
 
@@ -293,6 +293,7 @@ fn kind_at(host: &mut dyn Host, pos: Pos) -> (Kind, i32, i32) {
 }
 
 /// A click that opens Create's screen: steps the thresholds, and says where they are.
+#[allow(dead_code)]
 fn step(host: &mut dyn Host, pos: Pos) {
     let (kind, min, max) = kind_at(host, pos);
     if kind != Kind::Unsupported {
@@ -311,6 +312,28 @@ fn step(host: &mut dyn Host, pos: Pos) {
         let line = status(&entity.nbt, kind);
         inv::tell(host, &line);
     }
+}
+
+fn open_screen(host: &mut dyn Host, uuid: u128, pos: Pos) {
+    use super::redstone_screens::{encode_ts_open, ThresholdOpenPayload, TS_OPEN_CHANNEL};
+    let (kind, min_val, max_val) = kind_at(host, pos);
+    let Some(entity) = host.mod_block_entity(pos) else { return };
+    let kind_code = match kind {
+        Kind::Unsupported => 0,
+        Kind::Items => 1,
+        Kind::Fluids => 2,
+    };
+    let payload = ThresholdOpenPayload {
+        pos,
+        kind: kind_code,
+        current: int(&entity.nbt, CURRENT),
+        min_val,
+        max_val,
+        on_above: int(&entity.nbt, ON_ABOVE),
+        off_below: int(&entity.nbt, OFF_BELOW),
+        inverted: util::boolean(&entity.nbt, INVERTED),
+    };
+    let _ = host.net_send_to_player(uuid, TS_OPEN_CHANNEL, encode_ts_open(&payload).as_bytes());
 }
 
 /// The screen's flip button (`setInverted`): the signal turns over.
@@ -414,9 +437,41 @@ impl Hooks for Switches {
         if held.as_ref().is_some_and(|stack| &*stack.item == REDSTONE_TORCH) {
             invert(host, pos);
         } else {
-            step(host, pos);
+            open_screen(host, player.uuid, pos);
         }
         Flow::Cancel
+    }
+
+    fn net_from_client(&self, host: &mut dyn Host, event: &mut NetFromClientEvent<'_>) {
+        use super::redstone_screens::{decode_ts_save, TS_SAVE_CHANNEL};
+        if event.channel != TS_SAVE_CHANNEL {
+            return;
+        }
+        let Ok(text) = std::str::from_utf8(event.data) else { return };
+        let Some(save) = decode_ts_save(text) else { return };
+        let Some(player) = host.server_players().into_iter().find(|p| p.uuid == event.player) else { return };
+        let d2: f64 = (0..3).map(|i| (player.position[i] - (f64::from(save.pos[i]) + 0.5)).powi(2)).sum();
+        if d2 > 100.0 || host.block(save.pos) != SWITCH {
+            return;
+        }
+        let on_above = save.on_above.max(0);
+        let off_below = save.off_below.clamp(0, on_above);
+        let mut powered = false;
+        host.change_mod_block_entity(save.pos, &mut |entity| {
+            entity.nbt.insert(ON_ABOVE.into(), Tag::Int(on_above));
+            entity.nbt.insert(OFF_BELOW.into(), Tag::Int(off_below));
+            entity.nbt.insert(INVERTED.into(), flag(save.inverted));
+            let cur = int(&entity.nbt, CURRENT);
+            if cur >= 0 {
+                let now = rules::next_state(util::boolean(&entity.nbt, POWERED), cur, on_above, off_below);
+                entity.nbt.insert(POWERED.into(), flag(now));
+            }
+            powered = rules::should_be_powered(save.inverted, util::boolean(&entity.nbt, POWERED));
+            entity.nbt.insert(POWERED_AFTER_DELAY.into(), flag(powered));
+        });
+        publish(signal::host_level(&*host), save.pos, powered);
+        host.update_signal_neighbors(host.dimension(), save.pos);
+        host.block_entity_sync(save.pos);
     }
 
     /// `ThresholdSwitchBlock.getSignal`: 15 on every side but the one it looks at, while on

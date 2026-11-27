@@ -43,6 +43,8 @@ struct State {
     pilots: HashMap<u128, u64>,
     mounted_tires: HashMap<(String, Pos), TireKind>,
     burner_heat: HashMap<(String, Pos), u8>,
+    glue_first_corner: HashMap<u128, (String, Pos)>,
+    glued_boxes: HashMap<String, Vec<[Pos; 2]>>,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Mutex::default);
@@ -57,6 +59,8 @@ pub(crate) fn clear() {
     s.pilots.clear();
     s.mounted_tires.clear();
     s.burner_heat.clear();
+    s.glue_first_corner.clear();
+    s.glued_boxes.clear();
 }
 
 pub(crate) fn player_logged_in(host: &mut dyn ServerHost, player_uuid: u128) {
@@ -270,6 +274,23 @@ pub(crate) fn assemble_at(
             ];
             s.mounted_tires.remove(&(dimension.to_owned(), wp));
             s.burner_heat.remove(&(dimension.to_owned(), wp));
+        }
+        if let Some(boxes) = s.glued_boxes.get_mut(dimension) {
+            boxes.retain(|[lo, hi]| {
+                !contraption.blocks.iter().any(|cell| {
+                    let wp = [
+                        origin[0] + cell.local[0],
+                        origin[1] + cell.local[1],
+                        origin[2] + cell.local[2],
+                    ];
+                    wp[0] >= lo[0]
+                        && wp[0] <= hi[0]
+                        && wp[1] >= lo[1]
+                        && wp[1] <= hi[1]
+                        && wp[2] >= lo[2]
+                        && wp[2] <= hi[2]
+                })
+            });
         }
         if let Some(uuid) = pilot_uuid
             && let Some(old_id) = s.pilots.insert(uuid, id)
@@ -486,6 +507,71 @@ pub(crate) fn right_click_block(
         .stack
         .map(|st| st.item().id(&*host))
         .unwrap_or_default();
+
+    if held_id == "simulated:honey_glue" {
+        let mut s = lock();
+        if let Some((first_dim, first)) = s.glue_first_corner.remove(&player_uuid)
+            && first_dim == dimension
+        {
+            let lo = [first[0].min(pos[0]), first[1].min(pos[1]), first[2].min(pos[2])];
+            let hi = [first[0].max(pos[0]), first[1].max(pos[1]), first[2].max(pos[2])];
+            let dx = hi[0] - lo[0] + 1;
+            let dy = hi[1] - lo[1] + 1;
+            let dz = hi[2] - lo[2] + 1;
+            if dx <= 32 && dy <= 32 && dz <= 32 {
+                let zones = s.glued_boxes.entry(dimension).or_default();
+                zones.push([lo, hi]);
+                let count = zones.len();
+                drop(s);
+                tell(
+                    host,
+                    player_uuid,
+                    &format!("Honey Glue merekatkan area {dx}x{dy}x{dz} blok (total zona lem: {count})."),
+                );
+            } else {
+                drop(s);
+                tell(host, player_uuid, "Area Honey Glue terlalu besar (maks 32 blok per sisi).");
+            }
+        } else {
+            s.glue_first_corner.insert(player_uuid, (dimension, pos));
+            drop(s);
+            tell(
+                host,
+                player_uuid,
+                &format!(
+                    "Honey Glue: titik pertama di [{}, {}, {}]. Klik titik kedua untuk merekatkan area.",
+                    pos[0], pos[1], pos[2]
+                ),
+            );
+        }
+        *event.cancellation_result = InteractionResult::Consume;
+        return Flow::Cancel;
+    }
+
+    if held_id == "simulated:contraption_diagram" {
+        let zones = lock()
+            .glued_boxes
+            .get(&dimension)
+            .map_or(0, Vec::len);
+        let msg = if let Some(v) = lock().vessels.values().find(|v| v.dimension == dimension) {
+            format!(
+                "Diagram Kontrapsi: kapal aktif #{} — {} blok, massa {:.0} kg, alt {:.1} m, zona lem {}.",
+                v.body.id,
+                v.body.blocks.len(),
+                v.body.mass.total_mass,
+                v.telemetry.altitude,
+                zones
+            )
+        } else {
+            format!(
+                "Diagram Kontrapsi pada {block_id} [{}, {}, {}]: {} zona Honey Glue siap dirakit via Physics Assembler / Steering Wheel.",
+                pos[0], pos[1], pos[2], zones
+            )
+        };
+        tell(host, player_uuid, &msg);
+        *event.cancellation_result = InteractionResult::Consume;
+        return Flow::Cancel;
+    }
 
     if block_id == "offroad:wheel_mount"
         && let Some(tire) = TireKind::from_item_id(&held_id)

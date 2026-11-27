@@ -40,8 +40,8 @@ use create_kinetics::{Dir, Pos};
 use crate::compat::TextExt;
 use crate::compat::{
     BlockEntityEvent, BlockEntitySubmitEvent, BlockEntityTickEvent, BlockEntityTicksEvent,
-    BlockEntityUpdateTagEvent, BlockStateId, Compound, Flow, Hooks, Host, LevelHost, RightClickBlockEvent,
-    StandaloneModelsEvent, StateForPlacementEvent, Tag, Text, UseItemOnEvent,
+    BlockEntityUpdateTagEvent, BlockStateId, Compound, Flow, Hooks, Host, LevelHost, NetFromClientEvent,
+    RightClickBlockEvent, StandaloneModelsEvent, StateForPlacementEvent, Tag, Text, UseItemOnEvent,
 };
 
 use create_kinetics::rules::factory_gauge::PanelPosition;
@@ -511,8 +511,41 @@ impl Hooks for DisplayLink {
         if !util::first_click(host, player.uuid, pos) {
             return Flow::Cancel;
         }
-        cycle_source(host, pos);
+        open_screen(host, player.uuid, pos);
         Flow::Cancel
+    }
+
+    fn net_from_client(&self, host: &mut dyn Host, event: &mut NetFromClientEvent<'_>) {
+        use super::redstone_screens::{decode_dl_save, DL_SAVE_CHANNEL};
+        if event.channel != DL_SAVE_CHANNEL {
+            return;
+        }
+        let Ok(text) = std::str::from_utf8(event.data) else { return };
+        let Some(save) = decode_dl_save(text) else { return };
+        let Some(player) = host.server_players().into_iter().find(|p| p.uuid == event.player) else { return };
+        let d2: f64 = (0..3).map(|i| (player.position[i] - (f64::from(save.pos[i]) + 0.5)).powi(2)).sum();
+        if d2 > 100.0 || host.block(save.pos) != ID {
+            return;
+        }
+        let Some(entity) = host.mod_block_entity(save.pos) else { return };
+        let Some(facing) = util::facing(&*host, save.pos, "facing") else { return };
+        let cur = load(&entity.nbt);
+        let offered = sources_for(&host.block(source_of(&cur, save.pos, facing)));
+        let Some(&chosen) = offered.get(save.source_idx) else { return };
+        let tgt = [save.pos[0] + cur.offset[0], save.pos[1] + cur.offset[1], save.pos[2] + cur.offset[2]];
+        let rows = targets::target_at(&*host, tgt).map_or(1, |t| targets::stats(&*host, tgt, t).rows).max(1);
+        let station = train_display::station_name(&*host, source_of(&cur, save.pos, facing));
+        edit(host, save.pos, |link| {
+            let mut config = Config::default();
+            config.populate(chosen, station.as_deref());
+            config.option = save.option_idx as i32;
+            config.label = save.label;
+            if save.has_filter {
+                config.filter = Some(save.filter);
+            }
+            link.source = Some((chosen, config));
+            link.line = save.target_line.min(rows - 1);
+        });
     }
 
     /// The Wrench and the name tag on a link.
@@ -588,7 +621,77 @@ fn edit(host: &mut dyn Host, pos: Pos, change: impl FnOnce(&mut Link)) {
     host.block_entity_sync(pos);
 }
 
+/// Opens the Display Link configuration UI for `uuid`.
+fn open_screen(host: &mut dyn Host, uuid: u128, pos: Pos) {
+    use super::redstone_screens::{encode_dl_open, DisplayLinkOpenPayload, DL_OPEN_CHANNEL};
+    let Some(entity) = host.mod_block_entity(pos) else {
+        return;
+    };
+    let Some(facing) = util::facing(&*host, pos, "facing") else {
+        return;
+    };
+    let link = load(&entity.nbt);
+    if link.offset == [0; 3] {
+        say_red(host, "Link has no valid target, try placing it again");
+        return;
+    }
+    let src_pos = source_of(&link, pos, facing);
+    let src_block_id = host.block(src_pos);
+    let offered = sources_for(&src_block_id);
+    if offered.is_empty() {
+        say_red(host, "Not a Display Source");
+        return;
+    }
+    let tgt = [pos[0] + link.offset[0], pos[1] + link.offset[1], pos[2] + link.offset[2]];
+    let tgt_block_id = host.block(tgt);
+    let tgt_lines = match targets::target_at(&*host, tgt) {
+        Some(target) => {
+            let rows = targets::stats(&*host, tgt, target).rows.max(1);
+            (0..rows).map(|r| target.line_text(r)).collect()
+        }
+        None => vec!["No Target".to_owned()],
+    };
+    let source_idx = link
+        .source
+        .as_ref()
+        .and_then(|(s, _)| offered.iter().position(|o| o == s))
+        .unwrap_or(0);
+    let chosen = offered[source_idx];
+    let config = link
+        .source
+        .as_ref()
+        .map(|(_, c)| c.clone())
+        .unwrap_or_default();
+    let (option_label, options) = match chosen.option() {
+        Some((lbl, vals)) => (lbl.to_owned(), vals.iter().map(|v| (*v).to_owned()).collect()),
+        None => (String::new(), Vec::new()),
+    };
+    let option_idx = if options.is_empty() {
+        0
+    } else {
+        (config.option.max(0) as usize).min(options.len() - 1)
+    };
+    let has_filter = chosen == Source::StationSummary || config.filter.is_some();
+    let payload = DisplayLinkOpenPayload {
+        pos,
+        source_block: block_title(&src_block_id),
+        target_block: block_title(&tgt_block_id),
+        sources: offered.iter().map(|s| s.name().to_owned()).collect(),
+        source_idx,
+        option_label,
+        options,
+        option_idx,
+        label: config.label,
+        has_filter,
+        filter: config.filter.unwrap_or_default(),
+        target_line: link.line.min(tgt_lines.len().saturating_sub(1)),
+        target_lines: tgt_lines,
+    };
+    let _ = host.net_send_to_player(uuid, DL_OPEN_CHANNEL, encode_dl_open(&payload).as_bytes());
+}
+
 /// The screen's "type of information" scroll: the next source the block it reads offers.
+#[allow(dead_code)]
 fn cycle_source(host: &mut dyn Host, pos: Pos) {
     let Some(entity) = host.mod_block_entity(pos) else {
         return;

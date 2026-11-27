@@ -83,10 +83,15 @@ pub fn shown(host: &dyn Host, looked: &Looked) -> Vec<Shown> {
                 continue;
             };
             let values = vb::values_of(host, nbt, def, side);
+            let hovered = def.slot.test_hit(p, side, looked.hit.local)
+                || matches!(
+                    looked.block.as_str(),
+                    "create:creative_motor" | "create:rotation_speed_controller"
+                );
             out.push(Shown {
                 def,
                 pose,
-                hovered: def.slot.test_hit(p, side, looked.hit.local),
+                hovered,
                 counts: vb::takes_board(def, p, &values),
                 filter: def.is_filter().then(|| vb::filter_item(nbt, def, side)).flatten(),
                 values,
@@ -105,6 +110,9 @@ fn say(host: &dyn Host, key: &str) -> String {
 
 const WHITE: u32 = 0xFF_FFFFFF;
 const TEXT: u32 = 0xFF_EDEDED;
+const PLATE_BG: u32 = 0xEB_26211C;
+const PLATE_BORDER: u32 = 0xFF_C49A45;
+const PLATE_HOVER: u32 = 0xFF_F5D27A;
 /// How far in front of the box (in its own units) the outline and the text float.
 const LIFT: f64 = 0.06;
 
@@ -112,6 +120,117 @@ fn corner_lines(primitives: &mut crate::compat::WorldPrimitives, origin: Vec3, c
     let at = |p: Vec3| [origin[0] + p[0], origin[1] + p[1], origin[2] + p[2]];
     for i in 0..4 {
         primitives.line(at(corners[i]), at(corners[(i + 1) % 4]), WHITE, width);
+    }
+}
+
+/// Emits a quad in `pose`'s local frame (`x0 > x1` spans left->right, `y1 > y0` spans bottom->top).
+fn pose_quad(
+    primitives: &mut crate::compat::WorldPrimitives,
+    origin: Vec3,
+    pose: &Pose,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    lift: f64,
+    argb: u32,
+) {
+    let at = |lx: f64, ly: f64| {
+        let p = pose.apply([lx, ly, -lift]);
+        [origin[0] + p[0], origin[1] + p[1], origin[2] + p[2]]
+    };
+    primitives.quad([at(x0, y1), at(x0, y0), at(x1, y0), at(x1, y1)], argb);
+}
+
+/// Compact 3x5 bitmap font rows (3 bits per row, MSB left) for on-block value display.
+fn glyph_bits(ch: char) -> [u8; 5] {
+    match ch {
+        '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
+        '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
+        '2' => [0b111, 0b001, 0b111, 0b100, 0b111],
+        '3' => [0b111, 0b001, 0b111, 0b001, 0b111],
+        '4' => [0b101, 0b101, 0b111, 0b001, 0b001],
+        '5' => [0b111, 0b100, 0b111, 0b001, 0b111],
+        '6' => [0b111, 0b100, 0b111, 0b101, 0b111],
+        '7' => [0b111, 0b001, 0b010, 0b010, 0b010],
+        '8' => [0b111, 0b101, 0b111, 0b101, 0b111],
+        '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
+        '-' => [0b000, 0b000, 0b111, 0b000, 0b000],
+        '+' => [0b000, 0b010, 0b111, 0b010, 0b000],
+        '*' => [0b101, 0b010, 0b111, 0b010, 0b101],
+        ':' => [0b000, 0b010, 0b000, 0b010, 0b000],
+        '.' => [0b000, 0b000, 0b000, 0b000, 0b010],
+        '<' | '\u{2264}' => [0b001, 0b010, 0b100, 0b010, 0b001],
+        '=' => [0b000, 0b111, 0b000, 0b111, 0b000],
+        '\u{27f3}' => [0b111, 0b001, 0b101, 0b100, 0b111],
+        '\u{27f2}' => [0b111, 0b100, 0b101, 0b001, 0b111],
+        'A' | 'a' => [0b010, 0b101, 0b111, 0b101, 0b101],
+        'B' | 'b' => [0b110, 0b101, 0b110, 0b101, 0b110],
+        'C' | 'c' => [0b011, 0b100, 0b100, 0b100, 0b011],
+        'D' | 'd' => [0b110, 0b101, 0b101, 0b101, 0b110],
+        'E' | 'e' => [0b111, 0b100, 0b110, 0b100, 0b111],
+        'F' | 'f' => [0b111, 0b100, 0b110, 0b100, 0b100],
+        'G' | 'g' => [0b111, 0b100, 0b101, 0b101, 0b111],
+        'H' | 'h' => [0b101, 0b101, 0b111, 0b101, 0b101],
+        'I' | 'i' => [0b111, 0b010, 0b010, 0b010, 0b111],
+        'K' | 'k' => [0b101, 0b101, 0b110, 0b101, 0b101],
+        'L' | 'l' => [0b100, 0b100, 0b100, 0b100, 0b111],
+        'M' | 'm' => [0b101, 0b111, 0b101, 0b101, 0b101],
+        'N' | 'n' => [0b110, 0b101, 0b101, 0b101, 0b101],
+        'O' | 'o' => [0b111, 0b101, 0b101, 0b101, 0b111],
+        'P' | 'p' => [0b111, 0b101, 0b111, 0b100, 0b100],
+        'R' | 'r' => [0b110, 0b101, 0b110, 0b101, 0b101],
+        'S' | 's' => [0b011, 0b100, 0b010, 0b001, 0b110],
+        'T' | 't' => [0b111, 0b010, 0b010, 0b010, 0b010],
+        'U' | 'u' => [0b101, 0b101, 0b101, 0b101, 0b111],
+        'V' | 'v' => [0b101, 0b101, 0b101, 0b101, 0b010],
+        'W' | 'w' => [0b101, 0b101, 0b101, 0b111, 0b101],
+        'X' | 'x' => [0b101, 0b101, 0b010, 0b101, 0b101],
+        'Y' | 'y' => [0b101, 0b101, 0b010, 0b010, 0b010],
+        _ => [0b000, 0b000, 0b000, 0b000, 0b000],
+    }
+}
+
+/// Draws a 3D backing plate + pixel-font readout right on a value box face (`WorldPrimitives::quad`).
+fn draw_value_face(
+    primitives: &mut crate::compat::WorldPrimitives,
+    origin: Vec3,
+    pose: &Pose,
+    text: &str,
+    tint: u32,
+    hovered: bool,
+) {
+    let border = if hovered { PLATE_HOVER } else { PLATE_BORDER };
+    pose_quad(primitives, origin, pose, 0.44, -0.44, -0.34, 0.34, LIFT * 0.65, border);
+    pose_quad(primitives, origin, pose, 0.39, -0.39, -0.29, 0.29, LIFT * 0.85, PLATE_BG);
+
+    let shown: String = text.chars().take(6).collect();
+    let count = shown.chars().count();
+    if count == 0 {
+        return;
+    }
+    let total_cols = count * 4 - 1;
+    let avail_w = 0.68_f64;
+    let cell = (avail_w / total_cols as f64).min(0.085);
+    let text_w = total_cols as f64 * cell;
+    let text_h = 5.0 * cell;
+    let start_x = text_w * 0.5;
+    let top_y = text_h * 0.5;
+
+    for (ci, ch) in shown.chars().enumerate() {
+        let rows = glyph_bits(ch);
+        let gx = start_x - (ci * 4) as f64 * cell;
+        for (ry, bits) in rows.iter().enumerate() {
+            let y1 = top_y - ry as f64 * cell;
+            let y0 = y1 - cell * 0.92;
+            for col in 0..3 {
+                if (bits >> (2 - col)) & 1 != 0 {
+                    let x0 = gx - col as f64 * cell;
+                    let x1 = x0 - cell * 0.92;
+                    pose_quad(primitives, origin, pose, x0, x1, y0, y1, LIFT * 1.15, tint);
+                }
+            }
+        }
     }
 }
 
@@ -129,27 +248,21 @@ impl Hooks for Draw {
             let tint = item.def.slot.override_color().map_or(TEXT, |rgb| 0xFF00_0000 | rgb);
             match item.def.kind {
                 Kind::Value { behaviour, .. } => {
-                    let (text, scale) = match behaviour {
+                    let text = match behaviour {
                         Behaviour::Options { options } => {
                             let key = options.get(item.values.scroll.max(0) as usize).copied().unwrap_or("");
-                            (say(host, key), 0.28)
+                            say(host, key)
                         }
-                        _ => {
-                            let text = board::box_text(behaviour, &item.values);
-                            let scale = if text.len() <= 2 { 0.85 } else { 0.6 };
-                            (text, scale)
-                        }
+                        Behaviour::Kinetic { .. } => board::box_text(behaviour, &item.values),
+                        _ => board::box_text(behaviour, &item.values),
                     };
-                    let at = item.pose.front(LIFT * 2.0);
-                    event.primitives.text([origin[0] + at[0], origin[1] + at[1], origin[2] + at[2]], text, tint, scale);
+                    draw_value_face(event.primitives, origin, &item.pose, &text, tint, item.hovered);
                 }
                 Kind::Filter { .. } => {
                     // The count's label beside the filter item (`ItemValueBox.renderContents`).
                     let label = board::count_label(item.counts, &item.values);
                     if !label.is_empty() {
-                        let mut at = item.pose.front(LIFT * 2.0);
-                        at[1] -= 0.17;
-                        event.primitives.text([origin[0] + at[0], origin[1] + at[1], origin[2] + at[2]], label, TEXT, 0.8);
+                        draw_value_face(event.primitives, origin, &item.pose, &label, TEXT, item.hovered);
                     }
                 }
             }
@@ -177,24 +290,33 @@ impl Hooks for Draw {
         let Some(item) = shown(&*host, &looked).into_iter().find(|item| item.hovered) else {
             return;
         };
-        let mut lines = vec![say(&*host, item.def.label())];
-        match item.def.kind {
-            Kind::Value { .. } => lines.push(say(&*host, "create.gui.value_settings.hold_to_edit")),
+        let words = |key: &str| say(&*host, key);
+        let mut lines = match item.def.kind {
+            Kind::Value { behaviour, .. } => {
+                let current = board::format(behaviour, item.values.max_stack, board::settings_of(behaviour, &item.values), &words);
+                let title = if matches!(behaviour, Behaviour::Kinetic { .. }) {
+                    format!("{}: {current} RPM", say(&*host, item.def.label()))
+                } else {
+                    format!("{}: {current}", say(&*host, item.def.label()))
+                };
+                vec![title, say(&*host, "create.gui.value_settings.hold_to_edit")]
+            }
             Kind::Filter { .. } => {
                 let tip = if item.filter.is_none() {
                     "create.logistics.filter.click_to_set"
                 } else {
                     "create.logistics.filter.click_to_replace"
                 };
-                lines.push(say(&*host, tip));
+                let mut l = vec![say(&*host, item.def.label()), say(&*host, tip)];
                 if item.counts {
-                    lines.push(say(&*host, "create.logistics.filter.hold_to_set_amount"));
+                    l.push(say(&*host, "create.logistics.filter.hold_to_set_amount"));
                 }
+                l
             }
-        }
+        };
         let (w, h) = (client.gui_size[0], client.gui_size[1]);
         let mut y = h - 75.0 - lines.len() as f32 * 12.0;
-        for (i, line) in lines.iter().enumerate() {
+        for (i, line) in lines.iter_mut().enumerate() {
             let width = host.text_width(line);
             let rgb = if i == 0 { 0xFB_DC7D } else { 0xFF_FFFF };
             host.text(event.batch, line, [(w - width) / 2.0, y], rgb, true);
@@ -279,5 +401,17 @@ mod tests {
         assert!(nudged("minecraft:stone_button"));
         assert!(nudged("minecraft:end_rod"));
         assert!(!nudged("minecraft:stone"));
+    }
+
+    #[test]
+    fn draws_3d_value_box_plate_and_digits() {
+        let pose = Pose {
+            offset: [0.5, 0.5, 15.5 / 16.0],
+            rotations: vec![(Axis::Y, 180.0)],
+            scale: 0.5,
+        };
+        let mut prims = crate::compat::WorldPrimitives::default();
+        draw_value_face(&mut prims, [10.0, 64.0, 20.0], &pose, "256", TEXT, true);
+        assert!(prims.quads.len() > 20, "expected backing plate + glyph quads, got {}", prims.quads.len());
     }
 }

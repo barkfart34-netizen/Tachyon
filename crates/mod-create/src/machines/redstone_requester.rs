@@ -27,7 +27,7 @@ use create_kinetics::rules::redstone_requester::{AutoRequestData, Message, Reque
 use create_kinetics::rules::stock_commands::{self as commands, Requester as Command};
 use crate::compat::{
     AnalogOutputEvent, BlockEntityEvent, BlockEntityTickEvent, BlockEntityTicksEvent, BlockStateId, Compound, DestroyBlockEvent, Flow,
-    HasAnalogOutputEvent, Hooks, Host, ItemStack, LevelHost, NativeCommand, PerformCommandEvent, PlaceBlockEvent,
+    HasAnalogOutputEvent, Hooks, Host, ItemStack, LevelHost, NativeCommand, NetFromClientEvent, PerformCommandEvent, PlaceBlockEvent,
     RegisterCommandsEvent, RightClickBlockEvent, StateForPlacementEvent, Tag, Text, UseItemOnEvent,
 };
 
@@ -356,10 +356,42 @@ impl Hooks for Requesters {
         run(host, event.player.uuid, rest);
         Flow::Cancel
     }
+
+    fn net_from_client(&self, host: &mut dyn Host, event: &mut NetFromClientEvent<'_>) {
+        use super::logistics_screens::{decode_requester_save, RR_SAVE_CHANNEL};
+        if event.channel != RR_SAVE_CHANNEL {
+            return;
+        }
+        let Ok(text) = std::str::from_utf8(event.data) else { return };
+        let Some(save) = decode_requester_save(text) else { return };
+        let Some(player) = host.server_players().into_iter().find(|p| p.uuid == event.player) else { return };
+        let d2: f64 = (0..3).map(|i| (player.position[i] - (f64::from(save.pos[i]) + 0.5)).powi(2)).sum();
+        if d2 > 100.0 || host.block(save.pos) != ID {
+            return;
+        }
+        let Some(entity) = host.mod_block_entity(save.pos) else { return };
+        if let Some(freq) = network::freq_of(&entity.nbt)
+            && !network::may_interact(host, freq, player.uuid)
+        {
+            return;
+        }
+        let mut state = read(&entity.nbt);
+        state.allow_partial_requests = save.allow_partial;
+        state.encoded_target_address = save.address;
+        state.encoded_request.stacks = save
+            .entries
+            .into_iter()
+            .take(9)
+            .map(|(id, count)| (ItemStack { item: id.into(), count: 1, damage: 0, extra: None }, count.clamp(1, 256)))
+            .collect();
+        store(host, save.pos, &state);
+        host.block_entity_sync(save.pos);
+    }
 }
 
 impl Requesters {
     fn open(&self, host: &mut dyn Host, uuid: u128, pos: Pos) {
+        use super::logistics_screens::{encode_requester_open, RequesterOpenPayload, StockItemWire, RR_OPEN_CHANNEL};
         let Some(entity) = host.mod_block_entity(pos) else {
             return;
         };
@@ -369,7 +401,27 @@ impl Requesters {
             return;
         }
         lock(&OPEN).insert(uuid, pos);
-        tell(host, uuid, describe(&read(&entity.nbt)));
-        tell(host, uuid, "/requester set <item> <count>, remove <item>, clear, address <text>, partial <true|false>");
+        let state = read(&entity.nbt);
+        let entries = state
+            .encoded_request
+            .stacks
+            .iter()
+            .map(|(k, c)| StockItemWire {
+                item_id: k.item.to_string(),
+                name: display_name(&k.item),
+                count: *c,
+            })
+            .collect();
+        let held_item = host
+            .held_stack(uuid)
+            .map(|s| (s.item.to_string(), display_name(&s.item)));
+        let payload = RequesterOpenPayload {
+            pos,
+            allow_partial: state.allow_partial_requests,
+            address: state.encoded_target_address.clone(),
+            entries,
+            held_item,
+        };
+        let _ = host.net_send_to_player(uuid, RR_OPEN_CHANNEL, encode_requester_open(&payload).as_bytes());
     }
 }

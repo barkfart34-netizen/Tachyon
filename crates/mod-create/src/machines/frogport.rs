@@ -31,7 +31,7 @@ use create_kinetics::{Dir, Pos};
 use crate::compat::{
     BlockEntityContainerEvent, BlockEntityEvent, BlockEntityRenderBoundingBoxEvent, BlockEntitySubmitEvent,
     BlockEntityTickEvent, BlockEntityTicksEvent, BlockEntityUpdateTagEvent, Compound, ContainerAcceptsEvent,
-    DisplayContext, Flow, Hooks, Host, ItemStack, ModBlockEntity, ModContainer, PlaceBlockEvent,
+    DisplayContext, Flow, Hooks, Host, ItemStack, ModBlockEntity, ModContainer, NetFromClientEvent, PlaceBlockEvent,
     RightClickBlockEvent, StandaloneModelsEvent, Tag, Text, UseItemOnEvent,
 };
 
@@ -600,8 +600,51 @@ impl Hooks for Frogports {
             host.action_bar(player.uuid, Text::literal(format!("Took {given} packages")));
             return Flow::Cancel;
         }
-        host.action_bar(player.uuid, Text::literal(describe(&entity)));
+        open_port_screen(host, player.uuid, pos, &entity);
         Flow::Cancel
+    }
+
+    fn net_from_client(&self, host: &mut dyn Host, event: &mut NetFromClientEvent<'_>) {
+        use super::port_screens::{decode_pp_save, PP_SAVE_CHANNEL};
+        if event.channel != PP_SAVE_CHANNEL {
+            return;
+        }
+        let Ok(text) = std::str::from_utf8(event.data) else { return };
+        let Some(save) = decode_pp_save(text) else { return };
+        let Some(player) = host.server_players().into_iter().find(|p| p.uuid == event.player) else { return };
+        let d2: f64 = (0..3).map(|i| (player.position[i] - (f64::from(save.pos[i]) + 0.5)).powi(2)).sum();
+        if d2 > 100.0 || host.block(save.pos) != ID {
+            return;
+        }
+        let Some(entity) = host.mod_block_entity(save.pos) else { return };
+        if let (Some(target), Some(old_filter)) = (target_of(&entity.nbt), filter_of(&entity.nbt)) {
+            let offset = [-target.relative_pos[0], -target.relative_pos[1], -target.relative_pos[2]];
+            super::chain_conveyor::deregister_port(&*host, conveyor_of(save.pos, &target), offset, &old_filter);
+        }
+        host.change_mod_block_entity(save.pos, &mut |e| {
+            util::put(&mut e.nbt, ADDRESS, Tag::String(save.address.as_str().into()));
+            util::put(&mut e.nbt, ACCEPTS, Tag::Byte(i8::from(save.accepts_packages)));
+        });
+        if save.accepts_packages
+            && let Some(target) = target_of(&entity.nbt)
+        {
+            let offset = [-target.relative_pos[0], -target.relative_pos[1], -target.relative_pos[2]];
+            super::chain_conveyor::register_port(&*host, conveyor_of(save.pos, &target), offset, &target, &save.address);
+        }
+        if save.take_all {
+            let mut port = read(&entity);
+            for slot in port.slots.iter_mut() {
+                if let Some(boxed) = slot.take()
+                    && let Some(rest) = host.give_stack(player.uuid, boxed)
+                {
+                    util::spawn_item(host, player.position, &rest, [0.0; 3], 0);
+                }
+            }
+            host.change_mod_block_entity(save.pos, &mut |e| {
+                store(e, &port);
+            });
+        }
+        host.block_entity_sync(save.pos);
     }
 
     /// A package goes into it; the Wrench picks the chain point again; a Name Tag sets the
@@ -694,7 +737,45 @@ fn rebind(host: &mut dyn Host, pos: Pos, target: Option<&Target>, address: Optio
     host.block_entity_sync(pos);
 }
 
+fn open_port_screen(host: &mut dyn Host, uuid: u128, pos: Pos, entity: &ModBlockEntity) {
+    use super::port_screens::{encode_pp_open, PortOpenPayload, PortSlotWire, PP_OPEN_CHANNEL};
+    let address = match util::get(&entity.nbt, ADDRESS) {
+        Some(Tag::String(t)) => t.to_string_lossy(),
+        _ => String::new(),
+    };
+    let accepts_packages = !util::has(&entity.nbt, ACCEPTS) || util::boolean(&entity.nbt, ACCEPTS);
+    let target_desc = match target_of(&entity.nbt) {
+        Some(t) if t.connection.is_some() => format!("Linked to chain ({:?})", t.relative_pos),
+        Some(t) => format!("Linked to conveyor wheel ({:?})", t.relative_pos),
+        None => "Not attached to a Chain Conveyor".to_owned(),
+    };
+    let slots = entity
+        .items
+        .iter()
+        .take(rules::SLOTS)
+        .map(|slot| match slot {
+            Some(s) => PortSlotWire {
+                item_id: s.item.to_string(),
+                name: create_kinetics::rules::filter::display_name(&s.item),
+                count: s.count,
+            },
+            None => PortSlotWire { item_id: String::new(), name: String::new(), count: 0 },
+        })
+        .collect();
+    let payload = PortOpenPayload {
+        pos,
+        is_frogport: true,
+        block_id: ID.to_owned(),
+        address,
+        accepts_packages,
+        target_desc,
+        slots,
+    };
+    let _ = host.net_send_to_player(uuid, PP_OPEN_CHANNEL, encode_pp_open(&payload).as_bytes());
+}
+
 /// What an empty-handed click says.
+#[allow(dead_code)]
 fn describe(entity: &ModBlockEntity) -> String {
     let port = read(entity);
     let address = filter_of(&entity.nbt).filter(|a| !package_rules::is_blank(a));

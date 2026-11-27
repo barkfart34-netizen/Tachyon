@@ -100,6 +100,11 @@ pub fn close(host: &mut dyn Host, tag: &'static str) {
     }
 }
 
+/// Clears active ownership when another screen takes over `mod_screen("create")`.
+pub fn clear_active() {
+    *lock_active() = None;
+}
+
 /// Clears `tag` ownership when vanilla reports the mod screen closing.
 pub fn on_screen_closing(tag: &'static str) {
     let mut active = lock_active();

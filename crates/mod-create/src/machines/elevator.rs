@@ -35,7 +35,7 @@ use crate::compat::{
     BlockEntityEvent, BlockEntityRenderBoundingBoxEvent, BlockEntitySubmitEvent, BlockEntityTickEvent,
     BlockEntityTicksEvent, BlockEntityUpdateTagEvent, BlockSignalEvent, BlockStateId, Compound,
     DestroyBlockEvent, Flow, Hooks, Host, IsSignalSourceEvent, LevelHost, ModBlockEntity, NativeCommand,
-    PerformCommandEvent, RegisterCommandsEvent, RightClickBlockEvent, StandaloneModelsEvent,
+    NetFromClientEvent, PerformCommandEvent, RegisterCommandsEvent, RightClickBlockEvent, StandaloneModelsEvent,
     StateForPlacementEvent, Tag, UseItemOnEvent,
 };
 use create_kinetics::rules::trains::train_doors::{DoorControl, elevator_door_contact};
@@ -83,6 +83,35 @@ pub fn hooks() -> Box<dyn Hooks> {
 
 fn flag(value: bool) -> Tag {
     Tag::Byte(i8::from(value))
+}
+
+fn open_contact_screen(host: &mut dyn Host, uuid: u128, pos: Pos) {
+    use super::port_screens::{encode_ec_open, ElevatorOpenPayload, EC_OPEN_CHANNEL};
+    let (short_name, long_name) = host
+        .mod_block_entity(pos)
+        .map(|e| {
+            let s = match util::get(&e.nbt, SHORT_NAME) {
+                Some(Tag::String(v)) => v.to_string_lossy(),
+                _ => String::new(),
+            };
+            let l = match util::get(&e.nbt, LONG_NAME) {
+                Some(Tag::String(v)) => v.to_string_lossy(),
+                _ => String::new(),
+            };
+            (s, l)
+        })
+        .unwrap_or_default();
+    let mode = train_doors::mode_at(host, pos).unwrap_or_default();
+    let door_control = DoorControl::ALL.iter().position(|d| *d == mode).unwrap_or(0) as u8;
+    let calling = host.block_property(pos, "calling").as_deref() == Some("true");
+    let payload = ElevatorOpenPayload {
+        pos,
+        short_name,
+        long_name,
+        door_control,
+        calling,
+    };
+    let _ = host.net_send_to_player(uuid, EC_OPEN_CHANNEL, encode_ec_open(&payload).as_bytes());
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -939,8 +968,7 @@ impl Hooks for Elevators {
             }
             let dimension = host.dimension().to_owned();
             lock(&OPEN).insert(player.uuid, (dimension, pos));
-            let mode = train_doors::mode_at(&*host, pos).unwrap_or_default();
-            super::train_net::tell(host, player.uuid, format!("Elevator Contact: Onboard Door Control: {} (/elevator doors <all | north | east | south | west | none>)", mode.long()));
+            open_contact_screen(host, player.uuid, pos);
             return Flow::Cancel;
         }
         if host.block(pos) != PULLEY {
@@ -966,6 +994,30 @@ impl Hooks for Elevators {
             }
         });
         Flow::Cancel
+    }
+
+    fn net_from_client(&self, host: &mut dyn Host, event: &mut NetFromClientEvent<'_>) {
+        use super::port_screens::{decode_ec_save, EC_SAVE_CHANNEL};
+        if event.channel != EC_SAVE_CHANNEL {
+            return;
+        }
+        let Ok(text) = std::str::from_utf8(event.data) else { return };
+        let Some(save) = decode_ec_save(text) else { return };
+        let Some(player) = host.server_players().into_iter().find(|p| p.uuid == event.player) else { return };
+        let d2: f64 = (0..3).map(|i| (player.position[i] - (f64::from(save.pos[i]) + 0.5)).powi(2)).sum();
+        if d2 > 100.0 || host.block(save.pos) != CONTACT {
+            return;
+        }
+        let mode = DoorControl::ALL
+            .get(usize::from(save.door_control))
+            .copied()
+            .unwrap_or_default();
+        host.change_mod_block_entity(save.pos, &mut |e| {
+            e.nbt.insert(SHORT_NAME.into(), Tag::String(save.short_name.as_str().into()));
+            e.nbt.insert(LONG_NAME.into(), Tag::String(save.long_name.as_str().into()));
+            e.nbt.insert(train_doors::DOOR_CONTROL.into(), Tag::String(mode.constant().into()));
+        });
+        host.block_entity_sync(save.pos);
     }
 
     /// A pulley broken while its cabin runs sets it down first (`remove`).

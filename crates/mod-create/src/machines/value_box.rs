@@ -371,15 +371,29 @@ pub fn right_click(host: &mut dyn Host, event: &RightClickBlockEvent) -> Flow {
         return Flow::Continue;
     }
     let (eye, look) = eye_of(&player);
-    let Some(hit) = hit_of(&*host, eye, look, pos, event.face) else {
-        return Flow::Continue;
-    };
-    let found = with_props(&*host, pos, &block, |p, nbt| {
-        let def = table::hit_box(&block, p, hit.side, hit.local)?;
-        let board = nbt.is_some_and(|nbt| takes_board(def, p, &values_of(&*host, nbt, def, hit.side)));
-        Some((def, board))
+    let is_speed_ctrl = matches!(
+        block.as_str(),
+        "create:creative_motor" | "create:rotation_speed_controller"
+    );
+    let wrench = host
+        .held_stack(player.uuid)
+        .is_some_and(|s| &*s.item == "create:wrench");
+    let mut found = hit_of(&*host, eye, look, pos, event.face).and_then(|hit| {
+        with_props(&*host, pos, &block, |p, nbt| {
+            let def = table::hit_box(&block, p, hit.side, hit.local)?;
+            let board = nbt.is_some_and(|nbt| takes_board(def, p, &values_of(&*host, nbt, def, hit.side)));
+            Some((def, hit.side, board))
+        })
     });
-    let Some((def, board)) = found else {
+    if found.is_none() && is_speed_ctrl && !wrench {
+        found = with_props(&*host, pos, &block, |p, nbt| {
+            let def = table::boxes(&block).iter().find(|d| (d.active)(p))?;
+            let side = Dir::ALL.into_iter().find(|&s| def.slot.exists(p, s))?;
+            let board = nbt.is_some_and(|nbt| takes_board(def, p, &values_of(&*host, nbt, def, side)));
+            Some((def, side, board))
+        });
+    }
+    let Some((def, side, board)) = found else {
         return Flow::Continue;
     };
     if util::click_repeated(&*host, player.uuid, pos) {
@@ -387,7 +401,11 @@ pub fn right_click(host: &mut dyn Host, event: &RightClickBlockEvent) -> Flow {
     }
     util::click_taken(&*host, player.uuid, pos);
     if def.is_filter() && !board {
-        short_click(host, &player, pos, def, hit.side);
+        short_click(host, &player, pos, def, side);
+    } else if is_speed_ctrl && board && !wrench {
+        let side_id = Dir::ALL.iter().position(|d| *d == side).unwrap_or(1) as u8;
+        let payload = super::value_box_screen::encode_open(pos, def.net_id, side_id);
+        let _ = host.net_send_to_player(player.uuid, super::value_box_screen::OPEN_CHANNEL, &payload);
     }
     Flow::Cancel
 }
