@@ -15,7 +15,7 @@ use std::io::Read;
 use std::path::Path;
 use zip::ZipArchive;
 
-pub const VERSION: &str = "3";
+pub const VERSION: &str = "4";
 const STAMP: &str = ".tachyon-aero-fix";
 
 const DYES: &[&str] = &[
@@ -641,6 +641,90 @@ fn extra_items(mod_id: &str) -> &'static [&'static str] {
     }
 }
 
+/// Removes foreign mod namespaces (`create`, etc.) that `horizon-port-pack`
+/// carried over and declared in `horizon-mod.toml`, which would otherwise clash
+/// with the standalone `create` mod and cause Horizon to skip loading the mod.
+fn strip_foreign_namespaces(mod_id: &str, dir: &Path) -> Result<(), String> {
+    for root in ["data", "assets"] {
+        let base = dir.join(root);
+        let Ok(entries) = fs::read_dir(&base) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(ns) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if ns != mod_id && !matches!(ns.as_str(), "minecraft" | "c" | "horizon") {
+                fs::remove_dir_all(&path)
+                    .map_err(|e| format!("{}: {e}", path.display()))?;
+            }
+        }
+    }
+
+    let manifest_path = dir.join("horizon-mod.toml");
+    let Ok(toml_text) = fs::read_to_string(&manifest_path) else {
+        return Ok(());
+    };
+    let mut changed = false;
+    let mut out_lines = Vec::new();
+    for line in toml_text.lines() {
+        let trimmed = line.trim();
+        if let Some(rhs) = trimmed
+            .strip_prefix("namespaces")
+            .and_then(|s| s.trim_start().strip_prefix('='))
+        {
+            let kept: Vec<String> = rhs
+                .trim()
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .split(',')
+                .filter_map(|part| {
+                    let s = part.trim().trim_matches('"').trim_matches('\'');
+                    (!s.is_empty()
+                        && !matches!(s, "create" | "aeronautics" | "simulated" | "offroad"))
+                    .then(|| format!("\"{s}\""))
+                })
+                .collect();
+            changed = true;
+            if !kept.is_empty() {
+                out_lines.push(format!("namespaces = [{}]", kept.join(", ")));
+            }
+            continue;
+        }
+        out_lines.push(line.to_owned());
+    }
+    if changed {
+        let mut updated = out_lines.join("\n");
+        if toml_text.ends_with('\n') && !updated.ends_with('\n') {
+            updated.push('\n');
+        }
+        fs::write(&manifest_path, updated)
+            .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
+    }
+    Ok(())
+}
+
+/// Removes stray nested subdirectories that `horizon-port-pack` extracted into
+/// `data/<mod_id>/horizon/{item,block}/` (e.g. `creative_physics_staff/`, `tire/`).
+fn remove_nested_horizon_dirs(dir: &Path, mod_id: &str) {
+    for kind in ["item", "block"] {
+        let base = dir.join(format!("data/{mod_id}/horizon/{kind}"));
+        let Ok(entries) = fs::read_dir(&base) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let _ = fs::remove_dir_all(path);
+            }
+        }
+    }
+}
+
 /// Ensures every key block, state property, and pure item declaration in
 /// `dir` (`horizon-mods/<mod_id>`) is valid for `horizon-mod-package`.
 pub fn fix(mod_id: &str, dir: &Path) -> Result<(), String> {
@@ -650,6 +734,9 @@ pub fn fix(mod_id: &str, dir: &Path) -> Result<(), String> {
         "offroad" => offroad_specs(),
         _ => return Ok(()),
     };
+
+    strip_foreign_namespaces(mod_id, dir)?;
+    remove_nested_horizon_dirs(dir, mod_id);
 
     let block_dir = dir.join(format!("data/{mod_id}/horizon/block"));
     let item_dir = dir.join(format!("data/{mod_id}/horizon/item"));
@@ -1490,6 +1577,42 @@ mod tests {
         assert_eq!(tire["loader"], "neoforge:obj");
         assert_eq!(tire["flip_v"], true);
         assert!(tire.get("elements").is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn strips_foreign_create_namespace_and_nested_item_dirs() {
+        let dir = scratch("ns-cleanup");
+        fs::write(
+            dir.join("horizon-mod.toml"),
+            "id = \"simulated\"\nname = \"Create Simulated\"\nversion = \"1.3.2\"\napi = \"0.2\"\nside = \"both\"\ncapabilities = [\"registries\"]\nnamespaces = [\"create\"]\n",
+        )
+        .unwrap();
+        write_json(
+            &dir.join("data/create/tags/block/brittle.json"),
+            &json!({"values": []}),
+        )
+        .unwrap();
+        write_json(
+            &dir.join("data/simulated/horizon/item/creative_physics_staff/core.json"),
+            &json!({}),
+        )
+        .unwrap();
+
+        fix("simulated", &dir).unwrap();
+
+        assert!(!dir.join("data/create").exists());
+        assert!(!dir.join("data/simulated/horizon/item/creative_physics_staff").is_dir());
+        assert!(dir.join("data/simulated/horizon/item/creative_physics_staff.json").is_file());
+        assert!(dir.join("data/simulated/horizon/item/honey_glue.json").is_file());
+        assert!(dir.join("data/simulated/horizon/block/physics_assembler.json").is_file());
+
+        let toml_text = fs::read_to_string(dir.join("horizon-mod.toml")).unwrap();
+        assert!(!toml_text.contains("namespaces"));
+        assert!(!toml_text.contains("\"create\""));
+        let manifest = horizon_mod_package::manifest::Manifest::parse(&toml_text).unwrap();
+        let owned: Vec<&str> = manifest.owned_namespaces().collect();
+        assert_eq!(owned, vec!["simulated"]);
         let _ = fs::remove_dir_all(&dir);
     }
 }

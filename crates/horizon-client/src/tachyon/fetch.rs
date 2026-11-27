@@ -75,15 +75,15 @@ pub const AERONAUTICS: Fetch = Fetch {
     inner: &[
         Inner {
             jar: "META-INF/jarjar/dev.simulated_team.simulated.simulated-neoforge-1.21.1-1.3.2.jar",
-            take: &["assets/simulated/", "data/simulated/", "data/c/", "data/minecraft/", "data/create/"],
+            take: &["assets/simulated/", "data/simulated/", "data/c/", "data/minecraft/"],
         },
         Inner {
             jar: "META-INF/jarjar/dev.eriksonn.aeronautics.aeronautics-neoforge-1.21.1-1.3.2.jar",
-            take: &["assets/aeronautics/", "data/aeronautics/", "data/c/", "data/minecraft/", "data/simulated/"],
+            take: &["assets/aeronautics/", "data/aeronautics/", "data/c/", "data/minecraft/"],
         },
         Inner {
             jar: "META-INF/jarjar/dev.ryanhcode.offroad.offroad-neoforge-1.21.1-1.3.2.jar",
-            take: &["assets/offroad/", "data/offroad/", "data/minecraft/", "data/create/"],
+            take: &["assets/offroad/", "data/offroad/", "data/c/", "data/minecraft/"],
         },
     ],
     needs: Some(&CREATE),
