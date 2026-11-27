@@ -27,6 +27,7 @@ horizon-engine-slots = { path = "../horizon-engine-slots" }
 horizon-mod-api-macros = { path = "../horizon-mod-api-macros" }
 horizon-quests = { path = "../horizon-quests" }
 mod-create = { path = "../mod-create" }
+mod-aeronautics = { path = "../mod-aeronautics" }
 horizon-client-lib = { path = "../horizon-client-lib", default-features = false }
 horizon-gameplay = { path = "../horizon-gameplay" }
 horizon-client-gameplay = { path = "../horizon-client-gameplay" }

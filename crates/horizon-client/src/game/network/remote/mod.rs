@@ -7537,6 +7537,30 @@ impl Game<'_> {
             player.fall_distance = view.fall_distance;
         }
     }
+    fn mod_aeronautics_local_player_solid(&mut self) {
+        let Some(player) = self.player.as_mut() else {
+            return;
+        };
+        if !player.client_side || player.spectator {
+            return;
+        }
+        let mut view = mod_aeronautics::solid::LocalPlayer {
+            position: [player.position.x, player.position.y, player.position.z],
+            velocity: [player.velocity.x, player.velocity.y, player.velocity.z],
+            width: f64::from(player.dimensions.width),
+            height: f64::from(player.dimensions.height),
+            max_up_step: 0.6,
+            on_ground: player.ground.on_ground,
+            fall_distance: player.fall_distance,
+            passenger: player.is_passenger,
+        };
+        if mod_aeronautics::solid::local_player_pass(&mut view) {
+            player.position = Vec3::new(view.position[0], view.position[1], view.position[2]);
+            player.velocity = Vec3::new(view.velocity[0], view.velocity[1], view.velocity[2]);
+            player.ground.on_ground = view.on_ground;
+            player.fall_distance = view.fall_distance;
+        }
+    }
 
     /// The end of the player's tick: `AbstractBoat.tick`'s paddles (the vehicle ticks before its
     /// passenger's `sendChanges`), then `LocalPlayer.sendChanges`: the input, and a passenger's look,
@@ -7546,6 +7570,7 @@ impl Game<'_> {
         if crate::tachyon_native_mods::create_active() {
             self.mod_create_local_player_solid();
         }
+        self.mod_aeronautics_local_player_solid();
         let Some(p) = self.player.as_ref() else {
             return;
         };

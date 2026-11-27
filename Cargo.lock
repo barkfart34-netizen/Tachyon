@@ -44,6 +44,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aeronautics-physics"
+version = "0.1.0"
+
+[[package]]
 name = "aes"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1875,6 +1879,7 @@ dependencies = [
  "libc",
  "log",
  "megamap-engine",
+ "mod-aeronautics",
  "mod-create",
  "naga",
  "ndk-context",
@@ -3617,6 +3622,15 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mod-aeronautics"
+version = "0.1.0"
+dependencies = [
+ "aeronautics-physics",
+ "horizon-mod-api",
+ "log",
 ]
 
 [[package]]

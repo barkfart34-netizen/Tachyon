@@ -10,10 +10,11 @@ use std::sync::{
 };
 
 /// Base statically linked `horizon-mod-api` mods bundled into Tachyon.
-const BUILTIN_BASE: &[mod_api::__private::native::BuiltMod] = &[horizon_quests::BUILT];
+const BUILTIN_BASE: &[mod_api::__private::native::BuiltMod] =
+    &[horizon_quests::BUILT, mod_aeronautics::BUILT];
 /// Statically linked `horizon-mod-api` mods when Create (`mod-create`) is staged.
 const BUILTIN_WITH_CREATE: &[mod_api::__private::native::BuiltMod] =
-    &[horizon_quests::BUILT, mod_create::BUILT];
+    &[horizon_quests::BUILT, mod_aeronautics::BUILT, mod_create::BUILT];
 
 /// Statically linked `horizon-mod-api` mods known to Tachyon.
 pub const BUILTIN_MODS: &[mod_api::__private::native::BuiltMod] = BUILTIN_WITH_CREATE;
@@ -106,10 +107,10 @@ pub fn install() -> Runtime {
         }
         crate::game::startup_progress::install(false);
         crate::entry::install_noop_code_runtime();
-        let mut mods = vec![mod_api::ModEntry::new(
-            horizon_quests::hq_meta::ID,
-            horizon_quests::hooks(),
-        )];
+        let mut mods = vec![
+            mod_api::ModEntry::new(horizon_quests::hq_meta::ID, horizon_quests::hooks()),
+            mod_api::ModEntry::new(mod_aeronautics::ID, mod_aeronautics::hooks()),
+        ];
         let builtin = if has_create {
             mods.push(mod_api::ModEntry::new("create", mod_create::hooks()));
             CREATE_ACTIVE.store(true, Ordering::Relaxed);
@@ -138,29 +139,30 @@ pub fn install() -> Runtime {
 
     let mut bundled = Vec::new();
     if let Some(root) = horizon_client::brand::content() {
-        let expected = &horizon_quests::BUILT;
-        let path = root.join(expected.id);
-        match packages::read_bundled_native(&path) {
-            Ok(pkg) => {
-                if pkg.manifest.id == expected.id
-                    && pkg.manifest.version == expected.version
-                    && pkg.manifest.side == expected.side
-                {
-                    bundled.push(pkg);
-                } else {
+        for expected in [&horizon_quests::BUILT, &mod_aeronautics::BUILT] {
+            let path = root.join(expected.id);
+            match packages::read_bundled_native(&path) {
+                Ok(pkg) => {
+                    if pkg.manifest.id == expected.id
+                        && pkg.manifest.version == expected.version
+                        && pkg.manifest.side == expected.side
+                    {
+                        bundled.push(pkg);
+                    } else {
+                        log::error!(
+                            "Tachyon: bundled native mod {} identity mismatch at {}",
+                            expected.id,
+                            path.display()
+                        );
+                    }
+                }
+                Err(error) => {
                     log::error!(
-                        "Tachyon: bundled native mod {} identity mismatch at {}",
+                        "Tachyon: bundled native mod {} missing or unreadable at {}: {error}",
                         expected.id,
                         path.display()
                     );
                 }
-            }
-            Err(error) => {
-                log::error!(
-                    "Tachyon: bundled native mod {} missing or unreadable at {}: {error}",
-                    expected.id,
-                    path.display()
-                );
             }
         }
     } else {

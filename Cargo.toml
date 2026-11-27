@@ -28,6 +28,8 @@ members = [
     "crates/horizon-quests",
     "crates/mod-create",
     "crates/mod-create/src/kinetics",
+    "crates/aeronautics-physics",
+    "crates/mod-aeronautics",
     "crates/megamap-engine",
     "crates/orbital-laser",
     "crates/horizon-engine-slots",

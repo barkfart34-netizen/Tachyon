@@ -33,7 +33,9 @@ jobs:
         run: bash .github/tachyon/free-disk.sh
 
       - name: The ALSA and udev headers the client links against
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
+        run: |
+          sudo apt-get update --fix-missing || (sleep 5 && sudo apt-get update)
+          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -48,6 +50,9 @@ jobs:
         run: |
           cargo test -p horizon-quests
           cargo test -p create-kinetics
+          cargo test -p aeronautics-physics
+          cargo test -p mod-aeronautics
+          cargo test -p horizon-mod-package --features runtime-process --test tachyon_create_decl
           cargo test -p megamap-engine --release -- --test-threads=1
           cargo test -p horizon-client --lib -- tachyon native_hooks
           cargo test -p horizon-client --bin tachyon-desktop -- tachyon desktop

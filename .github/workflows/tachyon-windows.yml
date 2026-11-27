@@ -23,6 +23,8 @@ on:
       - "crates/horizon-client/src/mod_content.rs"
       - "crates/horizon-quests/**"
       - "crates/mod-create/**"
+      - "crates/aeronautics-physics/**"
+      - "crates/mod-aeronautics/**"
       - "crates/megamap-engine/**"
       - ".github/tachyon/scene.py"
       - "tachyon/**"

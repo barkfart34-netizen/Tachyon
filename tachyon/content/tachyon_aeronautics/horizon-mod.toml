@@ -1,0 +1,10 @@
+# Create Aeronautics native runtime for Tachyon (aeronautics + simulated + offroad).
+# Keep `version` equal to mod_aeronautics::VERSION.
+id = "tachyon_aeronautics"
+name = "Create Aeronautics (Tachyon)"
+version = "0.1.0"
+description = "6-DOF airship buoyancy, propellers, aerodynamics, offroad wheels and contraption assembly for Create Aeronautics, Simulated and Offroad."
+authors = ["Tachyon"]
+api = "0.2"
+side = "both"
+capabilities = ["registries"]
