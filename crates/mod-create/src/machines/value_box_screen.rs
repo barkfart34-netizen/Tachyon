@@ -37,6 +37,56 @@ const TOUCH_BAR_H: f32 = 20.0;
 const PRESET_BAR_H: f32 = 20.0;
 const KINETIC_PRESETS: [i32; 7] = [-256, -64, -16, 1, 16, 64, 256];
 
+const VALUE_SETTINGS_SHEET: &str = "create:gui/value_settings";
+const ICONS_SHEET: &str = "create:gui/icons";
+const ICON_CARD_W: f32 = 22.0;
+const ICON_CARD_H: f32 = 20.0;
+const ICON_STRIDE: f32 = 24.0;
+const ICON_ROW_Y_OFFSET: f32 = -2.0;
+
+/// `(col, row)` 16x16 coordinates in `create:textures/gui/icons.png` matching Create's `AllIcons`.
+fn option_icon_uv(key: &str) -> Option<(u8, u8)> {
+    Some(match key {
+        "create.contraptions.movement_mode.rotate_place" => (4, 2),
+        "create.contraptions.movement_mode.rotate_place_returned" => (5, 2),
+        "create.contraptions.movement_mode.rotate_never_place" => (6, 2),
+        "create.generic.clockwise" => (3, 1),
+        "create.generic.counter_clockwise" => (4, 9),
+        "create.contraptions.roller_mode.tunnel_pave" => (7, 2),
+        "create.contraptions.roller_mode.straight_fill" => (8, 2),
+        "create.contraptions.roller_mode.wide_fill" => (9, 2),
+        "create.tunnel.selection_mode.split" => (4, 3),
+        "create.tunnel.selection_mode.forced_split" => (5, 3),
+        "create.tunnel.selection_mode.round_robin" => (6, 3),
+        "create.tunnel.selection_mode.forced_round_robin" => (7, 3),
+        "create.tunnel.selection_mode.prefer_nearest" => (8, 3),
+        "create.tunnel.selection_mode.randomize" => (9, 3),
+        "create.tunnel.selection_mode.synchronize" => (10, 3),
+        "create.mechanical_arm.selection_mode.round_robin" => (4, 4),
+        "create.mechanical_arm.selection_mode.forced_round_robin" => (5, 4),
+        "create.mechanical_arm.selection_mode.prefer_first" => (6, 4),
+        _ => return None,
+    })
+}
+
+fn icon_slot_rect(geom: &PanelGeometry, gui_top: f32, count: usize, index: usize) -> [f32; 4] {
+    let total_w = if count == 0 {
+        0.0
+    } else {
+        (count - 1) as f32 * ICON_STRIDE + ICON_CARD_W
+    };
+    let start_x = geom.left + (geom.bg_width - total_w) * 0.5;
+    let x = start_x + index as f32 * ICON_STRIDE;
+    let y = gui_top + ICON_ROW_Y_OFFSET;
+    [x, y, ICON_CARD_W, ICON_CARD_H]
+}
+
+fn icon_index_at(geom: &PanelGeometry, gui_top: f32, count: usize, mouse: [f32; 2]) -> Option<i32> {
+    (0..count)
+        .find(|&idx| in_rect(mouse, icon_slot_rect(geom, gui_top, count, idx)))
+        .map(|idx| idx as i32)
+}
+
 pub fn encode_open(pos: Pos, net_id: u8, side: u8) -> Vec<u8> {
     let mut out = Vec::with_capacity(14);
     for c in pos {
@@ -302,7 +352,16 @@ impl Hooks for Screen {
                 Some(_) => {}
             }
             if open.pointer_drives {
-                open.selected = layout.closest(mouse, host.has_shift_down());
+                if layout.board.icon_mode {
+                    let words = |key: &str| say(host, key);
+                    let geom = panel_geometry(host, open, &layout, &words);
+                    let count = (layout.board.max_value + 1).max(1) as usize;
+                    if let Some(idx) = icon_index_at(&geom, layout.gui_top as f32, count, mouse) {
+                        open.selected = Settings { row: 0, value: idx };
+                    }
+                } else {
+                    open.selected = layout.closest(mouse, host.has_shift_down());
+                }
             }
         }
         draw(host, event, open, &layout);
@@ -361,6 +420,15 @@ impl Hooks for Screen {
                 return Flow::Cancel;
             }
         }
+        if layout.board.icon_mode {
+            let count = (layout.board.max_value + 1).max(1) as usize;
+            if let Some(idx) = icon_index_at(&geom, layout.gui_top as f32, count, mouse) {
+                open.selected = Settings { row: 0, value: idx };
+                open.pointer_drives = false;
+                open.last_mouse = Some(mouse);
+                return Flow::Cancel;
+            }
+        }
         let bar_area = [
             geom.left,
             layout.gui_top as f32 - 3.0,
@@ -368,7 +436,9 @@ impl Hooks for Screen {
             layout.window_height as f32 + 5.0,
         ];
         if in_rect(mouse, bar_area) {
-            open.selected = layout.closest(mouse, host.has_shift_down());
+            if !layout.board.icon_mode {
+                open.selected = layout.closest(mouse, host.has_shift_down());
+            }
             open.pointer_drives = !open.sticky;
             open.last_mouse = Some(mouse);
             return Flow::Cancel;
@@ -532,8 +602,14 @@ fn panel_geometry(host: &dyn Host, open: &Open, layout: &Layout, words: &dyn Fn(
         words("create.gui.value_settings.release_to_confirm").replace("%1$s", "Right Button")
     };
     let preset_extra = if is_kinetic { PRESET_BAR_H } else { 0.0 };
-    let additional = if icon { 46.0 } else { 33.0 } + TOUCH_BAR_H + preset_extra;
-    let min_width = if is_kinetic { 236.0 } else { 132.0 };
+    let additional = if icon { 52.0 } else { 33.0 } + TOUCH_BAR_H + preset_extra;
+    let icon_row_min = if icon {
+        let count = (b.max_value + 1).max(1) as f32;
+        count * ICON_STRIDE + 16.0
+    } else {
+        0.0
+    };
+    let min_width = if is_kinetic { 236.0 } else { 132.0_f32.max(icon_row_min) };
     let mut fattest = host
         .text_width(&tip)
         .max(host.text_width(&open.title))
@@ -610,7 +686,32 @@ fn rect(host: &dyn Host, event: &mut ScreenRenderPostEvent<'_>, x: f32, y: f32, 
     host.fill(event.batch, [x, y, w, h], argb);
 }
 
-/// `ValueSettingsScreen.renderWindow` in flat rectangles plus quick RPM presets and touch adjustment bar.
+fn tile_sprite_x(
+    host: &dyn Host,
+    event: &mut ScreenRenderPostEvent<'_>,
+    sheet: &str,
+    u: f32,
+    v: f32,
+    tile_w: f32,
+    src_h: f32,
+    dst: [f32; 4],
+) -> bool {
+    let mut drawn_x = 0.0;
+    while drawn_x < dst[2] {
+        let seg_w = (dst[2] - drawn_x).min(tile_w);
+        if seg_w <= 0.0 {
+            break;
+        }
+        if !host.sprite(event.batch, sheet, [u, v, seg_w, src_h], [dst[0] + drawn_x, dst[1], seg_w, dst[3]]) {
+            return false;
+        }
+        drawn_x += seg_w;
+    }
+    true
+}
+
+/// `ValueSettingsScreen.renderWindow` using Create's original `value_settings.png` and `icons.png` sheets
+/// (with flat rectangle fallback when sprite assets are absent), plus quick RPM presets and touch controls.
 fn draw(host: &dyn Host, event: &mut ScreenRenderPostEvent<'_>, open: &Open, layout: &Layout) {
     let words = |key: &str| say(host, key);
     let (w, h) = (event.batch.width, event.batch.height);
@@ -620,7 +721,10 @@ fn draw(host: &dyn Host, event: &mut ScreenRenderPostEvent<'_>, open: &Open, lay
     let (x, y) = (layout.gui_left as f32, layout.gui_top as f32);
     let icon = b.icon_mode;
     let geom = panel_geometry(host, open, layout, &words);
+    rect(host, event, geom.left - 1.0, geom.top - 1.0, geom.bg_width + 2.0, geom.bg_height + 2.0, 0xCC_14100C);
     rect(host, event, geom.left, geom.top, geom.bg_width, geom.bg_height, PANEL);
+    rect(host, event, geom.left, geom.top, geom.bg_width, 1.0, 0xFF_6D5432);
+    rect(host, event, geom.left, geom.top + geom.bg_height - 1.0, geom.bg_width, 1.0, 0xFF_6D5432);
     let centre = geom.left + geom.bg_width / 2.0;
     host.text(event.batch, &open.title, [centre - host.text_width(&open.title) / 2.0, y - 14.0], 0xDD_DDDD, false);
     host.text(event.batch, &geom.tip, [centre - host.text_width(&geom.tip) / 2.0, geom.tip_y], 0xDD_DDDD, false);
@@ -650,53 +754,122 @@ fn draw(host: &dyn Host, event: &mut ScreenRenderPostEvent<'_>, open: &Open, lay
     for (btn, [bx, by, bw, bh]) in touch_buttons(&geom) {
         rect(host, event, bx, by, bw, bh, FRAME);
         rect(host, event, bx + 1.0, by + 1.0, (bw - 2.0).max(1.0), (bh - 2.0).max(1.0), btn.bg());
-        let lbl = btn.label();
-        let tw = host.text_width(lbl);
-        host.text(event.batch, lbl, [bx + (bw - tw) / 2.0, by + (bh - 8.0) / 2.0], 0xFF_FFFF, false);
-    }
-
-    let rows = b.rows.len() as f32;
-    let bar_x = x + layout.max_label_width as f32 + 14.0;
-    rect(host, event, bar_x, y - 3.0, layout.value_bar_width as f32 + 8.0, rows * 11.0 + 5.0, FRAME);
-    rect(host, event, bar_x + 3.0, y, layout.value_bar_width as f32 + 2.0, rows * 11.0 - 1.0, BAR_BG);
-
-    let milestones = b.max_value / b.milestone_interval + 1;
-    let first = bar_x + 4.0;
-    for (i, label) in b.rows.iter().enumerate() {
-        let row_y = y + i as f32 * 11.0;
-        if !icon {
-            rect(host, event, x - 4.0, row_y, layout.max_label_width as f32 + 8.0, 11.0, LABEL_BG);
-            rect(host, event, first, row_y + 1.0, layout.value_bar_width as f32, 8.0, BAR);
-            host.text(event.batch, label, [x, row_y + 1.0], INK, false);
-        }
-        let mut at = first;
-        for _ in 0..milestones {
-            rect(host, event, at, row_y + 1.0, layout.milestone_size as f32, 8.0, MILESTONE);
-            at += (layout.milestone_size + b.milestone_interval * layout.scale) as f32;
-        }
-        // The value the box holds now.
-        if i as i32 == open.current.row {
-            let [cx, _] = layout.coordinate_of(open.current.row, open.current.value);
-            rect(host, event, cx - 0.5, row_y + 1.0, 1.0, 8.0, 0xFF_FFFFFF);
+        let icon_uv = match btn {
+            TouchButton::Confirm => Some((0u8, 1u8)),
+            TouchButton::Cancel => Some((1u8, 9u8)),
+            TouchButton::Step(_, _) => None,
+        };
+        let drew_icon = icon_uv.is_some_and(|(col, row)| {
+            let sz = 14.0_f32.min(bh - 2.0);
+            let ix = bx + (bw - sz) * 0.5;
+            let iy = by + (bh - sz) * 0.5;
+            host.sprite(event.batch, ICONS_SHEET, [f32::from(col) * 16.0, f32::from(row) * 16.0, 16.0, 16.0], [ix, iy, sz, sz])
+        });
+        if !drew_icon {
+            let lbl = btn.label();
+            let tw = host.text_width(lbl);
+            host.text(event.batch, lbl, [bx + (bw - tw) / 2.0, by + (bh - 8.0) / 2.0], 0xFF_FFFF, false);
         }
     }
 
-    let [cx, cy] = layout.coordinate_of(open.selected.row, open.selected.value);
-    let text = board::format(open.behaviour, open.max_stack, open.selected, &words);
     if icon {
-        rect(host, event, cx - 4.0, cy - 4.0, 8.0, 8.0, CURSOR);
+        let count = (b.max_value + 1).max(1) as usize;
+        for idx in 0..count {
+            let slot = icon_slot_rect(&geom, y, count, idx);
+            let is_selected = open.selected.value == idx as i32;
+            let is_current = open.current.value == idx as i32;
+            if is_selected {
+                rect(host, event, slot[0] - 1.0, slot[1] - 1.0, slot[2] + 2.0, slot[3] + 2.0, 0xFF_F5D27A);
+            } else if is_current {
+                rect(host, event, slot[0] - 1.0, slot[1] - 1.0, slot[2] + 2.0, slot[3] + 2.0, 0xAA_FFFFFF);
+            }
+            if !host.sprite(event.batch, VALUE_SETTINGS_SHEET, [0.0, 44.0, 22.0, 20.0], slot) {
+                rect(host, event, slot[0], slot[1], slot[2], slot[3], if is_selected { CURSOR } else { LABEL_BG });
+            }
+            let key = match open.behaviour {
+                Behaviour::Options { options } => options.get(idx).copied().unwrap_or(""),
+                _ => "",
+            };
+            let drew_opt_icon = option_icon_uv(key).is_some_and(|(col, row)| {
+                host.sprite(
+                    event.batch,
+                    ICONS_SHEET,
+                    [f32::from(col) * 16.0, f32::from(row) * 16.0, 16.0, 16.0],
+                    [slot[0] + 3.0, slot[1] + 2.0, 16.0, 16.0],
+                )
+            });
+            if !drew_opt_icon {
+                let short = idx.to_string();
+                let tw = host.text_width(&short);
+                host.text(event.batch, &short, [slot[0] + (slot[2] - tw) * 0.5, slot[1] + 6.0], INK, false);
+            }
+        }
+        let text = board::format(open.behaviour, open.max_stack, open.selected, &words);
         host.text(
             event.batch,
             &text,
-            [geom.left + (geom.bg_width - host.text_width(&text)) / 2.0, geom.tip_y - 13.0],
+            [geom.left + (geom.bg_width - host.text_width(&text)) / 2.0, y + ICON_CARD_H + 3.0],
             0xFB_DC7D,
             false,
         );
         return;
     }
-    let width = (host.text_width(&text) / 2.0).floor() * 2.0 + 3.0;
+
+    let rows = b.rows.len() as f32;
+    let bar_x = x + layout.max_label_width as f32 + 14.0;
+    let bar_w = layout.value_bar_width as f32;
+    rect(host, event, bar_x, y - 3.0, bar_w + 8.0, rows * 11.0 + 5.0, FRAME);
+    rect(host, event, bar_x + 1.0, y - 2.0, bar_w + 6.0, rows * 11.0 + 3.0, 0xFF_382A1E);
+    rect(host, event, bar_x + 3.0, y, bar_w + 2.0, rows * 11.0 - 1.0, BAR_BG);
+
+    let milestones = b.max_value / b.milestone_interval + 1;
+    let first = bar_x + 4.0;
+    for (i, label) in b.rows.iter().enumerate() {
+        let row_y = y + i as f32 * 11.0;
+        let label_dst = [x - 4.0, row_y, layout.max_label_width as f32 + 8.0, 11.0];
+        if !host.sprite(
+            event.batch,
+            VALUE_SETTINGS_SHEET,
+            [0.0, 31.0, label_dst[2].min(161.0), 11.0],
+            label_dst,
+        ) {
+            rect(host, event, label_dst[0], label_dst[1], label_dst[2], label_dst[3], LABEL_BG);
+        }
+        let track_dst = [first, row_y + 1.0, bar_w, 8.0];
+        if !tile_sprite_x(host, event, VALUE_SETTINGS_SHEET, 0.0, 0.0, 256.0, 8.0, track_dst) {
+            rect(host, event, track_dst[0], track_dst[1], track_dst[2], track_dst[3], BAR);
+        }
+        let brass_dst = [first, row_y + 2.0, bar_w, 6.0];
+        let _ = tile_sprite_x(host, event, VALUE_SETTINGS_SHEET, 0.0, 24.0, 256.0, 6.0, brass_dst);
+        host.text(event.batch, label, [x, row_y + 1.0], INK, false);
+
+        let mut at = first;
+        for _ in 0..milestones {
+            let m_w = layout.milestone_size as f32;
+            if !host.sprite(event.batch, VALUE_SETTINGS_SHEET, [75.0, 9.0, 4.0, 4.0], [at, row_y + 3.0, m_w.min(4.0), 4.0]) {
+                rect(host, event, at, row_y + 1.0, m_w, 8.0, MILESTONE);
+            }
+            at += (layout.milestone_size + b.milestone_interval * layout.scale) as f32;
+        }
+        // The value the box holds now (`ValueSettingsScreen` current marker at (65, 9, 9, 14)).
+        if i as i32 == open.current.row {
+            let [cx, _] = layout.coordinate_of(open.current.row, open.current.value);
+            if !host.sprite(event.batch, VALUE_SETTINGS_SHEET, [65.0, 9.0, 9.0, 14.0], [cx - 4.5, row_y - 2.0, 9.0, 14.0]) {
+                rect(host, event, cx - 0.5, row_y + 1.0, 1.0, 8.0, 0xFF_FFFFFF);
+            }
+        }
+    }
+
+    let [cx, cy] = layout.coordinate_of(open.selected.row, open.selected.value);
+    let text = board::format(open.behaviour, open.max_stack, open.selected, &words);
+    let width = (host.text_width(&text) / 2.0).floor() * 2.0 + 4.0;
     let (cursor_x, cursor_y) = (cx.floor() - (width / 2.0).floor(), cy.floor() - 7.0);
-    rect(host, event, cursor_x - 3.0, cursor_y, width + 6.0, 14.0, CURSOR);
+    let drew_pill = host.sprite(event.batch, VALUE_SETTINGS_SHEET, [0.0, 9.0, 3.0, 14.0], [cursor_x - 3.0, cursor_y, 3.0, 14.0])
+        && tile_sprite_x(host, event, VALUE_SETTINGS_SHEET, 4.0, 9.0, 56.0, 14.0, [cursor_x, cursor_y, width, 14.0])
+        && host.sprite(event.batch, VALUE_SETTINGS_SHEET, [61.0, 9.0, 3.0, 14.0], [cursor_x + width, cursor_y, 3.0, 14.0]);
+    if !drew_pill {
+        rect(host, event, cursor_x - 3.0, cursor_y, width + 6.0, 14.0, CURSOR);
+    }
     host.text(event.batch, &text, [cursor_x + 2.0, cursor_y + 3.0], INK, false);
 }
 
@@ -709,5 +882,41 @@ mod tests {
         let data = encode_open([12, 65, -30], 0, 3);
         assert_eq!(decode_open(&data), Some(([12, 65, -30], 0, 3)));
         assert_eq!(decode_open(&[1, 2, 3]), None);
+    }
+
+    #[test]
+    fn option_icon_uv_covers_bearing_windmill_roller_tunnel_and_arm() {
+        for key in table::ROTATION_MODES
+            .iter()
+            .chain(table::WINDMILL_DIRECTIONS)
+            .chain(table::TUNNEL_MODES)
+            .chain(table::ARM_MODES)
+            .chain(create_kinetics::rules::roller::MODE_KEYS.iter())
+        {
+            assert!(option_icon_uv(key).is_some(), "missing icon uv for {key}");
+        }
+    }
+
+    #[test]
+    fn icon_slots_lay_out_and_hit_test_without_overlap() {
+        let geom = PanelGeometry {
+            left: 100.0,
+            top: 40.0,
+            bg_width: 120.0,
+            bg_height: 80.0,
+            tip: String::new(),
+            tip_y: 90.0,
+            presets_y: 90.0,
+            buttons_y: 95.0,
+        };
+        let r0 = icon_slot_rect(&geom, 60.0, 3, 0);
+        let r1 = icon_slot_rect(&geom, 60.0, 3, 1);
+        let r2 = icon_slot_rect(&geom, 60.0, 3, 2);
+        assert!(r0[0] + r0[2] < r1[0]);
+        assert!(r1[0] + r1[2] < r2[0]);
+        assert_eq!(icon_index_at(&geom, 60.0, 3, [r0[0] + 5.0, r0[1] + 5.0]), Some(0));
+        assert_eq!(icon_index_at(&geom, 60.0, 3, [r1[0] + 10.0, r1[1] + 5.0]), Some(1));
+        assert_eq!(icon_index_at(&geom, 60.0, 3, [r2[0] + 10.0, r2[1] + 5.0]), Some(2));
+        assert_eq!(icon_index_at(&geom, 60.0, 3, [r0[0] + r0[2] + 1.0, r0[1] + 5.0]), None);
     }
 }

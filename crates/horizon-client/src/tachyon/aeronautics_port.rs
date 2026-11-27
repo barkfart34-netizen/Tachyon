@@ -15,7 +15,7 @@ use std::io::Read;
 use std::path::Path;
 use zip::ZipArchive;
 
-pub const VERSION: &str = "2";
+pub const VERSION: &str = "3";
 const STAMP: &str = ".tachyon-aero-fix";
 
 const DYES: &[&str] = &[
@@ -691,83 +691,218 @@ fn rewrite_face_textures(obj: &mut Map<String, Value>, prefix: &str) {
     }
 }
 
-fn box_element(from: [f64; 3], to: [f64; 3], tex: &str) -> Value {
-    let f = |u: [f64; 4]| json!({"uv": u, "texture": tex});
-    json!({
-        "name": "tachyon:obj_part",
-        "from": from,
-        "to": to,
-        "faces": {
-            "north": f([0.0, 0.0, 16.0, 16.0]),
-            "south": f([0.0, 0.0, 16.0, 16.0]),
-            "east": f([0.0, 0.0, 16.0, 16.0]),
-            "west": f([0.0, 0.0, 16.0, 16.0]),
-            "up": f([0.0, 0.0, 16.0, 16.0]),
-            "down": f([0.0, 0.0, 16.0, 16.0]),
+struct ObjRestoreSpec {
+    rel_json: &'static str,
+    model_loc: &'static str,
+    parent: &'static str,
+    textures: &'static [(&'static str, &'static str)],
+    display_json: &'static str,
+}
+
+fn obj_specs_for(mod_id: &str) -> &'static [ObjRestoreSpec] {
+    match mod_id {
+        "offroad" => &[
+            ObjRestoreSpec {
+                rel_json: "block/rockcutting_wheel/wheel",
+                model_loc: "offroad:models/block/rockcutting_wheel/rockcutting_wheel.obj",
+                parent: "block/block",
+                textures: &[("wheel", "offroad:block/rockcutting_wheel")],
+                display_json: "{}",
+            },
+            ObjRestoreSpec {
+                rel_json: "block/rockcutting_wheel/item",
+                model_loc: "offroad:models/block/rockcutting_wheel/item.obj",
+                parent: "block/block",
+                textures: &[("wheel", "offroad:block/rockcutting_wheel"), ("base", "offroad:block/rockcutting_base")],
+                display_json: r#"{"thirdperson_righthand":{"rotation":[75,45,0],"translation":[3.5,2.5,0],"scale":[0.35,0.35,0.35]},"thirdperson_lefthand":{"rotation":[75,45,0],"translation":[0,-1.5,0],"scale":[0.35,0.35,0.35]},"firstperson_righthand":{"rotation":[0,45,0],"translation":[4,0,0],"scale":[0.3,0.3,0.3]},"firstperson_lefthand":{"rotation":[0,45,0],"translation":[0,0,4],"scale":[0.3,0.3,0.3]},"ground":{"translation":[2,3,2],"scale":[0.25,0.25,0.25]},"gui":{"rotation":[30,-135,0],"translation":[-5.25,-2,0],"scale":[0.45,0.45,0.45]},"head":{"translation":[6,-3.75,4.25],"scale":[0.75,0.75,0.75]},"fixed":{"translation":[4,-2,4],"scale":[0.5,0.5,0.5]}}"#,
+            },
+            ObjRestoreSpec {
+                rel_json: "item/small_tire/small_tire",
+                model_loc: "offroad:models/item/small_tire/block.obj",
+                parent: "block/block",
+                textures: &[("axis", "create:block/axis"), ("axis_top", "create:block/axis_top"), ("tire_0", "offroad:block/tire/tire_0"), ("particle", "offroad:block/custom_break_particles/wheel")],
+                display_json: r#"{"gui":{"rotation":[30,135,90],"translation":[0,0,0],"scale":[0.4,0.4,0.4]},"fixed":{"rotation":[90,0,0],"translation":[0,0,0],"scale":[0.45,0.45,0.45]}}"#,
+            },
+            ObjRestoreSpec {
+                rel_json: "item/small_tire/item",
+                model_loc: "offroad:models/item/small_tire/item.obj",
+                parent: "block/block",
+                textures: &[("axis", "create:block/axis"), ("axis_top", "create:block/axis_top"), ("tire_0", "offroad:block/tire/tire_0"), ("particle", "offroad:block/custom_break_particles/wheel")],
+                display_json: r#"{"thirdperson_righthand":{"rotation":[75,45,0],"translation":[0,2.5,0],"scale":[0.375,0.375,0.375]},"thirdperson_lefthand":{"rotation":[75,45,0],"translation":[0,2.5,0],"scale":[0.375,0.375,0.375]},"firstperson_righthand":{"rotation":[0,45,0],"scale":[0.4,0.4,0.4]},"firstperson_lefthand":{"rotation":[0,225,0],"scale":[0.4,0.4,0.4]},"ground":{"translation":[0,3,0],"scale":[0.25,0.25,0.25]},"gui":{"rotation":[30,225,0],"translation":[0,0,0],"scale":[0.5,0.5,0.5]},"fixed":{"rotation":[90,0,0],"translation":[0,0,0],"scale":[0.6,0.6,0.6]}}"#,
+            },
+            ObjRestoreSpec {
+                rel_json: "item/tire/tire",
+                model_loc: "offroad:models/item/tire/block.obj",
+                parent: "block/block",
+                textures: &[("axis", "create:block/axis"), ("axis_top", "create:block/axis_top"), ("tire_0", "offroad:block/tire/tire_0"), ("particle", "offroad:block/custom_break_particles/wheel")],
+                display_json: r#"{"gui":{"rotation":[30,135,90],"translation":[0,0,0],"scale":[0.4,0.4,0.4]},"fixed":{"rotation":[90,0,0],"translation":[0,0,0],"scale":[0.45,0.45,0.45]}}"#,
+            },
+            ObjRestoreSpec {
+                rel_json: "item/tire/item",
+                model_loc: "offroad:models/item/tire/item.obj",
+                parent: "block/block",
+                textures: &[("axis", "create:block/axis"), ("axis_top", "create:block/axis_top"), ("tire_0", "offroad:block/tire/tire_0"), ("particle", "offroad:block/custom_break_particles/wheel")],
+                display_json: r#"{"thirdperson_righthand":{"rotation":[75,45,0],"translation":[0,2.5,0],"scale":[0.375,0.375,0.375]},"thirdperson_lefthand":{"rotation":[75,45,0],"translation":[0,2.5,0],"scale":[0.375,0.375,0.375]},"firstperson_righthand":{"rotation":[0,45,0],"scale":[0.4,0.4,0.4]},"firstperson_lefthand":{"rotation":[0,225,0],"scale":[0.4,0.4,0.4]},"ground":{"translation":[0,3,0],"scale":[0.25,0.25,0.25]},"gui":{"rotation":[30,225,0],"translation":[0,0,0],"scale":[0.45,0.45,0.45]},"fixed":{"rotation":[90,0,0],"translation":[0,0,0],"scale":[0.6,0.6,0.6]}}"#,
+            },
+            ObjRestoreSpec {
+                rel_json: "item/large_tire/large_tire",
+                model_loc: "offroad:models/item/large_tire/block.obj",
+                parent: "block/block",
+                textures: &[("axis", "create:block/axis"), ("axis_top", "create:block/axis_top"), ("tire_0", "offroad:block/tire/tire_0"), ("particle", "offroad:block/custom_break_particles/wheel")],
+                display_json: r#"{"gui":{"rotation":[30,135,90],"translation":[0,0,0],"scale":[0.4,0.4,0.4]},"fixed":{"rotation":[90,0,0],"translation":[0,0,0],"scale":[0.45,0.45,0.45]}}"#,
+            },
+            ObjRestoreSpec {
+                rel_json: "item/large_tire/item",
+                model_loc: "offroad:models/item/large_tire/item.obj",
+                parent: "block/block",
+                textures: &[("axis", "create:block/axis"), ("axis_top", "create:block/axis_top"), ("tire_0", "offroad:block/tire/tire_0"), ("particle", "offroad:block/custom_break_particles/wheel")],
+                display_json: r#"{"thirdperson_righthand":{"rotation":[75,45,0],"translation":[0,2.5,0],"scale":[0.35,0.35,0.35]},"thirdperson_lefthand":{"rotation":[75,45,0],"translation":[0,2.5,0],"scale":[0.325,0.325,0.325]},"firstperson_righthand":{"rotation":[0,45,0],"scale":[0.4,0.4,0.4]},"firstperson_lefthand":{"rotation":[0,225,0],"scale":[0.4,0.4,0.4]},"ground":{"translation":[0,3,0],"scale":[0.25,0.25,0.25]},"gui":{"rotation":[30,225,0],"translation":[0,0,0],"scale":[0.4,0.4,0.4]},"fixed":{"rotation":[90,0,0],"translation":[0,0,0],"scale":[0.6,0.6,0.6]}}"#,
+            },
+            ObjRestoreSpec {
+                rel_json: "item/monstrous_tire/monstrous_tire",
+                model_loc: "offroad:models/item/monstrous_tire/block.obj",
+                parent: "block/block",
+                textures: &[("axis", "create:block/axis"), ("axis_top", "create:block/axis_top"), ("tire_0", "offroad:block/tire/tire_0"), ("tire_1", "offroad:block/tire/tire_1"), ("particle", "offroad:block/custom_break_particles/wheel")],
+                display_json: r#"{"gui":{"rotation":[30,135,90],"translation":[0,0,0],"scale":[0.4,0.4,0.4]},"fixed":{"rotation":[90,0,0],"translation":[0,0,0],"scale":[0.45,0.45,0.45]}}"#,
+            },
+            ObjRestoreSpec {
+                rel_json: "item/monstrous_tire/item",
+                model_loc: "offroad:models/item/monstrous_tire/item.obj",
+                parent: "block/block",
+                textures: &[("axis", "create:block/axis"), ("axis_top", "create:block/axis_top"), ("tire_0", "offroad:block/tire/tire_0"), ("tire_1", "offroad:block/tire/tire_1"), ("particle", "offroad:block/custom_break_particles/wheel")],
+                display_json: r#"{"thirdperson_righthand":{"rotation":[75,45,0],"translation":[0,2.5,0],"scale":[0.2,0.2,0.2]},"thirdperson_lefthand":{"rotation":[75,45,0],"translation":[0,2.5,0],"scale":[0.2,0.2,0.2]},"firstperson_righthand":{"rotation":[0,45,0],"scale":[0.4,0.4,0.4]},"firstperson_lefthand":{"rotation":[0,225,0],"scale":[0.4,0.4,0.4]},"ground":{"translation":[0,3,0],"scale":[0.25,0.25,0.25]},"gui":{"rotation":[30,225,0],"translation":[0,0,0],"scale":[0.3,0.3,0.3]},"fixed":{"rotation":[90,0,0],"translation":[0,0,0],"scale":[0.6,0.6,0.6]}}"#,
+            },
+        ],
+        "simulated" => &[
+            ObjRestoreSpec {
+                rel_json: "block/mecanum_wheel/block",
+                model_loc: "simulated:models/block/mecanum_wheel/block.obj",
+                parent: "block/block",
+                textures: &[("axis", "create:block/axis"), ("axis_top", "create:block/axis_top"), ("mecanum_wheel", "simulated:block/mecanum_wheel"), ("particle", "create:block/dark_metal_block")],
+                display_json: "{}",
+            },
+            ObjRestoreSpec {
+                rel_json: "block/mecanum_wheel/block_flipped",
+                model_loc: "simulated:models/block/mecanum_wheel/block_flipped.obj",
+                parent: "block/block",
+                textures: &[("axis", "create:block/axis"), ("axis_top", "create:block/axis_top"), ("mecanum_wheel", "simulated:block/mecanum_wheel"), ("particle", "create:block/dark_metal_block")],
+                display_json: "{}",
+            },
+            ObjRestoreSpec {
+                rel_json: "block/mecanum_wheel/item",
+                model_loc: "simulated:models/block/mecanum_wheel/item.obj",
+                parent: "block/block",
+                textures: &[("axis", "create:block/axis"), ("axis_top", "create:block/axis_top"), ("mecanum_wheel", "simulated:block/mecanum_wheel"), ("particle", "create:block/dark_metal_block")],
+                display_json: r#"{"gui":{"rotation":[30,225,0],"translation":[0,0,0],"scale":[0.4,0.4,0.4]},"fixed":{"rotation":[90,0,0],"translation":[0,0,0],"scale":[0.45,0.45,0.45]}}"#,
+            },
+            ObjRestoreSpec {
+                rel_json: "block/plunger_wheel/block",
+                model_loc: "simulated:models/block/plunger_wheel/block.obj",
+                parent: "block/block",
+                textures: &[("axis", "create:block/axis"), ("axis_top", "create:block/axis_top"), ("plunger_wheel", "simulated:block/plunger_wheel"), ("particle", "simulated:block/plunger_wheel")],
+                display_json: r#"{"gui":{"rotation":[30,135,90],"translation":[0,0,0],"scale":[0.4,0.4,0.4]},"fixed":{"rotation":[90,0,0],"translation":[0,0,0],"scale":[0.45,0.45,0.45]}}"#,
+            },
+            ObjRestoreSpec {
+                rel_json: "block/plunger_wheel/item",
+                model_loc: "simulated:models/block/plunger_wheel/item.obj",
+                parent: "block/block",
+                textures: &[("axis", "create:block/axis"), ("axis_top", "create:block/axis_top"), ("plunger_wheel", "simulated:block/plunger_wheel"), ("particle", "simulated:block/plunger_wheel")],
+                display_json: r#"{"gui":{"rotation":[30,225,0],"translation":[0,0,0],"scale":[0.4,0.4,0.4]},"fixed":{"rotation":[90,0,0],"translation":[0,0,0],"scale":[0.45,0.45,0.45]}}"#,
+            },
+            ObjRestoreSpec {
+                rel_json: "block/steering_wheel/wheel",
+                model_loc: "simulated:models/block/steering_wheel/wheel.obj",
+                parent: "block/block",
+                textures: &[("steering_wheel", "simulated:block/steering_wheel"), ("planks", "block/oak_planks"), ("particle", "create:block/andesite_casing")],
+                display_json: r#"{"gui":{"rotation":[30,135,90],"translation":[0,0,0],"scale":[0.4,0.4,0.4]},"fixed":{"rotation":[90,0,0],"translation":[0,0,0],"scale":[0.45,0.45,0.45]}}"#,
+            },
+            ObjRestoreSpec {
+                rel_json: "block/steering_wheel/item",
+                model_loc: "simulated:models/block/steering_wheel/item.obj",
+                parent: "block/block",
+                textures: &[("steering_wheel", "simulated:block/steering_wheel"), ("spruce_planks", "block/spruce_planks"), ("particle", "create:block/andesite_casing")],
+                display_json: r#"{"thirdperson_righthand":{"rotation":[75,45,0],"translation":[3.5,2.5,0],"scale":[0.375,0.375,0.375]},"thirdperson_lefthand":{"rotation":[75,45,0],"translation":[0,-1.5,0],"scale":[0.375,0.375,0.375]},"firstperson_righthand":{"rotation":[0,45,0],"translation":[4,0,0],"scale":[0.4,0.4,0.4]},"firstperson_lefthand":{"rotation":[0,45,0],"translation":[0,0,4],"scale":[0.4,0.4,0.4]},"ground":{"translation":[2,3,2],"scale":[0.25,0.25,0.25]},"gui":{"rotation":[30,-135,0],"translation":[-8,-1,0],"scale":[0.625,0.625,0.625]},"head":{"translation":[6,-3.75,4.25],"scale":[0.75,0.75,0.75]},"fixed":{"translation":[4,-2,4],"scale":[0.5,0.5,0.5]}}"#,
+            },
+        ],
+        _ => &[],
+    }
+}
+
+/// Restores native `neoforge:obj` model files (which `horizon-assets` bakes directly with `.obj`/`.mtl`)
+/// if a previous port version replaced them or if an offroad tire points at `block/air`.
+fn restore_obj_models(mod_id: &str, dir: &Path) -> Result<(), String> {
+    for spec in obj_specs_for(mod_id) {
+        let json_path = model_path(dir, mod_id, spec.rel_json);
+        let obj_rel = spec.model_loc.split(':').nth(1).unwrap_or("");
+        let obj_disk = dir.join(format!("assets/{mod_id}/{obj_rel}"));
+        if !json_path.is_file() || !obj_disk.is_file() {
+            continue;
         }
-    })
-}
-
-fn rotated_box_element(from: [f64; 3], to: [f64; 3], angle: f64, axis: &str, tex: &str) -> Value {
-    let mut el = box_element(from, to, tex);
-    if let Some(m) = el.as_object_mut() {
-        m.insert(
-            "rotation".into(),
-            json!({"angle": angle, "axis": axis, "origin": [8.0, 8.0, 8.0]}),
-        );
+        let Some(existing) = read_json(&json_path) else {
+            continue;
+        };
+        let needs_restore = existing.get("loader").and_then(Value::as_str) != Some("neoforge:obj")
+            || existing.get("parent").and_then(Value::as_str) == Some("block/air")
+            || existing.get("elements").is_some();
+        if !needs_restore {
+            continue;
+        }
+        let mut tex = Map::new();
+        for (k, v) in spec.textures {
+            tex.insert((*k).to_owned(), json!(v));
+        }
+        let mut doc = Map::new();
+        doc.insert("parent".into(), json!(spec.parent));
+        doc.insert("ambientocclusion".into(), json!(false));
+        doc.insert("textures".into(), Value::Object(tex));
+        doc.insert("loader".into(), json!("neoforge:obj"));
+        doc.insert("flip_v".into(), json!(true));
+        doc.insert("model".into(), json!(spec.model_loc));
+        if spec.display_json != "{}"
+            && let Ok(disp) = serde_json::from_str::<Value>(spec.display_json)
+        {
+            doc.insert("display".into(), disp);
+        }
+        write_json(&json_path, &Value::Object(doc))?;
     }
-    el
+    Ok(())
 }
 
-fn tire_elements(radius_px: f64, half_w_px: f64, tread_tex: &str, hub_tex: &str) -> Vec<Value> {
-    let y0 = 8.0 - half_w_px;
-    let y1 = 8.0 + half_w_px;
-    let inner = (radius_px * 0.42).max(3.5);
-    let hub_w = (half_w_px + 0.6).min(7.8);
-    vec![
-        // Octagonal tread segments for round silhouette without neoforge:obj
-        box_element([8.0 - radius_px, y0, 8.0 - radius_px * 0.45], [8.0 + radius_px, y1, 8.0 + radius_px * 0.45], tread_tex),
-        box_element([8.0 - radius_px * 0.45, y0, 8.0 - radius_px], [8.0 + radius_px * 0.45, y1, 8.0 + radius_px], tread_tex),
-        rotated_box_element([8.0 - radius_px, y0 + 0.05, 8.0 - radius_px * 0.45], [8.0 + radius_px, y1 - 0.05, 8.0 + radius_px * 0.45], 45.0, "y", tread_tex),
-        rotated_box_element([8.0 - radius_px * 0.45, y0 + 0.05, 8.0 - radius_px], [8.0 + radius_px * 0.45, y1 - 0.05, 8.0 + radius_px], 45.0, "y", tread_tex),
-        // Central rim + axle hub
-        box_element([8.0 - inner, 8.0 - hub_w, 8.0 - inner], [8.0 + inner, 8.0 + hub_w, 8.0 + inner], hub_tex),
-    ]
-}
-
-fn write_obj_replacement(dir: &Path, mod_id: &str, rel: &str, elements: Vec<Value>, default_tex: &[(&str, &str)]) -> Result<(), String> {
-    let path = model_path(dir, mod_id, rel);
-    if !path.is_file() {
-        return Ok(());
-    }
-    let Some(mut doc) = read_json(&path) else {
-        return Ok(());
+fn is_tachyon_tex_key(k: &str) -> bool {
+    let Some(rest) = k.strip_prefix('p') else {
+        return false;
     };
-    let Some(obj) = doc.as_object_mut() else {
-        return Ok(());
+    let Some((digits, _)) = rest.split_once('_') else {
+        return false;
     };
-    let is_obj = obj.get("loader").and_then(Value::as_str) == Some("neoforge:obj")
-        || obj.get("elements").and_then(Value::as_array).is_some_and(Vec::is_empty);
-    if !is_obj && obj.contains_key("elements") {
-        return Ok(());
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn strip_tachyon_merged(t_obj: &mut Map<String, Value>) {
+    if let Some(els) = t_obj.get_mut("elements").and_then(Value::as_array_mut) {
+        els.retain(|el| !el.get("name").and_then(Value::as_str).is_some_and(|n| n.starts_with("tachyon:")));
     }
-    obj.remove("loader");
-    obj.remove("model");
-    obj.remove("flip_v");
-    obj.insert("parent".into(), json!("minecraft:block/block"));
-    let tex_map = obj
-        .entry("textures")
-        .or_insert_with(|| Value::Object(Map::new()));
-    if let Some(tm) = tex_map.as_object_mut() {
-        for (k, v) in default_tex {
-            tm.entry((*k).to_owned()).or_insert_with(|| json!(v));
+    if let Some(tm) = t_obj.get_mut("textures").and_then(Value::as_object_mut) {
+        let stale: Vec<String> = tm.keys().filter(|k| is_tachyon_tex_key(k)).cloned().collect();
+        for k in stale {
+            tm.remove(&k);
         }
     }
-    obj.insert("elements".into(), Value::Array(elements));
-    write_json(&path, &doc)
 }
 
-fn merge_partials(dir: &Path, mod_id: &str, target_rel: &str, partials: &[&str]) -> Result<(), String> {
+fn shift_vec3(v: &mut Value, offset: [f64; 3]) {
+    if let Some(arr) = v.as_array_mut()
+        && arr.len() == 3
+    {
+        for (idx, off) in offset.iter().enumerate() {
+            if let Some(n) = arr[idx].as_f64() {
+                arr[idx] = json!((n + off).clamp(-16.0, 32.0));
+            }
+        }
+    }
+}
+
+fn merge_partials(dir: &Path, mod_id: &str, target_rel: &str, partials: &[(&str, [f64; 3])]) -> Result<(), String> {
     let target_path = model_path(dir, mod_id, target_rel);
     if !target_path.is_file() {
         return Ok(());
@@ -778,21 +913,12 @@ fn merge_partials(dir: &Path, mod_id: &str, target_rel: &str, partials: &[&str])
     let Some(t_obj) = target.as_object_mut() else {
         return Ok(());
     };
-    let already_merged = t_obj
-        .get("elements")
-        .and_then(Value::as_array)
-        .is_some_and(|els| {
-            els.iter()
-                .any(|el| el.get("name").and_then(Value::as_str).is_some_and(|n| n.starts_with("tachyon:")))
-        });
-    if already_merged {
-        return Ok(());
-    }
+    strip_tachyon_merged(t_obj);
 
     let mut extra_elements: Vec<Value> = Vec::new();
     let mut extra_textures: Vec<(String, Value)> = Vec::new();
 
-    for (idx, partial_rel) in partials.iter().enumerate() {
+    for (idx, (partial_rel, offset)) in partials.iter().enumerate() {
         let partial_path = model_path(dir, mod_id, partial_rel);
         if !partial_path.is_file() {
             continue;
@@ -800,6 +926,9 @@ fn merge_partials(dir: &Path, mod_id: &str, target_rel: &str, partials: &[&str])
         let Some(partial) = read_json(&partial_path) else {
             continue;
         };
+        if partial.get("loader").is_some() {
+            continue;
+        }
         let prefix = format!("p{idx}_");
         if let Some(texs) = partial.get("textures").and_then(Value::as_object) {
             for (k, v) in texs {
@@ -814,6 +943,17 @@ fn merge_partials(dir: &Path, mod_id: &str, target_rel: &str, partials: &[&str])
                 let mut cloned = el.clone();
                 if let Some(el_obj) = cloned.as_object_mut() {
                     el_obj.insert("name".into(), json!(format!("tachyon:{partial_rel}")));
+                    if *offset != [0.0; 3] {
+                        if let Some(from) = el_obj.get_mut("from") {
+                            shift_vec3(from, *offset);
+                        }
+                        if let Some(to) = el_obj.get_mut("to") {
+                            shift_vec3(to, *offset);
+                        }
+                        if let Some(origin) = el_obj.get_mut("rotation").and_then(|r| r.get_mut("origin")) {
+                            shift_vec3(origin, *offset);
+                        }
+                    }
                     if let Some(faces) = el_obj.get_mut("faces").and_then(Value::as_object_mut) {
                         for face_val in faces.values_mut() {
                             if let Some(f_obj) = face_val.as_object_mut() {
@@ -827,35 +967,101 @@ fn merge_partials(dir: &Path, mod_id: &str, target_rel: &str, partials: &[&str])
         }
     }
 
-    if extra_elements.is_empty() {
-        return Ok(());
-    }
-
-    let tex_obj = t_obj
-        .entry("textures")
-        .or_insert_with(|| Value::Object(Map::new()));
-    if let Some(tm) = tex_obj.as_object_mut() {
-        for (k, v) in extra_textures {
-            tm.entry(k).or_insert(v);
+    if !extra_elements.is_empty() {
+        let tex_obj = t_obj
+            .entry("textures")
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Some(tm) = tex_obj.as_object_mut() {
+            for (k, v) in extra_textures {
+                tm.entry(k).or_insert(v);
+            }
         }
-    }
-    let els_val = t_obj
-        .entry("elements")
-        .or_insert_with(|| Value::Array(Vec::new()));
-    if let Some(arr) = els_val.as_array_mut() {
-        arr.extend(extra_elements);
+        let els_val = t_obj
+            .entry("elements")
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Some(arr) = els_val.as_array_mut() {
+            arr.extend(extra_elements);
+        }
     }
     write_json(&target_path, &target)
 }
 
+/// Ensures every cuboid element has `from[i] <= to[i]` and stays within `[-16, 32]`.
+fn normalize_cuboids_in_doc(doc: &mut Value) -> bool {
+    let Some(els) = doc.get_mut("elements").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let mut changed = false;
+    for el in els {
+        let Some(el_obj) = el.as_object_mut() else {
+            continue;
+        };
+        let (Some(fr), Some(to)) = (
+            el_obj.get("from").and_then(Value::as_array).cloned(),
+            el_obj.get("to").and_then(Value::as_array).cloned(),
+        ) else {
+            continue;
+        };
+        if fr.len() != 3 || to.len() != 3 {
+            continue;
+        }
+        let mut new_fr = [0.0_f64; 3];
+        let mut new_to = [0.0_f64; 3];
+        let mut elem_changed = false;
+        for i in 0..3 {
+            let (Some(a), Some(b)) = (fr[i].as_f64(), to[i].as_f64()) else {
+                break;
+            };
+            let ca = a.clamp(-16.0, 32.0);
+            let cb = b.clamp(-16.0, 32.0);
+            let (lo, hi) = if ca > cb { (cb, ca) } else { (ca, cb) };
+            if lo != a || hi != b {
+                elem_changed = true;
+            }
+            new_fr[i] = lo;
+            new_to[i] = hi;
+        }
+        if elem_changed {
+            el_obj.insert("from".into(), json!(new_fr));
+            el_obj.insert("to".into(), json!(new_to));
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn normalize_all_models_in_dir(dir: &Path) -> Result<(), String> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            normalize_all_models_in_dir(&path)?;
+        } else if path.extension().and_then(|e| e.to_str()) == Some("json")
+            && let Some(mut doc) = read_json(&path)
+            && normalize_cuboids_in_doc(&mut doc)
+        {
+            write_json(&path, &doc)?;
+        }
+    }
+    Ok(())
+}
+
 fn fix_models(mod_id: &str, dir: &Path) -> Result<(), String> {
+    restore_obj_models(mod_id, dir)?;
+
     match mod_id {
         "aeronautics" => {
             let blend_path = model_path(dir, "aeronautics", "block/levitite_blend");
             if blend_path.is_file()
                 && let Some(mut blend) = read_json(&blend_path)
             {
-                if blend.get("elements").is_none() && blend.get("parent").is_none()
+                if blend.get("elements").is_none()
+                    && blend.get("parent").is_none()
                     && let Some(obj) = blend.as_object_mut()
                 {
                     obj.insert("parent".into(), json!("minecraft:block/cube_all"));
@@ -869,269 +1075,72 @@ fn fix_models(mod_id: &str, dir: &Path) -> Result<(), String> {
                     write_json(&blend_path, &blend)?;
                 }
             }
-            let merges: &[(&str, &[&str])] = &[
-                ("block/adjustable_burner/block_fire", &["block/adjustable_burner/redstone_indicator"]),
-                ("block/andesite_propeller/block", &["block/andesite_propeller/propeller"]),
-                ("block/wooden_propeller/block", &["block/wooden_propeller/propeller"]),
-                ("block/smart_propeller/block", &["block/smart_propeller/hinge", "block/smart_propeller/propeller"]),
-                ("block/propeller_bearing/block", &["block/propeller_bearing/bearing_plate"]),
-                (
-                    "block/gyroscopic_propeller_bearing/block",
-                    &[
-                        "block/gyroscopic_propeller_bearing/metal_bearing_plate",
-                        "block/gyroscopic_propeller_bearing/piston_head",
-                        "block/gyroscopic_propeller_bearing/piston_pole",
-                    ],
-                ),
-                (
-                    "block/mounted_potato_cannon/block_horizontal",
-                    &[
-                        "block/mounted_potato_cannon/partials/barrel",
-                        "block/mounted_potato_cannon/partials/bellow",
-                        "block/mounted_potato_cannon/partials/cog",
-                    ],
-                ),
-                (
-                    "block/mounted_potato_cannon/block_horizontal_powered",
-                    &[
-                        "block/mounted_potato_cannon/partials/barrel",
-                        "block/mounted_potato_cannon/partials/bellow",
-                        "block/mounted_potato_cannon/partials/cog",
-                    ],
-                ),
-                (
-                    "block/mounted_potato_cannon/block_vertical",
-                    &[
-                        "block/mounted_potato_cannon/partials/barrel",
-                        "block/mounted_potato_cannon/partials/bellow",
-                        "block/mounted_potato_cannon/partials/cog",
-                    ],
-                ),
-                (
-                    "block/mounted_potato_cannon/block_vertical_powered",
-                    &[
-                        "block/mounted_potato_cannon/partials/barrel",
-                        "block/mounted_potato_cannon/partials/bellow",
-                        "block/mounted_potato_cannon/partials/cog",
-                    ],
-                ),
-                ("block/steam_vent/block_iron", &["block/steam_vent/redstone", "block/steam_vent/steam_base"]),
-                ("block/steam_vent/block_gold", &["block/steam_vent/redstone", "block/steam_vent/steam_base"]),
+            let z = [0.0; 3];
+            let merges: &[(&str, &[(&str, [f64; 3])])] = &[
+                ("block/adjustable_burner/block_fire", &[("block/adjustable_burner/redstone_indicator", z)]),
+                ("block/andesite_propeller/block", &[("block/andesite_propeller/propeller", z)]),
+                ("block/wooden_propeller/block", &[("block/wooden_propeller/propeller", z)]),
+                ("block/smart_propeller/block", &[("block/smart_propeller/hinge", z), ("block/smart_propeller/propeller", z)]),
+                ("block/propeller_bearing/block", &[("block/propeller_bearing/bearing_plate", z)]),
+                ("block/gyroscopic_propeller_bearing/block", &[("block/gyroscopic_propeller_bearing/metal_bearing_plate", z)]),
+                ("block/mounted_potato_cannon/block_horizontal", &[("block/mounted_potato_cannon/partials/barrel", z), ("block/mounted_potato_cannon/partials/bellow", z), ("block/mounted_potato_cannon/partials/cog", z)]),
+                ("block/mounted_potato_cannon/block_horizontal_powered", &[("block/mounted_potato_cannon/partials/barrel", z), ("block/mounted_potato_cannon/partials/bellow", z), ("block/mounted_potato_cannon/partials/cog", z)]),
+                ("block/mounted_potato_cannon/block_vertical", &[("block/mounted_potato_cannon/partials/barrel", z), ("block/mounted_potato_cannon/partials/bellow", z), ("block/mounted_potato_cannon/partials/cog", z)]),
+                ("block/mounted_potato_cannon/block_vertical_powered", &[("block/mounted_potato_cannon/partials/barrel", z), ("block/mounted_potato_cannon/partials/bellow", z), ("block/mounted_potato_cannon/partials/cog", z)]),
+                ("block/steam_vent/block_iron", &[("block/steam_vent/redstone", z), ("block/steam_vent/steam_base", z)]),
+                ("block/steam_vent/block_gold", &[("block/steam_vent/redstone", z), ("block/steam_vent/steam_base", z)]),
             ];
             for (target, parts) in merges {
                 merge_partials(dir, "aeronautics", target, parts)?;
             }
         }
         "offroad" => {
-            let saw_elems = || {
-                vec![
-                    box_element([0.0, 2.0, 5.0], [16.0, 14.0, 11.0], "#wheel"),
-                    box_element([2.0, 0.0, 5.0], [14.0, 16.0, 11.0], "#wheel"),
-                    rotated_box_element([0.0, 2.0, 5.0], [16.0, 14.0, 11.0], 45.0, "z", "#wheel"),
-                    box_element([5.0, 5.0, 3.0], [11.0, 11.0, 13.0], "#base"),
-                ]
-            };
-            write_obj_replacement(
-                dir,
-                "offroad",
-                "block/rockcutting_wheel/wheel",
-                saw_elems(),
-                &[
-                    ("wheel", "offroad:block/rockcutting_wheel"),
-                    ("base", "offroad:block/rockcutting_base"),
-                    ("particle", "offroad:block/rockcutting_wheel"),
-                ],
-            )?;
-            write_obj_replacement(
-                dir,
-                "offroad",
-                "block/rockcutting_wheel/item",
-                saw_elems(),
-                &[
-                    ("wheel", "offroad:block/rockcutting_wheel"),
-                    ("base", "offroad:block/rockcutting_base"),
-                    ("particle", "offroad:block/rockcutting_wheel"),
-                ],
-            )?;
-            for (name, radius, half_w) in [
-                ("small_tire", 11.5_f64, 5.0_f64),
-                ("tire", 15.5, 7.0),
-                ("large_tire", 19.5, 7.0),
-                ("monstrous_tire", 30.0, 7.0),
-            ] {
-                let els = tire_elements(radius, half_w, "#tire_0", "#axis");
-                let defaults = [
-                    ("tire_0", "offroad:block/tire/tire_0"),
-                    ("axis", "create:block/axis"),
-                    ("particle", "offroad:block/custom_break_particles/wheel"),
-                ];
-                write_obj_replacement(dir, "offroad", &format!("item/{name}/{name}"), els.clone(), &defaults)?;
-                write_obj_replacement(dir, "offroad", &format!("item/{name}/item"), els, &defaults)?;
+            // Strip any stale v2 elements from rockcutting_wheel (its wheel is a native neoforge:obj).
+            for rel in ["block/rockcutting_wheel/block_horizontal", "block/rockcutting_wheel/block_vertical"] {
+                merge_partials(dir, "offroad", rel, &[])?;
             }
-            merge_partials(dir, "offroad", "block/rockcutting_wheel/block_horizontal", &["block/rockcutting_wheel/wheel"])?;
-            merge_partials(dir, "offroad", "block/rockcutting_wheel/block_vertical", &["block/rockcutting_wheel/wheel"])?;
+            let z = [0.0; 3];
             merge_partials(
                 dir,
                 "offroad",
                 "block/wheel_mount/block",
                 &[
-                    "block/wheel_mount/mount",
-                    "block/wheel_mount/tele_outer",
-                    "block/wheel_mount/tele_inner",
-                    "block/wheel_mount/spring_lower",
-                    "block/wheel_mount/spring_middle",
-                    "block/wheel_mount/spring_upper",
-                    "block/wheel_mount/diode_left",
-                    "block/wheel_mount/diode_right",
+                    ("block/wheel_mount/mount", z),
+                    ("block/wheel_mount/tele_outer", z),
+                    ("block/wheel_mount/tele_inner", z),
+                    ("block/wheel_mount/diode_left", z),
+                    ("block/wheel_mount/diode_right", z),
                 ],
             )?;
         }
         "simulated" => {
-            let sw_elems = vec![
-                // Circular steering rim + spokes + center hub
-                box_element([2.0, 7.0, 1.0], [14.0, 9.0, 3.0], "#steering_wheel"),
-                box_element([1.0, 7.0, 12.0], [15.0, 9.0, 14.0], "#steering_wheel"),
-                box_element([1.0, 7.0, 2.0], [3.0, 9.0, 13.0], "#steering_wheel"),
-                box_element([13.0, 7.0, 2.0], [15.0, 9.0, 13.0], "#steering_wheel"),
-                box_element([5.5, 6.5, 5.5], [10.5, 9.5, 10.5], "#steering_wheel"),
-                box_element([7.0, 7.2, 3.0], [9.0, 8.8, 12.0], "#steering_wheel"),
-                box_element([3.0, 7.2, 7.0], [13.0, 8.8, 9.0], "#steering_wheel"),
-            ];
-            write_obj_replacement(
-                dir,
-                "simulated",
-                "block/steering_wheel/wheel",
-                sw_elems.clone(),
-                &[
-                    ("steering_wheel", "simulated:block/steering_wheel"),
-                    ("particle", "create:block/andesite_casing"),
-                ],
-            )?;
-            let mut sw_item = sw_elems;
-            sw_item.push(box_element([4.0, 0.0, 4.0], [12.0, 7.0, 12.0], "#spruce_planks"));
-            write_obj_replacement(
-                dir,
-                "simulated",
-                "block/steering_wheel/item",
-                sw_item,
-                &[
-                    ("steering_wheel", "simulated:block/steering_wheel"),
-                    ("spruce_planks", "minecraft:block/spruce_planks"),
-                    ("particle", "create:block/andesite_casing"),
-                ],
-            )?;
-
-            let mecanum_elems = tire_elements(16.0, 7.5, "#0", "#axis");
-            for rel in [
-                "block/mecanum_wheel/block",
-                "block/mecanum_wheel/block_flipped",
-                "block/mecanum_wheel/item",
-            ] {
-                write_obj_replacement(
-                    dir,
-                    "simulated",
-                    rel,
-                    mecanum_elems.clone(),
-                    &[
-                        ("0", "simulated:block/mecanum_wheel"),
-                        ("axis", "create:block/axis"),
-                        ("particle", "create:block/dark_metal_block"),
-                    ],
-                )?;
+            // Strip any stale v2 wheel elements from steering_wheel base post blocks.
+            for rel in ["block/steering_wheel/block", "block/steering_wheel/block_up"] {
+                merge_partials(dir, "simulated", rel, &[])?;
             }
-
-            let plunger_elems = tire_elements(18.0, 7.0, "#plunger_wheel", "#axis");
-            for rel in ["block/plunger_wheel/block", "block/plunger_wheel/item"] {
-                write_obj_replacement(
-                    dir,
-                    "simulated",
-                    rel,
-                    plunger_elems.clone(),
-                    &[
-                        ("plunger_wheel", "simulated:block/plunger_wheel"),
-                        ("axis", "create:block/axis"),
-                        ("particle", "simulated:block/plunger_wheel"),
-                    ],
-                )?;
-            }
-
-            let merges: &[(&str, &[&str])] = &[
-                ("block/steering_wheel/block", &["block/steering_wheel/wheel"]),
-                ("block/steering_wheel/block_up", &["block/steering_wheel/wheel"]),
-                ("block/physics_assembler/block", &["block/physics_assembler/lever"]),
-                (
-                    "block/throttle_lever/block",
-                    &[
-                        "block/throttle_lever/handle",
-                        "block/throttle_lever/button",
-                        "block/throttle_lever/diode",
-                    ],
-                ),
-                (
-                    "block/portable_engine/block",
-                    &[
-                        "block/portable_engine/mouth",
-                        "block/portable_engine/hatch_bottom",
-                        "block/portable_engine/hatch_top",
-                        "block/portable_engine/exhaust_pipe_left",
-                        "block/portable_engine/exhaust_pipe_right",
-                        "block/portable_engine/exhaust_outlet_left",
-                        "block/portable_engine/exhaust_outlet_right",
-                    ],
-                ),
-                (
-                    "block/directional_gearshift/horizontal/middle",
-                    &[
-                        "block/directional_gearshift/barrel",
-                        "block/directional_gearshift/barrel_shaft",
-                    ],
-                ),
-                (
-                    "block/directional_gearshift/vertical/middle",
-                    &[
-                        "block/directional_gearshift/barrel",
-                        "block/directional_gearshift/barrel_shaft",
-                    ],
-                ),
-                ("block/redstone_accumulator/block_front", &["block/redstone_accumulator/diode"]),
-                (
-                    "block/docking_connector/block",
-                    &[
-                        "block/docking_connector/foot",
-                        "block/docking_connector/main_piston_1",
-                        "block/docking_connector/main_piston_2",
-                        "block/docking_connector/side_piston_1",
-                        "block/docking_connector/side_piston_2",
-                    ],
-                ),
-                ("block/swivel_bearing/block", &["block/swivel_bearing/ironcog"]),
-                (
-                    "block/altitude_sensor/block",
-                    &[
-                        "block/altitude_sensor/indicator",
-                        "block/altitude_sensor/linear_case",
-                        "block/altitude_sensor/linear_hand",
-                    ],
-                ),
-                (
-                    "block/gimbal_sensor/block",
-                    &[
-                        "block/gimbal_sensor/gimbal",
-                        "block/gimbal_sensor/compass",
-                        "block/gimbal_sensor/needle",
-                        "block/gimbal_sensor/redstone_indicator",
-                    ],
-                ),
-                ("block/tilt_sensor/block", &["block/tilt_sensor/pendulum"]),
-                ("block/velocity_sensor/block_horizontal", &["block/velocity_sensor/fan", "block/velocity_sensor/diode"]),
-                ("block/velocity_sensor/block_vertical", &["block/velocity_sensor/fan", "block/velocity_sensor/diode"]),
-                ("block/rope_winch/block_horizontal", &["block/rope_winch/rope_coil", "block/rope_winch/shaft"]),
-                ("block/rope_winch/block_vertical", &["block/rope_winch/rope_coil", "block/rope_winch/shaft"]),
-                ("block/analog_transmission/block", &["block/analog_transmission/gear"]),
-                ("block/laser_pointer/block", &["block/laser_pointer/lens_off"]),
-                ("block/navigation_table/block", &["block/navigation_table/nav_table_pointer", "block/navigation_table/redstone_indicator"]),
-                ("block/redstone_inductor/block", &["block/redstone_inductor/redstone_indicator"]),
-                ("block/torsion_spring/block", &["block/torsion_spring/spring"]),
+            let z = [0.0; 3];
+            let c8 = [8.0, 8.0, 8.0];
+            let merges: &[(&str, &[(&str, [f64; 3])])] = &[
+                ("block/physics_assembler/block", &[("block/physics_assembler/lever", z)]),
+                ("block/throttle_lever/block", &[("block/throttle_lever/handle", z), ("block/throttle_lever/button", z), ("block/throttle_lever/diode", z)]),
+                ("block/portable_engine/block", &[("block/portable_engine/mouth", z), ("block/portable_engine/hatch_bottom", z), ("block/portable_engine/hatch_top", z), ("block/portable_engine/exhaust_pipe_left", z), ("block/portable_engine/exhaust_pipe_right", z), ("block/portable_engine/exhaust_outlet_left", z), ("block/portable_engine/exhaust_outlet_right", z)]),
+                ("block/directional_gearshift/horizontal/middle", &[("block/directional_gearshift/barrel", z), ("block/directional_gearshift/barrel_shaft", z)]),
+                ("block/directional_gearshift/vertical/middle", &[("block/directional_gearshift/barrel", z), ("block/directional_gearshift/barrel_shaft", z)]),
+                ("block/redstone_accumulator/block_front", &[("block/redstone_accumulator/diode", z)]),
+                ("block/docking_connector/block", &[("block/docking_connector/main_piston_1", z), ("block/docking_connector/main_piston_2", z), ("block/docking_connector/side_piston_1", z), ("block/docking_connector/side_piston_2", z)]),
+                ("block/swivel_bearing/block", &[("block/swivel_bearing/ironcog", z)]),
+                ("block/altitude_sensor/block", &[("block/altitude_sensor/indicator", z), ("block/altitude_sensor/linear_case", z), ("block/altitude_sensor/linear_hand", z)]),
+                ("block/gimbal_sensor/block", &[("block/gimbal_sensor/gimbal", c8), ("block/gimbal_sensor/compass", c8), ("block/gimbal_sensor/needle", c8), ("block/gimbal_sensor/redstone_indicator", z)]),
+                ("block/tilt_sensor/block", &[("block/tilt_sensor/pendulum", z)]),
+                ("block/velocity_sensor/block_horizontal", &[("block/velocity_sensor/fan", z), ("block/velocity_sensor/diode", z)]),
+                ("block/velocity_sensor/block_vertical", &[("block/velocity_sensor/fan", z), ("block/velocity_sensor/diode", z)]),
+                ("block/rope_winch/block_horizontal", &[("block/rope_winch/rope_coil", z), ("block/rope_winch/shaft", z)]),
+                ("block/rope_winch/block_vertical", &[("block/rope_winch/rope_coil", z), ("block/rope_winch/shaft", z)]),
+                ("block/analog_transmission/block", &[("block/analog_transmission/gear", z)]),
+                ("block/laser_pointer/block", &[("block/laser_pointer/lens_off", z)]),
+                ("block/navigation_table/block", &[("block/navigation_table/nav_table_pointer", z), ("block/navigation_table/redstone_indicator", z)]),
+                ("block/redstone_inductor/block", &[("block/redstone_inductor/redstone_indicator", z)]),
+                ("block/torsion_spring/block", &[("block/torsion_spring/spring", z)]),
             ];
             for (target, parts) in merges {
                 merge_partials(dir, "simulated", target, parts)?;
@@ -1139,6 +1148,8 @@ fn fix_models(mod_id: &str, dir: &Path) -> Result<(), String> {
         }
         _ => {}
     }
+
+    normalize_all_models_in_dir(&dir.join(format!("assets/{mod_id}/models")))?;
     Ok(())
 }
 
@@ -1438,7 +1449,7 @@ mod tests {
     }
 
     #[test]
-    fn fix_models_merges_partials_and_converts_neoforge_obj() {
+    fn fix_models_merges_partials_restores_obj_and_normalizes_cuboids() {
         let dir = scratch("models");
         write_json(
             &model_path(&dir, "offroad", "block/wheel_mount/block"),
@@ -1447,20 +1458,28 @@ mod tests {
         .unwrap();
         write_json(
             &model_path(&dir, "offroad", "block/wheel_mount/mount"),
-            &json!({"textures": {"0": "offroad:mount"}, "elements": [{"from": [4,4,4], "to": [12,12,12], "faces": {"north": {"texture": "#0"}}}]}),
+            &json!({"textures": {"0": "offroad:mount"}, "elements": [{"from": [12,4,4], "to": [4,12,12], "faces": {"north": {"texture": "#0"}}}]}),
         )
         .unwrap();
+        let tire_obj = dir.join("assets/offroad/models/item/tire/block.obj");
+        fs::create_dir_all(tire_obj.parent().unwrap()).unwrap();
+        fs::write(&tire_obj, "v 0 0 0\n").unwrap();
+        // Simulate a broken v2 overwritten tire JSON
         write_json(
             &model_path(&dir, "offroad", "item/tire/tire"),
-            &json!({"loader": "neoforge:obj", "model": "offroad:models/item/tire/block.obj", "textures": {}}),
+            &json!({"parent": "minecraft:block/block", "elements": [{"name": "tachyon:obj_part", "from": [0,0,0], "to": [16,16,16]}]}),
         )
         .unwrap();
 
         fix("offroad", &dir).unwrap();
 
         let mount = read_json(&model_path(&dir, "offroad", "block/wheel_mount/block")).unwrap();
-        assert_eq!(mount["elements"].as_array().unwrap().len(), 2);
+        let els = mount["elements"].as_array().unwrap();
+        assert_eq!(els.len(), 2);
         assert_eq!(mount["textures"]["p0_0"], "offroad:mount");
+        // Inverted [12,4,4]..[4,12,12] normalized to [4,4,4]..[12,12,12]
+        assert_eq!(els[1]["from"], json!([4.0, 4.0, 4.0]));
+        assert_eq!(els[1]["to"], json!([12.0, 12.0, 12.0]));
 
         // Second fix() call must remain idempotent
         fix("offroad", &dir).unwrap();
@@ -1468,8 +1487,9 @@ mod tests {
         assert_eq!(mount_again["elements"].as_array().unwrap().len(), 2);
 
         let tire = read_json(&model_path(&dir, "offroad", "item/tire/tire")).unwrap();
-        assert!(tire.get("loader").is_none());
-        assert!(!tire["elements"].as_array().unwrap().is_empty());
+        assert_eq!(tire["loader"], "neoforge:obj");
+        assert_eq!(tire["flip_v"], true);
+        assert!(tire.get("elements").is_none());
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -138,6 +138,19 @@ pub const ARM_MODES: &[&str] = &[
     "create.mechanical_arm.selection_mode.prefer_first",
 ];
 
+/// `MechanicalBearingBlockEntity.RotationMode`, by `INamedIconOptions.getTranslationKey`.
+pub const ROTATION_MODES: &[&str] = &[
+    "create.contraptions.movement_mode.rotate_place",
+    "create.contraptions.movement_mode.rotate_place_returned",
+    "create.contraptions.movement_mode.rotate_never_place",
+];
+
+/// `WindmillBearingBlockEntity.RotationDirection`.
+pub const WINDMILL_DIRECTIONS: &[&str] = &[
+    "create.generic.clockwise",
+    "create.generic.counter_clockwise",
+];
+
 /// `CreativeMotorBlockEntity` and `SpeedControllerBlockEntity`: -256 to 256, 16 to start
 /// (`MAX_SPEED`, `DEFAULT_SPEED`; the controller's maximum is the config's `maxRotationSpeed`, 256).
 const SPEED: Behaviour = Behaviour::Kinetic { min: -256, max: 256, default: 16 };
@@ -208,6 +221,26 @@ static ROLLER: [BoxDef; 2] = [
 // `TrackObserverBlockEntity.addBehaviours`: the cargo filter (`logistics.train_observer.cargo_filter`), on top.
 static TRACK_OBSERVER: [BoxDef; 1] = [filter(Slot::TrackObserver, FilterKind::Cargo, never, always)];
 
+static MECHANICAL_BEARING: [BoxDef; 1] = [BoxDef {
+    net_id: 0,
+    slot: Slot::BearingMode,
+    kind: Kind::Value {
+        label: "create.contraptions.movement_mode",
+        behaviour: Behaviour::Options { options: ROTATION_MODES },
+    },
+    active: always,
+}];
+
+static WINDMILL_BEARING: [BoxDef; 1] = [BoxDef {
+    net_id: 0,
+    slot: Slot::BearingMode,
+    kind: Kind::Value {
+        label: "create.contraptions.windmill.rotation_direction",
+        behaviour: Behaviour::Options { options: WINDMILL_DIRECTIONS },
+    },
+    active: always,
+}];
+
 /// The value boxes of block `block`, none for a block without any.
 pub fn boxes(block: &str) -> &'static [BoxDef] {
     match block {
@@ -218,6 +251,8 @@ pub fn boxes(block: &str) -> &'static [BoxDef] {
         "create:creative_motor" => &MOTOR,
         "create:rotation_speed_controller" => &SPEED_CONTROLLER,
         "create:mechanical_arm" => &ARM,
+        "create:mechanical_bearing" => &MECHANICAL_BEARING,
+        "create:windmill_bearing" => &WINDMILL_BEARING,
         "create:deployer" => &DEPLOYER,
         "create:content_observer" => &OBSERVER,
         "create:stockpile_switch" => &STOCKPILE_SWITCH,
@@ -348,6 +383,13 @@ mod tests {
         assert_eq!(TUNNEL_MODES[6], "create.tunnel.selection_mode.synchronize");
         assert_eq!(ARM_MODES.len(), 3);
         assert_eq!(ARM_MODES[2], "create.mechanical_arm.selection_mode.prefer_first");
+        assert_eq!(ROTATION_MODES.len(), 3);
+        assert_eq!(ROTATION_MODES[0], "create.contraptions.movement_mode.rotate_place");
+        assert_eq!(ROTATION_MODES[1], "create.contraptions.movement_mode.rotate_place_returned");
+        assert_eq!(ROTATION_MODES[2], "create.contraptions.movement_mode.rotate_never_place");
+        assert_eq!(WINDMILL_DIRECTIONS, ["create.generic.clockwise", "create.generic.counter_clockwise"]);
+        assert_eq!(boxes("create:mechanical_bearing").len(), 1);
+        assert_eq!(boxes("create:windmill_bearing").len(), 1);
     }
 
     #[test]

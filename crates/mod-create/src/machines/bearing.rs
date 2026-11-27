@@ -135,10 +135,19 @@ pub(crate) fn solid_sample(
     })
 }
 
+fn should_place_on_quiet_stop(rotation_mode: i32, angle: f32) -> bool {
+    match rotation_mode {
+        0 => true,
+        1 => bearing_rules::near_initial_angle(angle),
+        _ => false,
+    }
+}
+
 fn new_entity(windmill: bool) -> Compound {
     let mut nbt = kinetic::new_entity();
+    // `ScrollOptionBehaviour`: clockwise for windmill, `ROTATE_PLACE` for mechanical bearing.
+    nbt.insert(super::value_box::SCROLL_VALUE.into(), Tag::Int(0));
     if windmill {
-        // `ScrollOptionBehaviour`: clockwise.
         nbt.insert(windmill_rules::DIRECTION_KEY.into(), Tag::Int(0));
     }
     nbt.insert(RUNNING.into(), flag(false));
@@ -336,9 +345,14 @@ impl Hooks for Bearing {
                     put(entity, ASSEMBLE, flag(false));
                 } else if quiet >= engine::QUIET_TICKS {
                     let angle = angle_at(state.angle, state.time, 0.0, now as f64);
-                    set_down(host, pos, &entity.nbt.clone(), facing, angle);
-                    stop(entity, now);
-                    host.block_entity_sync(pos);
+                    let mode = util::int(&entity.nbt, super::value_box::SCROLL_VALUE);
+                    if should_place_on_quiet_stop(mode, angle) {
+                        set_down(host, pos, &entity.nbt.clone(), facing, angle);
+                        stop(entity, now);
+                        host.block_entity_sync(pos);
+                    } else {
+                        put(entity, ASSEMBLE, flag(false));
+                    }
                 }
             } else {
                 put(entity, ASSEMBLE, flag(false));
@@ -389,6 +403,7 @@ impl Hooks for Bearing {
         tag.insert(LAST_EXCEPTION.into(), Tag::String(line.as_str().into()));
         tag.insert(CONTRAPTION.into(), engine::client_contraption(entity));
         tag.insert(psi_motion::STALLED.into(), psi_motion::tag_value(&entity.nbt));
+        super::value_box::decorate(&entity.id, &entity.nbt, &mut tag);
         Some(tag)
     }
 
@@ -599,5 +614,20 @@ impl Hooks for Bearing {
         );
         set_down(host, pos, &entity.nbt, facing, angle);
         Flow::Continue
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_place_on_quiet_stop;
+
+    #[test]
+    fn rotation_mode_governs_quiet_disassembly() {
+        assert!(should_place_on_quiet_stop(0, 90.0));
+        assert!(should_place_on_quiet_stop(1, 10.0));
+        assert!(should_place_on_quiet_stop(1, 350.0));
+        assert!(!should_place_on_quiet_stop(1, 90.0));
+        assert!(!should_place_on_quiet_stop(2, 0.0));
+        assert!(!should_place_on_quiet_stop(2, 180.0));
     }
 }

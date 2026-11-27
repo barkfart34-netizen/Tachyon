@@ -375,6 +375,11 @@ pub fn right_click(host: &mut dyn Host, event: &RightClickBlockEvent) -> Flow {
         block.as_str(),
         "create:creative_motor" | "create:rotation_speed_controller"
     );
+    let direct_open = is_speed_ctrl
+        || matches!(
+            block.as_str(),
+            "create:mechanical_bearing" | "create:windmill_bearing"
+        );
     let wrench = host
         .held_stack(player.uuid)
         .is_some_and(|s| &*s.item == "create:wrench");
@@ -402,7 +407,7 @@ pub fn right_click(host: &mut dyn Host, event: &RightClickBlockEvent) -> Flow {
     util::click_taken(&*host, player.uuid, pos);
     if def.is_filter() && !board {
         short_click(host, &player, pos, def, side);
-    } else if is_speed_ctrl && board && !wrench {
+    } else if direct_open && board && !wrench {
         let side_id = Dir::ALL.iter().position(|d| *d == side).unwrap_or(1) as u8;
         let payload = super::value_box_screen::encode_open(pos, def.net_id, side_id);
         let _ = host.net_send_to_player(player.uuid, super::value_box_screen::OPEN_CHANNEL, &payload);

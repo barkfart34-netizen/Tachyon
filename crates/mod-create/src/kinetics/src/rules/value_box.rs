@@ -170,6 +170,8 @@ pub enum Slot {
     SpeedController,
     /// `ArmBlockEntity.SelectionModeValueBox`.
     Arm,
+    /// `MechanicalBearingBlockEntity` (`RotationMode`) & `WindmillBearingBlockEntity` (`RotationDirection`).
+    BearingMode,
     /// `FilteredDetectorFilterSlot(hasSlotAtBottom)`: the stockpile switch has one at the bottom, the smart
     /// observer doesn't.
     FilteredDetector { bottom: bool },
@@ -282,6 +284,7 @@ impl Slot {
                 p.axis("axis") != Some(side.axis())
             }
             Slot::Arm => is_horizontal(side),
+            Slot::BearingMode => p.dir("facing").is_some_and(|f| side.axis() != f.axis()),
             Slot::FilteredDetector { bottom } => {
                 let Some(facing) = p.dir("facing") else {
                     return false;
@@ -321,7 +324,9 @@ impl Slot {
             Slot::SmartChute => Some(rotate_centered(voxel_space(8.0, 11.0, 15.5), horizontal_angle(side), Axis::Y)),
             Slot::Funnel => funnel_offset(p, side),
             Slot::BrassTunnelFilter => Some(sided_offset(voxel_space(8.0, 13.0, 15.5), side)),
-            Slot::BrassTunnelMode | Slot::Centered(_) => Some(sided_offset(voxel_space(8.0, 8.0, 15.5), side)),
+            Slot::BrassTunnelMode | Slot::BearingMode | Slot::Centered(_) => {
+                Some(sided_offset(voxel_space(8.0, 8.0, 15.5), side))
+            }
             Slot::Saw => {
                 if p.dir("facing") != Some(Dir::Up) {
                     return None;
@@ -929,5 +934,17 @@ mod tests {
         assert!(near([east[0].round(), east[1], east[2].round()], [1.0, 0.0, 0.0]));
         let down = view_vector(0.0, 90.0);
         assert!(down[1] < -0.999);
+    }
+
+    #[test]
+    fn the_bearing_mode_slot_is_on_the_four_sides() {
+        let get = |key: &str| (key == "facing").then(|| "up".to_owned());
+        let p = props("create:mechanical_bearing", &get);
+        assert!(!Slot::BearingMode.side_active(&p, Dir::Up));
+        assert!(!Slot::BearingMode.side_active(&p, Dir::Down));
+        for side in [Dir::North, Dir::South, Dir::East, Dir::West] {
+            assert!(Slot::BearingMode.side_active(&p, side));
+            assert!(Slot::BearingMode.offset(&p, side).is_some());
+        }
     }
 }

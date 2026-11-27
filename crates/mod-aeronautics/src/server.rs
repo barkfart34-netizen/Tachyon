@@ -549,23 +549,27 @@ pub(crate) fn right_click_block(
     }
 
     if held_id == "simulated:contraption_diagram" {
-        let zones = lock()
-            .glued_boxes
-            .get(&dimension)
-            .map_or(0, Vec::len);
-        let msg = if let Some(v) = lock().vessels.values().find(|v| v.dimension == dimension) {
+        let (zones, vessel_info) = {
+            let s = lock();
+            let z = s.glued_boxes.get(&dimension).map_or(0, Vec::len);
+            let vi = s.vessels.values().find(|v| v.dimension == dimension).map(|v| {
+                (
+                    v.body.id,
+                    v.body.blocks.len(),
+                    v.body.mass.total_mass,
+                    v.telemetry.altitude,
+                )
+            });
+            (z, vi)
+        };
+        let msg = if let Some((id, count, mass, alt)) = vessel_info {
             format!(
-                "Diagram Kontrapsi: kapal aktif #{} — {} blok, massa {:.0} kg, alt {:.1} m, zona lem {}.",
-                v.body.id,
-                v.body.blocks.len(),
-                v.body.mass.total_mass,
-                v.telemetry.altitude,
-                zones
+                "Diagram Kontrapsi: kapal aktif #{id} — {count} blok, massa {mass:.0} kg, alt {alt:.1} m, zona lem {zones}."
             )
         } else {
             format!(
-                "Diagram Kontrapsi pada {block_id} [{}, {}, {}]: {} zona Honey Glue siap dirakit via Physics Assembler / Steering Wheel.",
-                pos[0], pos[1], pos[2], zones
+                "Diagram Kontrapsi pada {block_id} [{}, {}, {}]: {zones} zona Honey Glue siap dirakit via Physics Assembler / Steering Wheel.",
+                pos[0], pos[1], pos[2]
             )
         };
         tell(host, player_uuid, &msg);
@@ -631,7 +635,8 @@ pub(crate) fn right_click_block(
     }
 
     if block_id == "simulated:steering_wheel" {
-        if lock().vessels.values().any(|v| v.dimension == dimension) {
+        let has_vessel = { lock().vessels.values().any(|v| v.dimension == dimension) };
+        if has_vessel {
             toggle_pilot_nearest(host, player_uuid);
         } else {
             match assemble_at(host, &dimension, pos, Some(player_uuid)) {
@@ -805,19 +810,9 @@ pub(crate) fn run_mod_command(
             }
         }
         "land" => {
-            let vid = lock().pilots.get(&uuid).copied().or_else(|| {
-                let dim = player_dim(host, *player);
-                let ppos = player.entity().position(host)?;
-                lock()
-                    .vessels
-                    .values()
-                    .filter(|v| v.dimension == dim)
-                    .min_by(|a, b| {
-                        v_len(v_sub(ppos, a.body.position))
-                            .total_cmp(&v_len(v_sub(ppos, b.body.position)))
-                    })
-                    .map(|v| v.body.id)
-            });
+            let dim = player_dim(host, *player);
+            let ppos = player.entity().position(host);
+            let vid = find_land_vessel(uuid, &dim, ppos);
             match vid {
                 Some(id) => match disassemble_vessel(host, id, Some(uuid)) {
                     Ok(c) => format!("Kendaraan #{id} mendarat ({c} blok)."),
@@ -854,4 +849,57 @@ pub(crate) fn run_mod_command(
         let _ = host.commands().feedback(Text::literal(reply));
     }
     Flow::Cancel
+}
+
+fn find_land_vessel(player_uuid: u128, dim: &str, player_pos: Option<Vec3>) -> Option<u64> {
+    let s = lock();
+    if let Some(&vid) = s.pilots.get(&player_uuid) {
+        return Some(vid);
+    }
+    let ppos = player_pos?;
+    s.vessels
+        .values()
+        .filter(|v| v.dimension == dim)
+        .min_by(|a, b| {
+            v_len(v_sub(ppos, a.body.position)).total_cmp(&v_len(v_sub(ppos, b.body.position)))
+        })
+        .map(|v| v.body.id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aeronautics_physics::{MassProperties, RigidContraption};
+
+    #[test]
+    fn find_land_vessel_for_non_pilot_does_not_deadlock() {
+        clear();
+        let body = RigidContraption {
+            id: 42,
+            position: [10.0, 70.0, -5.0],
+            velocity: [0.0; 3],
+            orientation: [0.0, 0.0, 0.0, 1.0],
+            angular_velocity: [0.0; 3],
+            throttle: 0.0,
+            burner_heat: 0,
+            engine_rpm: 0.0,
+            blocks: Vec::new(),
+            mass: MassProperties::default(),
+            balloons: Vec::new(),
+            grounded: false,
+        };
+        lock().vessels.insert(
+            42,
+            ActiveVessel {
+                dimension: "minecraft:overworld".to_owned(),
+                body,
+                telemetry: StepTelemetry::default(),
+                pilot: None,
+                last_input: PilotInput::default(),
+            },
+        );
+        let found = find_land_vessel(999, "minecraft:overworld", Some([12.0, 70.0, -4.0]));
+        assert_eq!(found, Some(42));
+        clear();
+    }
 }

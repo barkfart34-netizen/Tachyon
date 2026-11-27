@@ -234,6 +234,31 @@ fn draw_value_face(
     }
 }
 
+/// Short 3D value-box badge text for `Behaviour::Options` keys so non-BMP UI arrows/words read sharply on-block.
+fn option_badge<'a>(key: &str, fallback: &'a str) -> &'a str {
+    match key {
+        "create.contraptions.movement_mode.rotate_place" => "PL",
+        "create.contraptions.movement_mode.rotate_place_returned" => "RT",
+        "create.contraptions.movement_mode.rotate_never_place" => "NO",
+        "create.generic.clockwise" => "CW",
+        "create.generic.counter_clockwise" => "CCW",
+        "create.contraptions.roller_mode.tunnel_pave" => "TUN",
+        "create.contraptions.roller_mode.straight_fill" => "STR",
+        "create.contraptions.roller_mode.wide_fill" => "WIDE",
+        "create.mechanical_arm.selection_mode.round_robin" => "RR",
+        "create.mechanical_arm.selection_mode.forced_round_robin" => "FRR",
+        "create.mechanical_arm.selection_mode.prefer_first" => "1ST",
+        "create.tunnel.selection_mode.split" => "SPL",
+        "create.tunnel.selection_mode.forced_split" => "FSPL",
+        "create.tunnel.selection_mode.round_robin" => "RR",
+        "create.tunnel.selection_mode.forced_round_robin" => "FRR",
+        "create.tunnel.selection_mode.prefer_nearest" => "NEAR",
+        "create.tunnel.selection_mode.randomize" => "RND",
+        "create.tunnel.selection_mode.synchronize" => "SYNC",
+        _ => fallback,
+    }
+}
+
 impl Hooks for Draw {
     /// `ScrollValueRenderer.tick` and `FilteringRenderer.tick`: the boxes of the block looked at.
     fn world_primitives(&self, host: &dyn Host, event: &mut WorldPrimitivesEvent<'_>) {
@@ -251,7 +276,8 @@ impl Hooks for Draw {
                     let text = match behaviour {
                         Behaviour::Options { options } => {
                             let key = options.get(item.values.scroll.max(0) as usize).copied().unwrap_or("");
-                            say(host, key)
+                            let translated = say(host, key);
+                            option_badge(key, &translated).to_owned()
                         }
                         Behaviour::Kinetic { .. } => board::box_text(behaviour, &item.values),
                         _ => board::box_text(behaviour, &item.values),

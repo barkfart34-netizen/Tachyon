@@ -427,6 +427,8 @@ impl Creative {
         // After the pages vanilla's and the declared mods' tabs take.
         let first_page = self.exported.iter().map(|e| e.tab.page + 1).max().unwrap_or(1);
         let mut tab_index = 0;
+        let has_aero_bundle = namespaces.iter().any(|n| *n == "aeronautics");
+        let mut aero_emitted = false;
         for namespace in namespaces {
             let items: Vec<ItemStack> = (ids.iter())
                 .filter(|(_, id)| id.split(':').next() == Some(namespace))
@@ -447,6 +449,50 @@ impl Creative {
                     search.tab.items.push(s.clone());
                     search.operator.push(false);
                 }
+            }
+            if has_aero_bundle && matches!(namespace, "aeronautics" | "simulated" | "offroad") {
+                if aero_emitted {
+                    continue;
+                }
+                aero_emitted = true;
+                let mut combined: Vec<ItemStack> = Vec::new();
+                for bundle_ns in ["aeronautics", "simulated", "offroad"] {
+                    combined.extend(
+                        ids.iter()
+                            .filter(|(_, id)| id.split(':').next() == Some(bundle_ns))
+                            .map(|(_, id)| ItemStack::new(id, 1)),
+                    );
+                }
+                combined.sort_by_key(|s| {
+                    let (ns, path) = split_id(&s.item);
+                    let group = match ns.as_str() {
+                        "aeronautics" if !path.contains("_envelope") => 0u8,
+                        "simulated"
+                            if !path.ends_with("_portable_engine")
+                                && !path.ends_with("_symmetric_sail")
+                                && !path.ends_with("_handle")
+                                && !path.ends_with("_nameplate") =>
+                        {
+                            1
+                        }
+                        "offroad" => 2,
+                        "simulated" => 3,
+                        _ => 4,
+                    };
+                    (group, s.item.to_string())
+                });
+                if !combined.is_empty() {
+                    self.add_mod_tab(
+                        "aeronautics:tachyon_tab".to_owned(),
+                        "Create Aeronautics".to_owned(),
+                        "aeronautics:wooden_propeller",
+                        combined,
+                        first_page,
+                        tab_index,
+                    );
+                    tab_index += 1;
+                }
+                continue;
             }
             if let Some(table) = kinds::for_namespace(namespace) {
                 let mut grouped: Vec<Vec<ItemStack>> =
@@ -2525,6 +2571,62 @@ mod tests {
         // A right-hand tab (column >= 5) still hovers on every page.
         assert_eq!(at(0, 2), Some(2));
         assert_eq!(at(1, 2), Some(2));
+    }
+
+    #[test]
+    fn aeronautics_bundle_merges_into_one_tab_while_preserving_search() {
+        let dir = std::env::temp_dir().join(format!("tachyon-creative-aero-{}", std::process::id()));
+        fs::create_dir_all(dir.join("assets/aeronautics/lang")).unwrap();
+        let ids = [
+            "minecraft:stone",
+            "aeronautics:wooden_propeller",
+            "aeronautics:red_envelope",
+            "simulated:steering_wheel",
+            "simulated:red_portable_engine",
+            "offroad:small_tire",
+        ];
+        let entries: serde_json::Map<String, Value> = ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| ((*id).to_owned(), serde_json::json!({"protocol_id": i})))
+            .collect();
+        fs::write(
+            dir.join("registries.json"),
+            serde_json::json!({"minecraft:item": {"entries": entries}}).to_string(),
+        )
+        .unwrap();
+        let stone = r#"{count:1,id:"minecraft:stone"}"#;
+        let tab = |id: &str, kind: &str, row: &str, column: u32| {
+            serde_json::json!({"id": id, "type": kind, "title": id, "icon": stone, "row": row,
+                "column": column, "items": [stone]})
+        };
+        let mut c = Creative::from_json(&serde_json::json!({"tabs": [
+            tab("minecraft:building_blocks", "CATEGORY", "TOP", 0),
+            tab("minecraft:search", "SEARCH", "TOP", 6),
+            tab("minecraft:inventory", "INVENTORY", "BOTTOM", 6),
+        ]}))
+        .unwrap();
+        c.add_mod_tabs(&dir);
+        let _ = fs::remove_dir_all(&dir);
+
+        let aero = c.tabs.iter().find(|t| t.id == "aeronautics:tachyon_tab").unwrap();
+        assert_eq!(aero.title, "Create Aeronautics");
+        assert_eq!(&*aero.icon, "aeronautics:wooden_propeller");
+        assert!(!c.tabs.iter().any(|t| matches!(t.id.as_str(), "simulated:tachyon_tab" | "offroad:tachyon_tab")));
+        let aero_items: Vec<&str> = aero.items.iter().map(|s| &*s.item).collect();
+        assert_eq!(
+            aero_items,
+            vec![
+                "aeronautics:wooden_propeller",
+                "simulated:steering_wheel",
+                "offroad:small_tire",
+                "simulated:red_portable_engine",
+                "aeronautics:red_envelope",
+            ]
+        );
+        for expected in &ids[1..] {
+            assert!(c.exported_search.iter().any(|(s, _, _)| &*s.item == *expected));
+        }
     }
 }
 
