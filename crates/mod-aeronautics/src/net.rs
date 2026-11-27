@@ -17,6 +17,7 @@ pub const ACTION_BURNER_DOWN: u8 = 4;
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderBlock {
     pub local: Pos,
+    pub block_id: String,
     pub role_code: u8,
     pub facing: Facing,
     pub rgb: u32,
@@ -70,6 +71,7 @@ pub fn encode_role(role: BlockRole) -> u8 {
         BlockRole::WheelMount => 10,
         BlockRole::Assembler => 11,
         BlockRole::Sensor => 12,
+        BlockRole::Seat => 13,
     }
 }
 
@@ -87,6 +89,7 @@ pub fn role_from_code(code: u8) -> BlockRole {
         10 => BlockRole::WheelMount,
         11 => BlockRole::Assembler,
         12 => BlockRole::Sensor,
+        13 => BlockRole::Seat,
         _ => BlockRole::Hull,
     }
 }
@@ -170,6 +173,7 @@ pub fn block_rgb(id: &str, role: BlockRole) -> u32 {
         BlockRole::WheelMount => 0x3D_4048,
         BlockRole::Assembler => 0x52_88A8,
         BlockRole::Sensor => 0x9E_3A36,
+        BlockRole::Seat => 0xC4_4838,
         BlockRole::Hull => {
             if id.contains("spruce") || id.contains("dark_oak") {
                 0x6E_4F2E
@@ -197,6 +201,7 @@ pub fn render_blocks_from(cells: &[BlockCell]) -> Vec<RenderBlock> {
             let role = catalog::classify(&cell.id).role;
             RenderBlock {
                 local: cell.local,
+                block_id: cell.id.clone(),
                 role_code: encode_role(role),
                 facing: cell.facing,
                 rgb: block_rgb(&cell.id, role),
@@ -362,6 +367,10 @@ impl ServerMsg {
                     for c in b.local {
                         out.extend_from_slice(&c.to_le_bytes());
                     }
+                    let id_bytes = b.block_id.as_bytes();
+                    let id_len = id_bytes.len().min(255) as u8;
+                    out.push(id_len);
+                    out.extend_from_slice(&id_bytes[..id_len as usize]);
                     out.push(b.role_code);
                     out.push(facing_to_byte(b.facing));
                     out.extend_from_slice(&b.rgb.to_le_bytes());
@@ -404,12 +413,15 @@ impl ServerMsg {
                 let mut blocks = Vec::with_capacity(count);
                 for _ in 0..count {
                     let local = [r.i32()?, r.i32()?, r.i32()?];
+                    let id_len = usize::from(r.u8()?);
+                    let block_id = std::str::from_utf8(r.take(id_len)?).ok()?.to_owned();
                     let role_code = r.u8()?;
                     let facing = facing_from_byte(r.u8()?);
                     let rgb = r.u32()?;
                     let tire = tire_from_byte(r.u8()?);
                     blocks.push(RenderBlock {
                         local,
+                        block_id,
                         role_code,
                         facing,
                         rgb,
@@ -484,6 +496,7 @@ mod tests {
             },
             blocks: vec![RenderBlock {
                 local: [0, 0, 0],
+                block_id: "simulated:steering_wheel".into(),
                 role_code: encode_role(BlockRole::Helm),
                 facing: Facing::North,
                 rgb: 0xD8_A840,

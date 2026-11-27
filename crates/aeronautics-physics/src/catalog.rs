@@ -96,6 +96,8 @@ pub enum BlockRole {
     Assembler,
     /// Telemetry sensor (`simulated:altitude_sensor`, `simulated:velocity_sensor`).
     Sensor,
+    /// Pilot seat (`create:*_seat`, `simulated:*_seat`).
+    Seat,
 }
 
 /// Static physical metadata derived from a block's ID.
@@ -158,6 +160,13 @@ pub fn is_engine(id: &str) -> bool {
         || id == "create:creative_motor"
 }
 
+/// Returns `true` if `id` is a vehicle/contraption seat block.
+pub fn is_seat(id: &str) -> bool {
+    id.strip_prefix("create:")
+        .or_else(|| id.strip_prefix("simulated:"))
+        .is_some_and(|name| name.ends_with("_seat"))
+}
+
 /// Computes physical properties for a block ID.
 pub fn classify(id: &str) -> BlockMass {
     if is_envelope(id) {
@@ -182,6 +191,14 @@ pub fn classify(id: &str) -> BlockMass {
             drag_area: 0.9,
             buoyant_lift_n: 0.0,
             role: BlockRole::Engine,
+        };
+    }
+    if is_seat(id) {
+        return BlockMass {
+            mass_kg: 35.0,
+            drag_area: 0.4,
+            buoyant_lift_n: 0.0,
+            role: BlockRole::Seat,
         };
     }
     match id {
@@ -265,5 +282,18 @@ fn default_mass_kg(id: &str) -> f64 {
         45.0
     } else {
         80.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_create_and_simulated_seats() {
+        assert!(is_seat("create:white_seat"));
+        assert!(is_seat("create:red_seat"));
+        assert_eq!(classify("create:white_seat").role, BlockRole::Seat);
+        assert_eq!(classify("create:red_seat").role, BlockRole::Seat);
     }
 }

@@ -5,7 +5,7 @@ use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 
 use aeronautics_physics::math::{Vec3, v_len, v_sub};
 use aeronautics_physics::{
-    BlockCell, Facing, PilotInput, Pos, RigidContraption, StepTelemetry, TireKind, WorldBlockSample,
+    Facing, PilotInput, Pos, RigidContraption, StepTelemetry, TireKind, WorldBlockSample,
     assemble_from_world, burner_state_for_heat,
 };
 use mod_api::{
@@ -620,12 +620,12 @@ pub(crate) fn right_click_block(
     }
 
     if block_id == "simulated:physics_assembler" || held_id == "simulated:creative_physics_staff" {
-        match assemble_at(host, &dimension, pos, Some(player_uuid)) {
+        match assemble_at(host, &dimension, pos, None) {
             Ok((id, count)) => {
                 tell(
                     host,
                     player_uuid,
-                    &format!("Kapal #{id} dirakit ({count} blok)! W/S Throttle, A/D Kemudi, Space/Shift Naik/Turun, /aero land untuk mendarat."),
+                    &format!("Kendaraan #{id} dirakit ({count} blok)! Naik ke kursi/dek lalu tekan V, tombol Pilot, atau /aero pilot untuk mengemudi (/aero land untuk mendarat)."),
                 );
             }
             Err(err) => tell(host, player_uuid, &err),
@@ -634,24 +634,26 @@ pub(crate) fn right_click_block(
         return Flow::Cancel;
     }
 
-    if block_id == "simulated:steering_wheel" {
+    if block_id == "simulated:steering_wheel" || aeronautics_physics::is_seat(&block_id) {
         let has_vessel = { lock().vessels.values().any(|v| v.dimension == dimension) };
         if has_vessel {
             toggle_pilot_nearest(host, player_uuid);
-        } else {
-            match assemble_at(host, &dimension, pos, Some(player_uuid)) {
+            *event.cancellation_result = InteractionResult::Consume;
+            return Flow::Cancel;
+        } else if block_id == "simulated:steering_wheel" {
+            match assemble_at(host, &dimension, pos, None) {
                 Ok((id, count)) => {
                     tell(
                         host,
                         player_uuid,
-                        &format!("Kendaraan #{id} dirakit dari kemudi ({count} blok)! Gunakan /aero land untuk mendarat."),
+                        &format!("Kendaraan #{id} dirakit ({count} blok)! Klik kemudi/kursi atau tekan V untuk mulai mengemudi (/aero land untuk mendarat)."),
                     );
                 }
                 Err(err) => tell(host, player_uuid, &err),
             }
+            *event.cancellation_result = InteractionResult::Consume;
+            return Flow::Cancel;
         }
-        *event.cancellation_result = InteractionResult::Consume;
-        return Flow::Cancel;
     }
 
     Flow::Continue
@@ -696,7 +698,6 @@ pub(crate) fn server_tick(host: &mut dyn ServerHost, phase: ServerTickPhase) {
     }
 
     let mut snapshots = Vec::with_capacity(vessel_ids.len());
-    let mut teleports: Vec<(u128, Vec3)> = Vec::new();
 
     for vid in vessel_ids {
         let (dimension, mut body, pilot, input) = {
@@ -722,11 +723,6 @@ pub(crate) fn server_tick(host: &mut dyn ServerHost, phase: ServerTickPhase) {
         };
 
         let snap = snapshot_from(&body, &dimension, pilot, telemetry);
-        if let Some(uuid) = pilot {
-            let helm_local = helm_local_cell(&body.blocks, body.mass.center_of_mass);
-            let seat_world = body.local_to_world(helm_local);
-            teleports.push((uuid, seat_world));
-        }
         snapshots.push(snap);
 
         let mut s = lock();
@@ -736,31 +732,8 @@ pub(crate) fn server_tick(host: &mut dyn ServerHost, phase: ServerTickPhase) {
         }
     }
 
-    for (uuid, seat) in teleports {
-        if let Some(player) = host.player(uuid) {
-            let entity = player.entity();
-            let _ = entity.teleport_to(host, seat, None);
-            let _ = entity.set_velocity(host, [0.0, 0.0, 0.0]);
-        }
-    }
-
     for snap in snapshots {
         broadcast_msg(host, &ServerMsg::Snapshot(snap));
-    }
-}
-
-fn helm_local_cell(blocks: &[BlockCell], fallback: Vec3) -> Vec3 {
-    if let Some(b) = blocks
-        .iter()
-        .find(|b| b.id == "simulated:steering_wheel" || b.id == "simulated:physics_assembler")
-    {
-        [
-            f64::from(b.local[0]) + 0.5,
-            f64::from(b.local[1]) + 1.02,
-            f64::from(b.local[2]) + 0.5,
-        ]
-    } else {
-        fallback
     }
 }
 
@@ -799,9 +772,9 @@ pub(crate) fn run_mod_command(
                     (pos[1] - 1.0).floor() as i32,
                     pos[2].floor() as i32,
                 ];
-                match assemble_at(host, &dim, target, Some(uuid)) {
+                match assemble_at(host, &dim, target, None) {
                     Ok((id, count)) => {
-                        format!("Kapal #{id} dirakit ({count} blok)! W/S Throttle, A/D Kemudi, Space/Shift Naik/Turun.")
+                        format!("Kendaraan #{id} dirakit ({count} blok)! Naik ke dek lalu tekan V / klik kursi/kemudi (/aero pilot) untuk mengemudi.")
                     }
                     Err(e) => e,
                 }

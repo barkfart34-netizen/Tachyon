@@ -8,8 +8,9 @@ use aeronautics_physics::math::{
     Quat, Vec3, quat_rotate, quat_rotate_inv, quat_slerp, v_add, v_sub,
 };
 use aeronautics_physics::BlockRole;
+pub use aeronautics_physics::{Facing, TireKind};
 
-use crate::net::{VesselSnapshot, role_from_code};
+use crate::net::{RenderBlock, VesselSnapshot, role_from_code};
 
 /// Local player state handed over by `remote_send_state` (`remote/mod.rs`).
 pub struct LocalPlayer {
@@ -29,6 +30,35 @@ pub(crate) struct ClientVessel {
     pub prev_position: Vec3,
     pub prev_orientation: Quat,
     pub prev_center_of_mass: Vec3,
+}
+
+/// Interpolated vessel snapshot exported for `horizon-client` textured 6-DOF block rendering.
+#[derive(Clone, Debug)]
+pub struct RenderVessel {
+    pub id: u64,
+    pub position: Vec3,
+    pub orientation: Quat,
+    pub center_of_mass: Vec3,
+    pub engine_rpm: f32,
+    pub blocks: Vec<RenderBlock>,
+}
+
+/// Returns all live vessels in `dimension` with poses interpolated by `partial`.
+pub fn render_vessels(dimension: &str, partial: f64) -> Vec<RenderVessel> {
+    snapshot_for_render(dimension)
+        .into_iter()
+        .map(|v| {
+            let (position, orientation) = interpolated_pose(&v, partial);
+            RenderVessel {
+                id: v.snapshot.id,
+                position,
+                orientation,
+                center_of_mass: v.snapshot.center_of_mass,
+                engine_rpm: v.snapshot.engine_rpm,
+                blocks: v.snapshot.blocks,
+            }
+        })
+        .collect()
 }
 
 static VESSELS: LazyLock<Mutex<HashMap<u64, ClientVessel>>> = LazyLock::new(Mutex::default);
@@ -116,6 +146,17 @@ pub(crate) fn to_local(pos: Vec3, ori: Quat, com: Vec3, world: Vec3) -> Vec3 {
 }
 
 pub(crate) fn helm_local_pos(snap: &VesselSnapshot) -> Vec3 {
+    if let Some(seat) = snap
+        .blocks
+        .iter()
+        .find(|b| matches!(role_from_code(b.role_code), BlockRole::Seat))
+    {
+        return [
+            f64::from(seat.local[0]) + 0.5,
+            f64::from(seat.local[1]) + 0.56,
+            f64::from(seat.local[2]) + 0.5,
+        ];
+    }
     if let Some(helm) = snap
         .blocks
         .iter()
@@ -136,6 +177,19 @@ pub(crate) fn helm_local_pos(snap: &VesselSnapshot) -> Vec3 {
             f64::from(asm.local[0]) + 0.5,
             f64::from(asm.local[1]) + 1.02,
             f64::from(asm.local[2]) + 0.5,
+        ];
+    }
+    if let Some(top) = snap.blocks.iter().max_by(|a, b| {
+        let da = (f64::from(a.local[0]) + 0.5 - snap.center_of_mass[0]).powi(2)
+            + (f64::from(a.local[2]) + 0.5 - snap.center_of_mass[2]).powi(2);
+        let db = (f64::from(b.local[0]) + 0.5 - snap.center_of_mass[0]).powi(2)
+            + (f64::from(b.local[2]) + 0.5 - snap.center_of_mass[2]).powi(2);
+        a.local[1].cmp(&b.local[1]).then_with(|| db.total_cmp(&da))
+    }) {
+        return [
+            f64::from(top.local[0]) + 0.5,
+            f64::from(top.local[1]) + 1.02,
+            f64::from(top.local[2]) + 0.5,
         ];
     }
     snap.center_of_mass
@@ -241,6 +295,7 @@ mod tests {
             telemetry: StepTelemetry::default(),
             blocks: vec![RenderBlock {
                 local: [0, 0, 0],
+                block_id: "minecraft:oak_planks".into(),
                 role_code: encode_role(BlockRole::Hull),
                 facing: Facing::North,
                 rgb: 0xAA_AAAA,

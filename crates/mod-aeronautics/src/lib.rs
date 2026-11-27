@@ -5,6 +5,7 @@ mod render;
 mod server;
 pub mod solid;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use aeronautics_physics::PilotInput;
@@ -28,6 +29,8 @@ pub const BUILT: mod_api::__private::native::BuiltMod = mod_api::__private::nati
 };
 
 static LATEST_INPUT: LazyLock<Mutex<PilotInput>> = LazyLock::new(Mutex::default);
+static SNEAK_DISMOUNT_SENT: AtomicBool = AtomicBool::new(false);
+static PENDING_DISMOUNT: AtomicBool = AtomicBool::new(false);
 
 struct NetHandler;
 
@@ -143,11 +146,25 @@ impl Hooks for Mod {
 
     fn movement_input(&self, host: &dyn ClientHost, event: &mut MovementInputEvent) {
         let Some(_vid) = solid::local_pilot_vessel_id() else {
+            SNEAK_DISMOUNT_SENT.store(false, Ordering::Relaxed);
             return;
         };
+        if event.sneak {
+            if !SNEAK_DISMOUNT_SENT.swap(true, Ordering::Relaxed) {
+                PENDING_DISMOUNT.store(true, Ordering::Relaxed);
+            }
+            event.forward = 0.0;
+            event.strafe = 0.0;
+            event.jump = false;
+            event.sneak = false;
+            return;
+        }
+        SNEAK_DISMOUNT_SENT.store(false, Ordering::Relaxed);
+        let descend = host.is_key_down("key.keyboard.left.control")
+            || host.is_key_down("key.keyboard.c");
         let vertical = if event.jump {
             1.0
-        } else if event.sneak {
+        } else if descend {
             -1.0
         } else {
             0.0
@@ -206,7 +223,22 @@ impl Hooks for Mod {
     }
 
     fn client_tick_post(&self, host: &mut dyn ClientHost, _event: &mut ClientTickPostEvent) {
-        let Some(vid) = solid::local_pilot_vessel_id() else { return };
+        let Some(vid) = solid::local_pilot_vessel_id() else {
+            PENDING_DISMOUNT.store(false, Ordering::Relaxed);
+            return;
+        };
+        if PENDING_DISMOUNT.swap(false, Ordering::Relaxed) {
+            let pkt = net::PilotPacket {
+                vessel_id: vid,
+                input: PilotInput::default(),
+                action: net::ACTION_TOGGLE_PILOT,
+            };
+            let _ = host.send_payload_to_server(
+                &PayloadId(net::PAYLOAD_ID.to_owned()),
+                PayloadBytes(pkt.encode()),
+            );
+            return;
+        }
         let input = LATEST_INPUT
             .lock()
             .map(|g| *g)

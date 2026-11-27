@@ -15,7 +15,10 @@ pub use aero::{AeroResult, PilotInput, compute_propeller_rpm, step_aero};
 pub use assembly::{AssemblyError, WorldBlockSample, assemble_from_world};
 pub use body::{RigidContraption, StepTelemetry};
 pub use buoyancy::{BalloonPocket, BuoyancySummary, detect_balloons, solve_buoyancy};
-pub use catalog::{BlockMass, BlockRole, TireKind, classify, is_engine, is_envelope, is_sail, is_unmovable};
+pub use catalog::{
+    BlockMass, BlockRole, TireKind, classify, is_engine, is_envelope, is_sail, is_seat,
+    is_unmovable,
+};
 pub use mass::{BlockCell, MassProperties, compute_mass_properties};
 pub use math::{
     Facing, GRAVITY, IDENTITY_QUAT, Pos, Quat, Vec3, air_density, quat_from_euler,

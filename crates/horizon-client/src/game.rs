@@ -2182,6 +2182,130 @@ impl Game<'_> {
     /// `Level.canHaveWeather`, from the level's dimension type (sky light, no
     /// ceiling) and the End, which vanilla names by id. Every rain, thunder
     /// and lightning rule asks this, never the dimension's id.
+    fn aeronautics_vessel_geometry(
+        &mut self,
+        camera: glam::DVec3,
+        partial: f64,
+        out: &mut Vec<horizon_client::mesher::Vertex>,
+    ) {
+        let dim = self
+            .remote
+            .as_ref()
+            .map(|r| r.level.as_str())
+            .filter(|l| !l.is_empty())
+            .unwrap_or_else(|| self.dim.id());
+        let vessels = mod_aeronautics::solid::render_vessels(dim, partial);
+        if vessels.is_empty() {
+            return;
+        }
+        self.mark_entity(out.len(), "minecraft:block_display");
+        for vessel in vessels {
+            let com = vessel.center_of_mass;
+            let cm_world = glam::DVec3::new(
+                vessel.position[0] + com[0],
+                vessel.position[1] + com[1],
+                vessel.position[2] + com[2],
+            );
+            let q = glam::Quat::from_xyzw(
+                vessel.orientation[1] as f32,
+                vessel.orientation[2] as f32,
+                vessel.orientation[3] as f32,
+                vessel.orientation[0] as f32,
+            )
+            .normalize();
+            let vessel_mat = glam::Mat4::from_translation((cm_world - camera).as_vec3())
+                * glam::Mat4::from_quat(q);
+            if !vessel_mat.is_finite() {
+                continue;
+            }
+            let world_light = self.world.light(
+                cm_world.x.floor() as i32,
+                cm_world.y.floor() as i32,
+                cm_world.z.floor() as i32,
+            );
+            let light = horizon_client::block_entity_render::vertex_light(world_light);
+            let fallback_state = self.pack.assets.registry.default_state("minecraft:oak_planks");
+            for b in &vessel.blocks {
+                let registry = &self.pack.assets.registry;
+                let state_id = registry
+                    .default_state(&b.block_id)
+                    .and_then(|def_id| {
+                        let mut st = registry.state(def_id)?.clone();
+                        if let Some(v) = st.properties.get_mut("facing") {
+                            *v = b.facing.as_str().to_owned();
+                            registry.id(&st).or(Some(def_id))
+                        } else if let Some(v) = st.properties.get_mut("axis") {
+                            *v = match b.facing {
+                                mod_aeronautics::solid::Facing::East
+                                | mod_aeronautics::solid::Facing::West => "x",
+                                mod_aeronautics::solid::Facing::Up
+                                | mod_aeronautics::solid::Facing::Down => "y",
+                                _ => "z",
+                            }
+                            .to_owned();
+                            registry.id(&st).or(Some(def_id))
+                        } else {
+                            Some(def_id)
+                        }
+                    })
+                    .or(fallback_state);
+                let offset = glam::Vec3::new(
+                    b.local[0] as f32 - com[0] as f32,
+                    b.local[1] as f32 - com[1] as f32,
+                    b.local[2] as f32 - com[2] as f32,
+                );
+                let block_mat = vessel_mat * glam::Mat4::from_translation(offset);
+                if let Some(sid) = state_id {
+                    let start = out.len();
+                    self.block_model_vertices(sid, 42, block_mat, light, true, out);
+                    self.lit_entity(start..out.len());
+                }
+                if let Some(tire) = b.tire {
+                    let tire_id = match tire {
+                        mod_aeronautics::solid::TireKind::Small => "offroad:small_tire",
+                        mod_aeronautics::solid::TireKind::Standard => "offroad:tire",
+                        mod_aeronautics::solid::TireKind::Large => "offroad:large_tire",
+                        mod_aeronautics::solid::TireKind::Monstrous => "offroad:monstrous_tire",
+                    };
+                    let u = b.facing.unit();
+                    let tire_center = glam::Vec3::new(
+                        0.5 + u[0] as f32 * 0.55,
+                        0.5 + u[1] as f32 * 0.55,
+                        0.5 + u[2] as f32 * 0.55,
+                    );
+                    let rot = match b.facing {
+                        mod_aeronautics::solid::Facing::South => {
+                            glam::Mat4::from_rotation_y(std::f32::consts::PI)
+                        }
+                        mod_aeronautics::solid::Facing::East => {
+                            glam::Mat4::from_rotation_y(-std::f32::consts::FRAC_PI_2)
+                        }
+                        mod_aeronautics::solid::Facing::West => {
+                            glam::Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2)
+                        }
+                        mod_aeronautics::solid::Facing::Up => {
+                            glam::Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+                        }
+                        mod_aeronautics::solid::Facing::Down => {
+                            glam::Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2)
+                        }
+                        mod_aeronautics::solid::Facing::North => glam::Mat4::IDENTITY,
+                    };
+                    let tire_mat = block_mat * glam::Mat4::from_translation(tire_center) * rot;
+                    let stack = horizon_client::items::ItemStack::new(tire_id, 1);
+                    let item_state = self.resolve_item(
+                        &stack,
+                        horizon_assets::item_model::DisplayContext::Fixed,
+                        None,
+                        vessel.id as i32,
+                    );
+                    self.submit_item_world(&item_state, tire_mat, light, out);
+                }
+            }
+        }
+        self.mark_entity(out.len(), "");
+    }
+
     fn level_key(&self) -> horizon_core::LevelKey {
         horizon_core::LevelKey::builtin_or_overworld(self.dim.id())
     }
@@ -5448,6 +5572,7 @@ impl Game<'_> {
         self.mark_entity(out.len(), "minecraft:evoker_fangs");
         self.lit(&mut out, |g, o| g.fangs_geometry(camera, alpha, o));
         self.block_item_display_geometry(camera, alpha, &mut out);
+        self.aeronautics_vessel_geometry(camera, alpha, &mut out);
         laps.lap("eg_players");
         let mut see_through = std::mem::take(&mut self.see_through_vertices);
         see_through.clear();
