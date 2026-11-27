@@ -30,8 +30,9 @@ use create_kinetics::rules::clipboard::{self as rules, Content, Entry};
 use crate::compat::{
     BlockEntityEvent, BlockStateId, Compound, ComponentTypesEvent, Direction, Flow, Hooks, Host,
     InventoryTickEvent, ItemStack, LeftClickBlockEvent, LevelHost, LootDropsEvent, NativeCommand,
-    PerformCommandEvent, PlaceBlockEvent, RegisterCommandsEvent, RightClickBlockEvent,
-    StateForPlacementEvent, Tag, Text, UseItemEvent, UseItemOnEvent,
+    NativeInventoryKind, NetFromClientEvent, PerformCommandEvent, PlaceBlockEvent,
+    RegisterCommandsEvent, RightClickBlockEvent, StateForPlacementEvent, Tag, Text, UseItemEvent,
+    UseItemOnEvent,
 };
 
 use crate::util;
@@ -141,8 +142,59 @@ static TARGETS: Mutex<BTreeMap<u128, ([i32; 3], &'static str)>> = Mutex::new(BTr
 static PENDING: Mutex<BTreeMap<u128, Compound>> = Mutex::new(BTreeMap::new());
 static PENDING_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+#[derive(Clone, Copy)]
+enum ClipTarget {
+    Held { slot: usize },
+    Block { dim: &'static str, pos: [i32; 3] },
+}
+
+/// Which clipboard (held stack or placed block) each player currently has open in the Clipboard GUI.
+static OPEN_SESSIONS: Mutex<BTreeMap<u128, ClipTarget>> = Mutex::new(BTreeMap::new());
+
 fn lock<T>(m: &'static Mutex<T>) -> std::sync::MutexGuard<'static, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn open_screen(host: &mut dyn Host, uuid: u128, target: ClipTarget, content: &Content) -> bool {
+    let wire = super::clipboard_screen::encode_open(content);
+    if host
+        .net_send_to_player(uuid, super::clipboard_screen::OPEN_CHANNEL, wire.as_bytes())
+        .is_ok()
+    {
+        lock(&OPEN_SESSIONS).insert(uuid, target);
+        true
+    } else {
+        false
+    }
+}
+
+fn play_sound_for(host: &mut dyn Host, uuid: u128, sound_delta: u8) {
+    let (was, now) = match sound_delta {
+        1 => (Some(false), Some(true)),
+        2 => (Some(true), Some(false)),
+        _ => return,
+    };
+    let dice = (util::random() % 1_000_000) as f32 / 1_000_000.0;
+    if let Some((name, pitch)) = rules::tick_sound(was, now, dice)
+        && let Some(player) = host.server_players().into_iter().find(|player| player.uuid == uuid)
+    {
+        util::create_sound(host, name, player.position, 1.0, pitch);
+    }
+}
+
+fn sanitize_content(mut content: Content) -> Content {
+    content.pages.truncate(50);
+    if content.pages.is_empty() {
+        content.pages.push(Vec::new());
+    }
+    for page in &mut content.pages {
+        page.truncate(rules::MAX_ENTRIES_PER_PAGE);
+        for entry in page {
+            entry.text = entry.text.chars().take(rules::MAX_TEXT).collect();
+        }
+    }
+    content.page = content.page.min(content.pages.len() - 1);
+    content
 }
 
 fn normal(face: Direction) -> [i32; 3] {
@@ -213,7 +265,9 @@ impl Hooks for Clipboards {
         }
         if util::first_click(&*host, player.uuid, event.pos) {
             let content = carried(event.stack).unwrap_or_default();
-            say(host, player.uuid, &rules::render(&content));
+            if !open_screen(host, player.uuid, ClipTarget::Held { slot: usize::from(player.selected_slot) }, &content) {
+                say(host, player.uuid, &rules::render(&content));
+            }
         }
         Flow::Cancel
     }
@@ -231,11 +285,13 @@ impl Hooks for Clipboards {
         }
         util::click_taken(&*host, player.uuid, [0, i32::MIN, 0]);
         let content = carried(event.stack).unwrap_or_default();
-        say(host, player.uuid, &rules::render(&content));
+        if !open_screen(host, player.uuid, ClipTarget::Held { slot: usize::from(player.selected_slot) }, &content) {
+            say(host, player.uuid, &rules::render(&content));
+        }
         Flow::Cancel
     }
 
-    /// `ClipboardBlock.useWithoutItem`: a right click shows the page; sneaking picks it up.
+    /// `ClipboardBlock.useWithoutItem`: a right click shows the clipboard GUI; sneaking picks it up.
     fn right_click_block(&self, host: &mut dyn Host, event: &mut RightClickBlockEvent) -> Flow {
         let pos = event.pos;
         if host.block(pos) != ID {
@@ -257,9 +313,12 @@ impl Hooks for Clipboards {
             collect(host, player.uuid, pos);
             return Flow::Cancel;
         }
-        lock(&TARGETS).insert(player.uuid, (pos, host.dimension()));
+        let dim = host.dimension();
+        lock(&TARGETS).insert(player.uuid, (pos, dim));
         let content = host.mod_block_entity(pos).map(|e| content_at(&e.nbt)).unwrap_or_default();
-        say(host, player.uuid, &rules::render(&content));
+        if !open_screen(host, player.uuid, ClipTarget::Block { dim, pos }, &content) {
+            say(host, player.uuid, &rules::render(&content));
+        }
         Flow::Cancel
     }
 
@@ -383,6 +442,76 @@ impl Hooks for Clipboards {
         let mut pending = lock(&PENDING);
         pending.remove(&player.uuid);
         PENDING_COUNT.store(pending.len(), Ordering::Relaxed);
+    }
+
+    fn net_from_client(&self, host: &mut dyn Host, event: &mut NetFromClientEvent<'_>) {
+        if event.channel != super::clipboard_screen::SAVE_CHANNEL {
+            return;
+        }
+        let Ok(text) = std::str::from_utf8(event.data) else { return };
+        let Some(save) = super::clipboard_screen::decode_save(text) else { return };
+        let uuid = event.player;
+        let Some(target) = lock(&OPEN_SESSIONS).remove(&uuid) else { return };
+        let incoming = sanitize_content(save.content);
+
+        match target {
+            ClipTarget::Held { slot } => {
+                let Some(stacks) = host.player_stacks(uuid) else { return };
+                let Some(Some(current)) = stacks.get(slot).cloned() else { return };
+                if &*current.item != ID {
+                    return;
+                }
+                let final_content = match carried(&current) {
+                    Some(existing) if existing.read_only => {
+                        let mut ro = existing;
+                        ro.page = incoming.page.min(ro.pages.len().saturating_sub(1));
+                        ro
+                    }
+                    _ => incoming,
+                };
+                let tag = tag_of(&final_content);
+                let mut edited = current.clone();
+                let _ = host.set_component(&mut edited, rules::COMPONENT, Tag::Compound(tag.clone()));
+                if host
+                    .set_inventory_slot_typed(uuid, NativeInventoryKind::Player, slot, Some(&current), Some(edited))
+                    .is_err()
+                {
+                    lock(&PENDING).insert(uuid, tag);
+                    PENDING_COUNT.store(lock(&PENDING).len(), Ordering::Relaxed);
+                }
+                play_sound_for(host, uuid, save.sound_delta);
+                host.action_bar(uuid, Text::literal("Clipboard saved"));
+            }
+            ClipTarget::Block { dim, pos } => {
+                if host.dimension() != dim || host.block(pos) != ID {
+                    return;
+                }
+                let centre = util::centre(pos);
+                let in_reach = host.server_players().into_iter().find(|p| p.uuid == uuid).is_some_and(|p| {
+                    (0..3).map(|i| (p.position[i] - centre[i]).powi(2)).sum::<f64>().sqrt() <= 20.0
+                });
+                if !in_reach {
+                    return;
+                }
+                let existing = host.mod_block_entity(pos).map(|e| content_at(&e.nbt)).unwrap_or_default();
+                let final_content = if existing.read_only {
+                    let mut ro = existing;
+                    ro.page = incoming.page.min(ro.pages.len().saturating_sub(1));
+                    ro
+                } else {
+                    incoming
+                };
+                let empty = final_content.is_empty();
+                let tag = tag_of(&final_content);
+                host.change_mod_block_entity(pos, &mut |e| {
+                    e.nbt.insert(CONTENT.into(), Tag::Compound(tag.clone()));
+                });
+                host.set_block_property(pos, "written", if empty { "false" } else { "true" });
+                host.block_entity_sync(pos);
+                play_sound_for(host, uuid, save.sound_delta);
+                host.action_bar(uuid, Text::literal("Clipboard saved"));
+            }
+        }
     }
 }
 

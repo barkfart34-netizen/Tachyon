@@ -30,8 +30,8 @@ use create_kinetics::{Axis, Dir, Kind, Node, Pos, face_sign, looking};
 use crate::compat::{
     AnalogOutputEvent, BlockEntityEvent, BlockEntitySubmitEvent, BlockEntityTickEvent,
     BlockEntityTicksEvent, BlockEntityUpdateTagEvent, BlockStateId, Compound, Flow,
-    HasAnalogOutputEvent, Hooks, Host, LevelHost, PlaceBlockEvent, RightClickBlockEvent,
-    StateForPlacementEvent, Tag, Text, UseItemOnEvent,
+    HasAnalogOutputEvent, Hooks, Host, LevelHost, NetFromClientEvent, PlaceBlockEvent,
+    RightClickBlockEvent, StateForPlacementEvent, Tag, Text, UseItemOnEvent,
 };
 
 use super::encased;
@@ -340,7 +340,7 @@ impl Hooks for Sequencer {
         }
     }
 
-    /// An empty hand moves the cursor over the program's fields.
+    /// An empty hand opens the Sequenced Gearshift screen (sneaking steps the action-bar cursor).
     fn right_click_block(&self, host: &mut dyn Host, event: &mut RightClickBlockEvent) -> Flow {
         let pos = event.pos;
         if host.block(pos) != ID {
@@ -356,6 +356,22 @@ impl Hooks for Sequencer {
         if !util::first_click(host, player.uuid, pos) {
             return Flow::Cancel;
         }
+        if !player.sneaking
+            && let Some(seq) = host.mod_block_entity(pos).map(|e| read_sequence(&e.nbt))
+        {
+            let payload = super::sequenced_gearshift_screen::OpenPayload {
+                pos,
+                current: seq.current,
+                instructions: seq.instructions,
+            };
+            let wire = super::sequenced_gearshift_screen::encode_open(&payload);
+            if host
+                .net_send_to_player(player.uuid, super::sequenced_gearshift_screen::OPEN_CHANNEL, wire.as_bytes())
+                .is_ok()
+            {
+                return Flow::Cancel;
+            }
+        }
         let mut shown = None;
         host.change_mod_block_entity(pos, &mut |entity| {
             let seq = read_sequence(&entity.nbt);
@@ -370,6 +386,38 @@ impl Hooks for Sequencer {
             host.action_bar(player.uuid, Text::literal(line));
         }
         Flow::Cancel
+    }
+
+    fn net_from_client(&self, host: &mut dyn Host, event: &mut NetFromClientEvent<'_>) {
+        if event.channel != super::sequenced_gearshift_screen::SAVE_CHANNEL {
+            return;
+        }
+        let Ok(text) = std::str::from_utf8(event.data) else { return };
+        let Some(payload) = super::sequenced_gearshift_screen::decode_save(text) else { return };
+        let pos = payload.pos;
+        if host.block(pos) != ID {
+            return;
+        }
+        let centre = util::centre(pos);
+        let in_reach = host.server_players().into_iter().find(|p| p.uuid == event.player).is_some_and(|p| {
+            (0..3).map(|i| (p.position[i] - centre[i]).powi(2)).sum::<f64>().sqrt() <= 20.0
+        });
+        if !in_reach {
+            return;
+        }
+        let signal = host.neighbor_signal(host.dimension(), pos) > 0;
+        let theory = kinetic::stress_at(host, pos).1;
+        let mut new_state = None;
+        host.change_mod_block_entity(pos, &mut |entity| {
+            let mut seq = read_sequence(&entity.nbt);
+            let before = seq.clone();
+            new_state = seq.run(-1, theory, signal);
+            seq.instructions = rules::padded(&payload.instructions);
+            write_sequence(&mut entity.nbt, &seq, &before);
+        });
+        set_state(host, pos, new_state);
+        host.block_entity_sync(pos);
+        host.action_bar(event.player, Text::literal("Sequenced Gearshift saved"));
     }
 
     /// The Wrench steps the field under the cursor, and picks the block up while sneaking.

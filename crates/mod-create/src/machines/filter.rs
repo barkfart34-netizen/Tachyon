@@ -37,7 +37,8 @@ use create_kinetics::rules::filter_items as tables;
 use create_kinetics::rules::fluids;
 use crate::compat::{
     ComponentTypesEvent, Compound, EquipmentSlot, Flow, Hooks, Host, ItemStack,
-    LevelTickPostEvent, NativeInventoryKind, Tag, Text, TooltipEvent, UseItemEvent, UseItemOnEvent,
+    LevelTickPostEvent, NativeInventoryKind, NetFromClientEvent, Tag, Text, TooltipEvent,
+    UseItemEvent, UseItemOnEvent,
 };
 
 use crate::{recipes, util};
@@ -417,6 +418,111 @@ impl Facts for ItemFacts<'_> {
 /// Edits waiting for the next tick: the player, the hotbar slot and the filter it becomes.
 static EDITS: LazyLock<Mutex<Vec<(u128, usize, ItemStack)>>> = LazyLock::new(Default::default);
 
+struct FilterSession {
+    slot: usize,
+    is_list: bool,
+    original_items: Vec<ItemStack>,
+}
+
+static SESSIONS: LazyLock<Mutex<std::collections::BTreeMap<u128, FilterSession>>> = LazyLock::new(Default::default);
+
+fn inventory_picker_entries(host: &dyn Host, uuid: u128, filter_slot: usize) -> Vec<super::filter_screen::InvEntry> {
+    let Some(stacks) = host.player_stacks(uuid) else { return Vec::new() };
+    stacks
+        .into_iter()
+        .enumerate()
+        .filter_map(|(slot, maybe)| {
+            if slot == filter_slot {
+                return None;
+            }
+            let stack = maybe?;
+            let slot_u8 = u8::try_from(slot).ok()?;
+            Some(super::filter_screen::InvEntry {
+                slot: slot_u8,
+                item_id: stack.item.to_string(),
+                name: name_of(&stack),
+            })
+        })
+        .collect()
+}
+
+fn inspect_candidates(host: &dyn Host, stack: &ItemStack) -> Vec<super::filter_screen::AttrCandidateWire> {
+    let facts = ItemFacts { host: Some(host), stack };
+    rules::all_attributes(&facts)
+        .into_iter()
+        .map(|attr| super::filter_screen::AttrCandidateWire {
+            type_id: attr.type_id(),
+            value: attr.value(),
+            desc_normal: attr.describe(false),
+            desc_inverted: attr.describe(true),
+        })
+        .collect()
+}
+
+fn open_screen(host: &mut dyn Host, uuid: u128, selected_slot: usize, stack: &ItemStack) -> bool {
+    use super::filter_screen::{
+        AttrRuleWire, ListEntry, ListSource, OpenFilterPayload, OPEN_CHANNEL, encode_open,
+    };
+    let inv = inventory_picker_entries(host, uuid, selected_slot);
+    let is_list = &*stack.item == LIST;
+    let mut original_items = Vec::new();
+    let payload = if is_list {
+        original_items = list_items(stack);
+        let entries = original_items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| ListEntry {
+                source: ListSource::Existing(i as u16),
+                item_id: item.item.to_string(),
+                name: name_of(item),
+            })
+            .collect();
+        OpenFilterPayload::List {
+            blacklist: flag(stack, rules::FILTER_ITEMS_BLACKLIST),
+            respect_nbt: flag(stack, rules::FILTER_ITEMS_RESPECT_NBT),
+            entries,
+            inv,
+        }
+    } else {
+        let attr_filter = read_attributes(stack);
+        let rules_wire = attr_filter
+            .tests
+            .iter()
+            .map(|(attr, inv_flag)| AttrRuleWire {
+                type_id: attr.type_id(),
+                value: attr.value(),
+                inverted: *inv_flag,
+                desc: attr.describe(*inv_flag),
+            })
+            .collect();
+        let (inspected_slot, inspected_name, candidates) = if let Some(first) = inv.first()
+            && let Some(stacks) = host.player_stacks(uuid)
+            && let Some(Some(first_stack)) = stacks.get(usize::from(first.slot))
+        {
+            (Some(first.slot), first.name.clone(), inspect_candidates(host, first_stack))
+        } else {
+            (None, String::new(), Vec::new())
+        };
+        OpenFilterPayload::Attribute {
+            mode: attr_filter.mode,
+            rules: rules_wire,
+            inv,
+            inspected_slot,
+            inspected_name,
+            candidates,
+        }
+    };
+    let wire = encode_open(&payload);
+    if host.net_send_to_player(uuid, OPEN_CHANNEL, wire.as_bytes()).is_ok() {
+        if let Ok(mut map) = SESSIONS.lock() {
+            map.insert(uuid, FilterSession { slot: selected_slot, is_list, original_items });
+        }
+        true
+    } else {
+        false
+    }
+}
+
 /// The reference item's name for a line of text.
 fn name_of(stack: &ItemStack) -> String {
     stack
@@ -495,7 +601,7 @@ fn edit(
     (Some(edited), line)
 }
 
-/// A click with a filter in the main hand: queues the edit and shows the line.
+/// A click with a filter in the main hand: opens the filter GUI (or falls back to quick-edit with offhand/sneak).
 fn click(host: &mut dyn Host, stack: &ItemStack) -> Flow {
     if !is_editable(&stack.item) {
         return Flow::Continue;
@@ -511,6 +617,12 @@ fn click(host: &mut dyn Host, stack: &ItemStack) -> Flow {
         return Flow::Continue;
     }
     let reference = host.player_equipment(player.uuid, EquipmentSlot::OffHand);
+    if reference.is_none()
+        && !player.sneaking
+        && open_screen(host, player.uuid, usize::from(player.selected_slot), stack)
+    {
+        return Flow::Cancel;
+    }
     let (edited, line) = edit(host, stack, reference.as_ref(), player.sneaking);
     if let Some(edited) = edited
         && edited != *stack
@@ -607,6 +719,87 @@ impl Hooks for FilterItems {
                 continue;
             };
             let _ = host.set_inventory_slot_typed(uuid, NativeInventoryKind::Player, slot, Some(&held), Some(edited));
+        }
+    }
+
+    fn net_from_client(&self, host: &mut dyn Host, event: &mut NetFromClientEvent<'_>) {
+        use super::filter_screen::{
+            ATTRS_CHANNEL, INSPECT_CHANNEL, InspectAttrsPayload, ListSource, SAVE_CHANNEL,
+            SaveFilterPayload, decode_save, encode_attrs,
+        };
+        let Ok(text) = std::str::from_utf8(event.data) else { return };
+        let uuid = event.player;
+        match event.channel {
+            INSPECT_CHANNEL => {
+                let Ok(inv_slot) = text.trim().parse::<u8>() else { return };
+                let Some(stacks) = host.player_stacks(uuid) else { return };
+                let Some(Some(stack)) = stacks.get(usize::from(inv_slot)) else { return };
+                let payload = InspectAttrsPayload {
+                    inv_slot,
+                    item_id: stack.item.to_string(),
+                    item_name: name_of(stack),
+                    candidates: inspect_candidates(host, stack),
+                };
+                let _ = host.net_send_to_player(uuid, ATTRS_CHANNEL, encode_attrs(&payload).as_bytes());
+            }
+            SAVE_CHANNEL => {
+                let Some(save) = decode_save(text) else { return };
+                let session = SESSIONS.lock().ok().and_then(|mut m| m.remove(&uuid));
+                let Some(session) = session else { return };
+                let Some(stacks) = host.player_stacks(uuid) else { return };
+                let Some(Some(current)) = stacks.get(session.slot).cloned() else { return };
+                let mut edited = current.clone();
+                match save {
+                    SaveFilterPayload::List { blacklist, respect_nbt, sources } if session.is_list && &*current.item == LIST => {
+                        let mut new_items: Vec<ItemStack> = Vec::new();
+                        for src in sources {
+                            if new_items.len() >= rules::LIST_SLOTS {
+                                break;
+                            }
+                            let cand = match src {
+                                ListSource::Existing(idx) => session.original_items.get(usize::from(idx)).cloned(),
+                                ListSource::Inv(inv_slot) => stacks.get(usize::from(inv_slot)).and_then(|s| s.clone()).map(|mut s| {
+                                    s.count = 1;
+                                    s
+                                }),
+                            };
+                            if let Some(item) = cand
+                                && !new_items.iter().any(|have| util::same_item(have, &item))
+                            {
+                                new_items.push(item);
+                            }
+                        }
+                        write_list(host, &mut edited, &new_items, blacklist, respect_nbt);
+                        if host
+                            .set_inventory_slot_typed(uuid, NativeInventoryKind::Player, session.slot, Some(&current), Some(edited.clone()))
+                            .is_err()
+                            && let Ok(mut queue) = EDITS.lock()
+                        {
+                            queue.retain(|(id, _, _)| *id != uuid);
+                            queue.push((uuid, session.slot, edited));
+                        }
+                        host.action_bar(uuid, Text::literal("List Filter saved"));
+                    }
+                    SaveFilterPayload::Attribute { mode, rules: wire_rules } if !session.is_list && &*current.item == ATTRIBUTE => {
+                        let parsed: Vec<(Attribute, bool)> = wire_rules
+                            .into_iter()
+                            .filter_map(|(t, v, inv)| Attribute::parse(&t, v.as_deref()).map(|a| (a, inv)))
+                            .collect();
+                        write_attributes(host, &mut edited, mode, &parsed);
+                        if host
+                            .set_inventory_slot_typed(uuid, NativeInventoryKind::Player, session.slot, Some(&current), Some(edited.clone()))
+                            .is_err()
+                            && let Ok(mut queue) = EDITS.lock()
+                        {
+                            queue.retain(|(id, _, _)| *id != uuid);
+                            queue.push((uuid, session.slot, edited));
+                        }
+                        host.action_bar(uuid, Text::literal("Attribute Filter saved"));
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
         }
     }
 }
