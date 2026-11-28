@@ -1,7 +1,6 @@
 # Rencana modpack Tachyon: fantasi + era mesin
 
-Status: **Tahap 0–2 selesai; Tahap 3 dan port Create berjalan** (kemajuan di bagian 10, urutan
-terbaru di bagian 9). Ditulis 29 Oktober 2026.
+Status: **Tahap 0–2 selesai; port Create (`mod-create`) lanjut ke GUI kustom Wave 2 & ValueBox asli; port Create Aeronautics di ~24% (prototype 6-DOF + render model asli, masuk Tahap 1 fisika/OBB/Honey Glue)** — lihat progres detail di bagian 10, [create-port.md](create-port.md), dan [aeronautics-port.md](aeronautics-port.md). Diperbarui 28 November 2026.
 
 Nama modpack: **Tachyon: Aether & Gears**.
 
@@ -447,3 +446,10 @@ berisiko, jadi dikerjakan setelah contraption terbukti jalan.
     - kacamata memakai nama blok Create.
   - Berikutnya (2b): resep Create (`create:milling`, `pressing`, `mixing`, `splashing`) untuk
     mesinnya, sabuk Create (belt connector), dan kincir air (model OBJ).
+- **26–28 November 2026, integrasi `mod-create`, GUI kustom Create Wave 1–2, dan audit jujur Create Aeronautics (`88da585519`..`586c9dda2a`).**
+  - **Create (`mod-create` + `create-kinetics`):** integrasi native penuh menggantikan jalur mesin awal dengan staging aset runtime dari JAR pemain (`88da585519`, `2cd90abf3f`); GUI kustom desktop & sentuh Android ditambahkan untuk Sequenced Gearshift, List/Attribute Filter, Clipboard (`c7de8bd59e`), serta Wave 2 + mode rotasi Mechanical/Windmill Bearing (`f866ca7f2a`, `4b58c21930`); panel ValueBox (termasuk slider kecepatan Creative Motor dan mode Bearing) kini memakai sprite asli `create:gui/value_settings` & `create:gui/icons`. Detail terbaru di [create-port.md](create-port.md).
+  - **Create Aeronautics (`aeronautics-physics` + `mod-aeronautics`, progres jujur ~24%):**
+    - Staging aset runtime v4 (`aeronautics_port.rs`, `05a264de5f`) memperbaiki bentrok namespace `create` lintas-mod sehingga `Physics Assembler`, `Honey Glue`, `Steering Wheel`, dll. termuat bersama `mod-create` dalam satu tab kreatif `"Create Aeronautics"` (`4b58c21930`); deadlock `/aero land` diperbaiki.
+    - Render kendaraan 6-DOF sudah diganti dari kotak warna placeholder ke model blok & ban `offroad:*_tire` bertekstur asli (`game.rs:aeronautics_vessel_geometry`, `586c9dda2a`); kamera pilot tidak lagi terkunci, kursi `create:*_seat`/`simulated:*_seat` didukung (`Shift` turun), dan HUD pilot dirapikan.
+    - **Audit penuh vs JAR asli 1.3.2 (905 kelas Java)** mencatat kekurangan besar yang menjadi fokus kerja berikutnya: collision entity masih top-deck only (belum OBB penuh seperti `mod-create/src/solid/`), collision kapal ke dunia masih 1-titik tanpa impuls/torsi, bug transformasi `wheels.rs:56`, `glued_boxes` Honey Glue belum dipakai `assemble_from_world` + 0% visual lem, serta belum ada animasi baling-baling/roda & simulasi Kinetik Create onboard.
+    - **Dokumen handoff lengkap & tahapan kerja (Tahap 1–4)** ditulis khusus untuk kesinambungan antar-agen di [aeronautics-port.md](aeronautics-port.md).

@@ -273,3 +273,8 @@ python3 tools/parity.py dedicated_server server_entities server_player_damage
 [docs/server-levels.md](docs/server-levels.md) (levels per dimension) ·
 [docs/rust-parity.md](docs/rust-parity.md) (what is ported) · [docs/known-issues.md](docs/known-issues.md) ·
 [docs/release-flow.md](docs/release-flow.md) · [docs/README.md](docs/README.md) (index).
+
+**Tachyon modpack & ports (mulai di sini untuk kerja Create / Aeronautics):**
+[docs/tachyon/aeronautics-port.md](docs/tachyon/aeronautics-port.md) (status jujur ~24%, peta file, bug terverifikasi & roadmap Tahap 1–4) ·
+[docs/tachyon/create-port.md](docs/tachyon/create-port.md) (`mod-create`, GUI kustom & ValueBox) ·
+[docs/tachyon/rencana-modpack.md](docs/tachyon/rencana-modpack.md) (rencana & log progres modpack).

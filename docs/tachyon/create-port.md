@@ -389,3 +389,15 @@ Ada juga beberapa resep lain: emptying, item_application, sequenced_assembly, da
   serta penarikan barang sabuk/depot melalui `TransportedItemStackHandlerBehaviour` belum diporting.
   Larangan menaruh chute tepat di bawah chute miring diperiksa saat pemasangan; penghapusan chute yang
   menjadi tidak valid akibat perubahan tetangga belum diterapkan.
+
+## Pembaruan (26–28 November 2026) — `mod-create`, GUI Kustom & ValueBox Asli
+
+Port Create telah berkembang dari prototipe awal `tachyon_engine` ke integrasi crate native **`crates/mod-create`** (`create-kinetics` + `mod-create`) dengan staging aset runtime dari JAR Create 6.0.10 milik pemain (tanpa aset ARR di repo):
+
+- **Integrasi native & Android (`88da585519`, `6090468eb1`, `2cd90abf3f`):** `mod-create` terdaftar sebagai native mod bersama `mod-aeronautics` (`crates/horizon-client/src/tachyon_native_mods.rs`), lengkap dengan solver kinetik, contraption solid OBB (`crates/mod-create/src/solid/`), Super Glue visual (`crates/mod-create/src/machines/super_glue.rs`), kursi (`machines/seat.rs`), dan staging runtime di Desktop maupun Android.
+- **GUI Kustom Gelombang 1 & 2 (`c7de8bd59e`, `f866ca7f2a`):** layar desktop + sentuh ditambahkan untuk *Sequenced Gearshift* (`sequenced_gearshift_screen.rs`), *List/Attribute Filter* (`filter_screen.rs`), *Clipboard* (`clipboard_screen.rs`), tampilan 3D kecepatan, serta perbaikan GUI gelombang 2.
+- **ValueBox Sprite Asli Create & Mode Bearing (`4b58c21930`):**
+  - `crates/mod-create/src/machines/value_box_screen.rs` kini merender sprite asli dari `create:gui/value_settings` dan `create:gui/icons` (kursor pil brass 3-slice, kartu ikon 22×20, ikon konfirmasi/batal) dengan fallback datar bila tekstur tidak ada.
+  - `Creative Motor` mendukung slider/ValueBox pengaturan kecepatan + tampilan kecepatan di blok; `Mechanical Bearing` mendukung mode rotasi (`ROTATE_PLACE`, `ROTATE_PLACE_RETURNED`, `ROTATE_NEVER_PLACE`) dan `Windmill Bearing` mendukung arah rotasi lewat `Slot::BearingMode` (`crates/mod-create/src/kinetics/src/rules/{value_box.rs,value_box_blocks.rs}`, `crates/mod-create/src/machines/{bearing.rs,value_box.rs,value_box_draw.rs}`).
+- **Catatan tes:** `create-kinetics` lulus penuh (`2272/2272`); di `mod-create`, satu tes lama `machines::trains::tests::a_tree_survives_the_tag` gagal secara pre-existing (di luar perubahan GUI/Aeronautics).
+- **Port addon Create Aeronautics:** status lengkap, audit terhadap JAR asli 1.3.2, peta file, dan roadmap Tahap 1–4 dicatat terpisah di [aeronautics-port.md](aeronautics-port.md).
